@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-import shlex
 import subprocess
 from pathlib import Path
 
 from models.task import ExecutionResult, Task
+from utils.command_resolution import resolve_command_arguments
 
 
 class AiderRunner:
@@ -15,7 +15,18 @@ class AiderRunner:
         self._logger: logging.Logger = logger
 
     def run(self, task: Task, file_paths: list[Path]) -> ExecutionResult:
-        arguments: list[str] = self._build_command(task, file_paths)
+        try:
+            arguments, _ = self._build_command(task, file_paths)
+        except (FileNotFoundError, ValueError) as ex:
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=-1,
+                stdout="",
+                stderr=str(ex),
+                command=[self._command],
+            )
+
         self._logger.debug("Running Aider command: %s", arguments)
 
         try:
@@ -46,8 +57,8 @@ class AiderRunner:
             command=arguments,
         )
 
-    def _build_command(self, task: Task, file_paths: list[Path]) -> list[str]:
-        arguments: list[str] = shlex.split(self._command, posix=False)
+    def _build_command(self, task: Task, file_paths: list[Path]) -> tuple[list[str], list[Path]]:
+        arguments, searched_locations = resolve_command_arguments(self._command, self._repo_root)
         arguments.extend(
             [
                 "--yes-always",
@@ -62,4 +73,4 @@ class AiderRunner:
         for file_path in file_paths:
             arguments.extend(["--file", str(file_path)])
 
-        return arguments
+        return arguments, searched_locations

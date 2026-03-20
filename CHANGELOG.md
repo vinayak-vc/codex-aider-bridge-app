@@ -5,3 +5,5 @@
 [2026-03-20] - Added - Idea-driven planning via `--idea-file`, generated plan export via `--plan-output-file`, and Windows-friendly Codex CLI defaults based on `codex.cmd exec`.
 [2026-03-20] - Added - Numbered-plan normalization and deterministic fallback planning for Unity-style project briefs when Codex output is non-actionable.
 [2026-03-20] - Verified - Dry-run planning against `GAME_IDEA.md` for the `Phase Flip Runner` Unity project succeeds and writes `bridge-plan.json`.
+[2026-03-20] - Changed - Hardened Codex and Aider command resolution to search PATH plus local Windows script directories before execution.
+[2026-03-20] - Changed - Improved execution retry handling so Aider startup failures surface clearly and do not silently collapse into generic task retry noise.

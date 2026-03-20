@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-import shlex
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 from models.task import Task
+from utils.command_resolution import resolve_command_arguments
 
 
 class PlannerError(Exception):
@@ -40,7 +40,10 @@ class CodexClient:
                 schema_file = Path(temporary_directory) / "planner-schema.json"
                 schema_file.write_text(output_schema, encoding="utf-8")
 
-            arguments: list[str] = self._build_command(prompt, output_file, schema_file)
+            try:
+                arguments: list[str] = self._build_command(prompt, output_file, schema_file)
+            except (FileNotFoundError, ValueError) as ex:
+                raise PlannerError(f"Unable to start Codex command '{self._command}': {ex}") from ex
             self._logger.debug("Running Codex command: %s", arguments)
 
             try:
@@ -79,7 +82,7 @@ class CodexClient:
         if "{output_file}" in command_text:
             command_text = command_text.replace("{output_file}", str(output_file))
 
-        arguments: list[str] = shlex.split(command_text, posix=False)
+        arguments, _ = resolve_command_arguments(command_text, self._repo_root)
 
         if "{output_file}" not in self._command and "exec" in arguments and "-o" not in arguments:
             arguments.extend(["-o", str(output_file)])

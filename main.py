@@ -161,7 +161,14 @@ def execute_task_loop(
     while attempt <= config.max_task_retries:
         current_instruction: str = task.instruction
         if refinement_feedback:
-            current_instruction = planner.refine_task_instruction(task, refinement_feedback)
+            try:
+                current_instruction = planner.refine_task_instruction(task, refinement_feedback)
+            except PlannerError as ex:
+                logger.warning(
+                    "Unable to refine task %s after failure feedback; retrying original instruction. Reason: %s",
+                    task.id,
+                    ex,
+                )
 
         current_task: Task = Task(
             id=task.id,
@@ -185,7 +192,16 @@ def execute_task_loop(
                 f"Stdout:\n{execution_result.stdout}\n"
                 f"Stderr:\n{execution_result.stderr}"
             )
-            logger.warning("Task %s failed during execution", current_task.id)
+            logger.warning(
+                "Task %s failed during execution with exit code %s. %s",
+                current_task.id,
+                execution_result.exit_code,
+                _summarize_process_failure(execution_result.stderr, execution_result.stdout),
+            )
+            if execution_result.exit_code == -1:
+                raise RuntimeError(
+                    f"Task {current_task.id} could not start Aider. {execution_result.stderr}"
+                )
             if attempt > config.max_task_retries:
                 raise RuntimeError(f"Task {current_task.id} failed after execution retries.")
             continue
@@ -205,6 +221,15 @@ def execute_task_loop(
         logger.warning("Task %s failed validation", current_task.id)
 
     raise RuntimeError(f"Task {task.id} exhausted retries.")
+
+
+def _summarize_process_failure(stderr: str, stdout: str) -> str:
+    for stream_name, content in (("stderr", stderr), ("stdout", stdout)):
+        normalized: str = content.strip()
+        if normalized:
+            first_line: str = normalized.splitlines()[0]
+            return f"{stream_name}: {first_line}"
+    return "No process output was captured."
 
 
 def main() -> int:

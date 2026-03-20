@@ -1,14 +1,17 @@
 # Codex Aider Bridge App
 
-`codex-aider-bridge-app` is a CLI bridge that turns a high-level development goal into an execution loop:
+`codex-aider-bridge-app` is a CLI bridge whose primary job is to let Codex act as the task brain while Aider does the file editing work.
+
+It turns a high-level development goal into an execution loop:
 
 `Codex -> Plan -> Aider -> Execute -> Validate -> Feedback`
 
-The app is designed for local development and generic codebases, including Unity, WPF, and standard Python or mixed-language repositories. It keeps planning and execution decoupled so the planner can stay focused on small JSON tasks while Aider applies file-level changes.
+The app is designed for local development and generic codebases, including Unity, WPF, and standard Python or mixed-language repositories. It keeps planning and execution decoupled so Codex can focus on choosing the right atomic tasks while Aider applies file-level changes.
 
 ## Features
 
 - Codex-based planner that requests atomic JSON tasks and can ingest architecture briefs
+- Robust external command resolution for `codex` and `aider` across PATH and local Windows virtual environments
 - Strict JSON task parsing and validation
 - Fallback numbered-plan parsing for non-JSON Codex responses
 - File selection layer for task-scoped execution
@@ -65,7 +68,7 @@ No external Python packages are required for the bridge itself.
 
 ## Setup
 
-1. Ensure `python`, `codex`, and `aider` are available in your shell.
+1. Ensure `python`, `codex`, and `aider` are available in your shell, or configure `BRIDGE_CODEX_COMMAND` / `BRIDGE_AIDER_COMMAND` with explicit executable paths.
 2. From the repository root, optionally create and activate a virtual environment.
 3. Review configuration options:
    - `BRIDGE_CODEX_COMMAND`
@@ -91,7 +94,7 @@ python main.py "Build a logging system feature"
    - Python files compile when present
 7. If Codex returns a recoverable numbered technical plan instead of JSON, the parser converts it into typed tasks.
 8. If Codex planning remains non-actionable after retries, `planner/fallback_planner.py` generates a deterministic plan from the goal and idea context.
-9. If execution or validation fails, the failure is sent back to the planner for a refined retry.
+9. If execution fails, the bridge logs the concrete Aider startup or process error and can ask Codex for a refined retry instruction when the planner is available.
 
 ## CLI Usage
 
@@ -114,6 +117,8 @@ python main.py "Build the first playable vertical slice for Phase Flip Runner." 
 - `--max-task-retries`: Retry count for failed Aider or validation steps.
 - `--validation-command`: Optional command run after each task.
 - `--log-level`: Logging verbosity.
+- `--aider-command`: Override the executable or full command used to invoke Aider.
+- `--codex-command`: Override the executable or full command used to invoke Codex.
 
 ## Planner JSON Contract
 
@@ -140,8 +145,9 @@ See [`example plan.json`](./example%20plan.json) for a ready-made plan that targ
 
 ## Notes
 
-- The bridge keeps commands configurable because Codex CLI invocation patterns can vary by environment.
+- The bridge keeps commands configurable because Codex CLI and Aider invocation patterns can vary by environment.
 - The default planner command is `codex.cmd exec --skip-git-repo-check --color never`.
+- The bridge will also look for executables in local script directories such as `.venv\Scripts`, `venv\Scripts`, and `aider-env\Scripts` before failing.
 - Idea-driven planning is a first-class workflow for documents such as `GAME_IDEA.md`.
 - If Codex returns numbered technical steps instead of JSON, the bridge attempts to normalize them into Aider-ready tasks.
 - If Codex planning still fails after retries, the bridge falls back to a deterministic local planner so execution can continue.
