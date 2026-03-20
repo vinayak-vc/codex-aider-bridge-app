@@ -49,3 +49,6 @@ class BridgeConfig:
     validation_command: Optional[str]
     codex_command: str
     aider_command: str
+    idea_file: Optional[Path]
+    idea_text: Optional[str]
+    plan_output_file: Optional[Path]

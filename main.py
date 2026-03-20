@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Optional
 
 from bridge_logging.logger import configure_logging
+from context.idea_loader import IdeaLoader
 from context.file_selector import FileSelector
 from executor.aider_runner import AiderRunner
 from models.task import BridgeConfig, Task
 from parser.task_parser import PlanParseError, TaskParser
 from planner.codex_client import CodexClient, PlannerError
+from planner.fallback_planner import FallbackPlanner
 from validator.validator import ProjectValidator
 
 
@@ -36,6 +38,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--plan-file",
         default=None,
         help="Optional JSON plan file to execute instead of calling Codex.",
+    )
+    parser.add_argument(
+        "--idea-file",
+        default=None,
+        help="Optional architecture or product idea file to inject into planning prompts.",
+    )
+    parser.add_argument(
+        "--plan-output-file",
+        default=None,
+        help="Optional path to write the generated plan JSON.",
     )
     parser.add_argument(
         "--dry-run",
@@ -61,8 +73,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--codex-command",
-        default=os.getenv("BRIDGE_CODEX_COMMAND", "codex"),
-        help="Planner command. If it contains {prompt}, the prompt is substituted there.",
+        default=os.getenv(
+            "BRIDGE_CODEX_COMMAND",
+            "codex.cmd exec --skip-git-repo-check --color never",
+        ),
+        help="Planner command. Supports optional {prompt} and {output_file} placeholders.",
     )
     parser.add_argument(
         "--aider-command",
@@ -86,6 +101,7 @@ def load_plan_from_file(plan_file: Path, parser: TaskParser) -> list[Task]:
 def obtain_plan(
     config: BridgeConfig,
     planner: CodexClient,
+    fallback_planner: FallbackPlanner,
     parser: TaskParser,
     logger: logging.Logger,
 ) -> list[Task]:
@@ -97,15 +113,36 @@ def obtain_plan(
         logger.info("Requesting plan attempt %s of %s", attempt, config.max_plan_attempts)
 
         try:
-            plan_text: str = planner.generate_plan(config.goal, feedback)
+            plan_text: str = planner.generate_plan(config.goal, config.idea_text, feedback)
             tasks: list[Task] = parser.parse(plan_text)
+            if config.plan_output_file is not None:
+                config.plan_output_file.parent.mkdir(parents=True, exist_ok=True)
+                config.plan_output_file.write_text(plan_text, encoding="utf-8")
+                logger.info("Wrote generated plan to %s", config.plan_output_file)
             logger.info("Planner returned %s tasks", len(tasks))
             return tasks
         except (PlannerError, PlanParseError) as ex:
             feedback = str(ex)
             logger.warning("Planner attempt %s failed: %s", attempt, ex)
 
-    raise RuntimeError("Unable to obtain a valid execution plan from the planner.")
+    logger.warning("Planner retries exhausted. Falling back to deterministic local plan generation.")
+    tasks = fallback_planner.build_plan(config.goal, config.idea_text)
+    if config.plan_output_file is not None:
+        fallback_payload: dict[str, object] = {
+            "tasks": [
+                {
+                    "id": task.id,
+                    "files": task.files,
+                    "instruction": task.instruction,
+                    "type": task.type,
+                }
+                for task in tasks
+            ]
+        }
+        config.plan_output_file.parent.mkdir(parents=True, exist_ok=True)
+        config.plan_output_file.write_text(json.dumps(fallback_payload, indent=2), encoding="utf-8")
+        logger.info("Wrote fallback plan to %s", config.plan_output_file)
+    return tasks
 
 
 def execute_task_loop(
@@ -177,6 +214,13 @@ def main() -> int:
     repo_root: Path = Path(args.repo_root).resolve()
     logger: logging.Logger = configure_logging(repo_root / "logs", args.log_level)
     logger.info("Starting bridge app in %s", repo_root)
+    idea_loader: IdeaLoader = IdeaLoader()
+    idea_file: Optional[Path] = Path(args.idea_file).resolve() if args.idea_file else None
+    plan_output_file: Optional[Path] = Path(args.plan_output_file).resolve() if args.plan_output_file else None
+    idea_text: Optional[str] = idea_loader.load(idea_file)
+
+    if idea_file is not None:
+        logger.info("Loaded idea file from %s", idea_file)
 
     config: BridgeConfig = BridgeConfig(
         goal=args.goal,
@@ -187,11 +231,15 @@ def main() -> int:
         validation_command=args.validation_command,
         codex_command=args.codex_command,
         aider_command=args.aider_command,
+        idea_file=idea_file,
+        idea_text=idea_text,
+        plan_output_file=plan_output_file,
     )
 
     task_parser: TaskParser = TaskParser()
     selector: FileSelector = FileSelector(repo_root)
     planner: CodexClient = CodexClient(repo_root, config.codex_command, logger)
+    fallback_planner: FallbackPlanner = FallbackPlanner()
     runner: AiderRunner = AiderRunner(repo_root, config.aider_command, logger)
     validator: ProjectValidator = ProjectValidator(repo_root, config.validation_command, logger)
 
@@ -199,7 +247,7 @@ def main() -> int:
         if args.plan_file:
             tasks: list[Task] = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
         else:
-            tasks = obtain_plan(config, planner, task_parser, logger)
+            tasks = obtain_plan(config, planner, fallback_planner, task_parser, logger)
 
         for task in tasks:
             execute_task_loop(task, config, planner, selector, runner, validator, logger)
