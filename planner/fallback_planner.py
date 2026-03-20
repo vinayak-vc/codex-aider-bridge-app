@@ -10,6 +10,9 @@ class FallbackPlanner:
         normalized_idea: str = (idea_text or "").lower()
         normalized_goal: str = goal.lower()
 
+        if "stack pulse" in normalized_idea or "stack pulse" in normalized_goal:
+            return self._build_stack_pulse_vertical_slice_plan()
+
         if "unity" in normalized_idea or "phase flip runner" in normalized_idea or "unity" in normalized_goal:
             return self._build_unity_vertical_slice_plan()
 
@@ -114,4 +117,85 @@ class FallbackPlanner:
                 instruction=f"Document the implementation plan context for this goal: {goal}",
                 type="modify",
             )
+        ]
+
+    def _build_stack_pulse_vertical_slice_plan(self) -> list[Task]:
+        return [
+            Task(
+                id=1,
+                files=[
+                    "Assets/Scripts/Core/GameState.cs",
+                    "Assets/Scripts/Core/GameEvents.cs",
+                    "Assets/Scripts/Core/GameManager.cs",
+                ],
+                instruction="Create the Stack Pulse core state layer with GameState enum, gameplay event definitions, and a GameManager that owns Start, Playing, Dead, score, restart flow, and startup ordering for the playable stacking loop.",
+                type="create",
+            ),
+            Task(
+                id=2,
+                files=[
+                    "Assets/Scripts/Systems/InputHandler.cs",
+                    "Assets/Scripts/Gameplay/BlockController.cs",
+                ],
+                instruction="Create InputHandler and BlockController so one tap requests a drop, the active block moves horizontally before drop, and the block can switch between preview movement and falling/placement states.",
+                type="create",
+            ),
+            Task(
+                id=3,
+                files=[
+                    "Assets/Scripts/Systems/StackManager.cs",
+                    "Assets/Scripts/Systems/ComboSystem.cs",
+                    "Assets/Scripts/Systems/LevelDifficultyManager.cs",
+                ],
+                instruction="Create StackManager, ComboSystem, and LevelDifficultyManager to handle overlap checks, width trimming, perfect and good placement rules, fail detection, combo streaks, and progressive speed or width difficulty scaling.",
+                type="create",
+            ),
+            Task(
+                id=4,
+                files=["Assets/Scripts/UI/UIManager.cs"],
+                instruction="Create UIManager to show score, combo feedback, and game-over or restart prompts for the stacking vertical slice.",
+                type="create",
+            ),
+            Task(
+                id=5,
+                files=[
+                    "Assets/Scripts/Core/GameManager.cs",
+                    "Assets/Scripts/Gameplay/BlockController.cs",
+                    "Assets/Scripts/Systems/StackManager.cs",
+                    "Assets/Scripts/Systems/ComboSystem.cs",
+                    "Assets/Scripts/Systems/InputHandler.cs",
+                    "Assets/Scripts/Systems/LevelDifficultyManager.cs",
+                    "Assets/Scripts/UI/UIManager.cs",
+                ],
+                instruction="Wire the Stack Pulse gameplay loop so spawn, horizontal motion, one-tap drop, placement evaluation, block trimming, combo updates, score updates, miss-driven death, and restart flow all work together cleanly.",
+                type="modify",
+            ),
+            Task(
+                id=6,
+                files=["Assets/Scenes/SampleScene.unity"],
+                instruction="Update the main scene wiring so the playable scene references the stack gameplay managers, active block setup, camera, and runtime objects needed for the first vertical slice.",
+                type="modify",
+            ),
+            Task(
+                id=7,
+                files=["README.md", "CHANGELOG.md", "AGENTS.md"],
+                instruction="Add or update README, CHANGELOG, and AGENTS with Stack Pulse concept, controls, architecture overview, run instructions, coding standards, and future agent guidance.",
+                type="modify",
+            ),
+            Task(
+                id=8,
+                files=[
+                    "Assets/Scripts/Core/GameState.cs",
+                    "Assets/Scripts/Core/GameEvents.cs",
+                    "Assets/Scripts/Core/GameManager.cs",
+                    "Assets/Scripts/Gameplay/BlockController.cs",
+                    "Assets/Scripts/Systems/StackManager.cs",
+                    "Assets/Scripts/Systems/ComboSystem.cs",
+                    "Assets/Scripts/Systems/InputHandler.cs",
+                    "Assets/Scripts/Systems/LevelDifficultyManager.cs",
+                    "Assets/Scripts/UI/UIManager.cs",
+                ],
+                instruction="Validate the Stack Pulse code paths for compile safety, explicit typing, low-allocation runtime behavior, consistent one-tap flow, and clean restart behavior.",
+                type="validate",
+            ),
         ]

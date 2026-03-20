@@ -31,10 +31,38 @@ class TaskParser:
             raise PlanParseError("Planner JSON must contain a non-empty 'tasks' array.")
 
         parsed_tasks: list[Task] = []
+        all_seen_files: list[str] = []
+        known_file_locations: dict[str, str] = {}
         for item in tasks_payload:
-            parsed_tasks.append(self._parse_task(item))
+            repaired_item: Any = self._repair_task_item(item, known_file_locations, all_seen_files)
+            parsed_task: Task = self._parse_task(repaired_item)
+            parsed_tasks.append(parsed_task)
+            for file_path in parsed_task.files:
+                if file_path not in all_seen_files:
+                    all_seen_files.append(file_path)
+                known_file_locations[Path(file_path).name] = file_path
 
         return parsed_tasks
+
+    def _repair_task_item(
+        self,
+        item: Any,
+        known_file_locations: dict[str, str],
+        all_seen_files: list[str],
+    ) -> Any:
+        if not isinstance(item, dict):
+            return item
+
+        repaired_item: dict[str, Any] = dict(item)
+        instruction: Any = repaired_item.get("instruction")
+        files: Any = repaired_item.get("files")
+
+        if isinstance(instruction, str) and (not isinstance(files, list) or not files):
+            inferred_files: list[str] = self._extract_files_from_line(instruction, known_file_locations, all_seen_files)
+            if inferred_files:
+                repaired_item["files"] = inferred_files
+
+        return repaired_item
 
     def _extract_json(self, raw_text: str) -> str:
         stripped: str = raw_text.strip()
@@ -187,8 +215,15 @@ class TaskParser:
 
         unity_default_directories: dict[str, str] = {
             "GameManager.cs": "Assets/Scripts/Core",
+            "GameState.cs": "Assets/Scripts/Core",
+            "GameEvents.cs": "Assets/Scripts/Core",
             "PhaseManager.cs": "Assets/Scripts/Systems",
             "PlayerController.cs": "Assets/Scripts/Player",
+            "BlockController.cs": "Assets/Scripts/Gameplay",
+            "StackManager.cs": "Assets/Scripts/Systems",
+            "ComboSystem.cs": "Assets/Scripts/Systems",
+            "InputHandler.cs": "Assets/Scripts/Systems",
+            "LevelDifficultyManager.cs": "Assets/Scripts/Systems",
             "LevelSpawner.cs": "Assets/Scripts/Systems",
             "LevelChunkAnchor.cs": "Assets/Scripts/Systems",
             "Platform.cs": "Assets/Scripts/Systems",
@@ -232,6 +267,10 @@ class TaskParser:
         for normalized_file in normalized_files:
             if Path(normalized_file).is_absolute():
                 raise PlanParseError(f"Task {task_id} must use relative file paths, not absolute paths.")
+            if re.match(r"^[A-Za-z]:(?![\\/])", normalized_file):
+                raise PlanParseError(
+                    f"Task {task_id} used a malformed Windows drive-relative path: {normalized_file}"
+                )
             if normalized_file in {".", "./"}:
                 raise PlanParseError(f"Task {task_id} must target specific files, not the repository root.")
 

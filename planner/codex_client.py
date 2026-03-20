@@ -113,8 +113,10 @@ class CodexClient:
         return (
             "Return an atomic Aider execution plan only.\n"
             "Do not ask questions.\n"
+            "Every task MUST include a non-empty files array with one or more specific relative file paths.\n"
             "If you cannot return JSON, return a numbered implementation plan where every step names specific relative files.\n"
             "Use only relative file paths. Never use absolute paths. Never target the repository root.\n"
+            "Prefer concrete script files over directories. Do not use folder paths as task targets.\n"
             "Target feature/fix:\n"
             f"{goal}\n"
             "Files or systems involved:\n"
@@ -137,6 +139,16 @@ class CodexClient:
         if not is_unity_project:
             return "Use the most relevant repository files for the requested feature."
 
+        lowered_idea: str = (idea_text or "").lower()
+        if "stack pulse" in lowered_idea:
+            return (
+                "Assets/Scripts/Core/GameState.cs, Assets/Scripts/Core/GameEvents.cs, "
+                "Assets/Scripts/Core/GameManager.cs, Assets/Scripts/Gameplay/BlockController.cs, "
+                "Assets/Scripts/Systems/StackManager.cs, Assets/Scripts/Systems/ComboSystem.cs, "
+                "Assets/Scripts/Systems/InputHandler.cs, Assets/Scripts/Systems/LevelDifficultyManager.cs, "
+                "Assets/Scripts/UI/UIManager.cs, Assets/Scenes/SampleScene.unity, README.md, CHANGELOG.md, AGENTS.md."
+            )
+
         return (
             "Assets/Scripts/Core/GameManager.cs, Assets/Scripts/Systems/PhaseManager.cs, "
             "Assets/Scripts/Player/PlayerController.cs, Assets/Scripts/Systems/LevelSpawner.cs, "
@@ -150,6 +162,12 @@ class CodexClient:
             return "Implement the requested feature with production-ready behavior."
 
         lowered_idea: str = idea_text.lower()
+        if "stack pulse" in lowered_idea:
+            return (
+                "Produce a playable Unity stacking vertical slice where a block moves horizontally, one tap drops it, "
+                "alignment determines perfect/good/fail outcomes, trims reduce block width, combos increase on perfect hits, "
+                "score rises with height, and restart works."
+            )
         if "phase flip runner" in lowered_idea or "unity" in lowered_idea:
             return (
                 "Produce a playable Unity vertical slice where the player auto-runs, one tap toggles phase, "
@@ -168,7 +186,7 @@ class CodexClient:
             return (
                 "Unity URP project, mobile-leaning, event-driven architecture, SOLID structure, "
                 "object pooling where beneficial, simple colliders, avoid unnecessary Update usage, "
-                "and keep tasks atomic with explicit relative paths."
+                "and keep tasks atomic with explicit relative file paths. Every task must target concrete files only."
             )
 
         return "Keep tasks atomic, technical, and scoped to specific relative files."
@@ -178,6 +196,12 @@ class CodexClient:
             return "The code should complete without obvious errors."
 
         lowered_idea: str = idea_text.lower()
+        if "stack pulse" in lowered_idea:
+            return (
+                "The project should reach a playable stacking vertical slice with no obvious compile blockers, "
+                "block drop timing should work, trimming and miss detection should exist, combo and score should update, "
+                "and docs should be updated."
+            )
         if "unity" in lowered_idea:
             return (
                 "The project should reach a playable vertical slice with no obvious compile blockers, "
