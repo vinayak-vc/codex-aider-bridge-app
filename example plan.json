@@ -1,0 +1,20 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "files": [
+        "logging.py"
+      ],
+      "instruction": "Create a reusable logging module with console and file handlers.",
+      "type": "create"
+    },
+    {
+      "id": 2,
+      "files": [
+        "main.py"
+      ],
+      "instruction": "Wire the new logging module into the application startup path.",
+      "type": "modify"
+    }
+  ]
+}
