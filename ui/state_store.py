@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-import time
+import uuid
 from pathlib import Path
 
 # In a PyInstaller bundle, store persistent data next to the .exe so it
@@ -75,7 +75,7 @@ def _save_history(history: list[dict]) -> None:
 
 def add_history_entry(entry: dict) -> str:
     history = load_history()
-    entry_id = str(int(time.time() * 1000))
+    entry_id = str(uuid.uuid4())
     entry["id"] = entry_id
     history.insert(0, entry)
     _save_history(history[:MAX_HISTORY])

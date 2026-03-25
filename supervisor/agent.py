@@ -213,7 +213,7 @@ class SupervisorAgent:
                 )
 
             if output_file.exists():
-                output = output_file.read_text(encoding="utf-8").strip()
+                output = output_file.read_text(encoding="utf-8", errors="replace").strip()
                 if output:
                     return output
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,7 @@ class AiderRunner:
 
         self._logger.debug("Running Aider: %s", arguments)
 
+        _start = time.monotonic()
         try:
             result = subprocess.run(
                 arguments,
@@ -85,6 +87,7 @@ class AiderRunner:
             stdout=result.stdout,
             stderr=result.stderr,
             command=arguments,
+            duration_seconds=round(time.monotonic() - _start, 2),
         )
 
     def _build_command(

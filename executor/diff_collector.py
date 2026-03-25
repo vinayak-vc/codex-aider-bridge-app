@@ -42,7 +42,15 @@ class DiffCollector:
         combined = "\n\n".join(parts)
 
         if len(combined) > self._MAX_CHARS:
-            combined = combined[: self._MAX_CHARS] + "\n...[diff truncated — showing first 4000 chars]"
+            cut = combined.rfind("\n", 0, self._MAX_CHARS)
+            if cut == -1:
+                cut = self._MAX_CHARS
+            omitted_lines = combined[cut:].count("\n")
+            combined = (
+                combined[:cut]
+                + f"\n...[diff truncated — showing first {self._MAX_CHARS} chars,"
+                f" {omitted_lines} lines omitted]"
+            )
 
         return combined.strip()
 

@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -239,6 +240,12 @@ def execute_task_with_review(
                     f"{attempt + 1} attempt(s): {validation_result.message}"
                 )
             # Retry with the same instruction — no supervisor call needed
+            wait_seconds = min(2 ** attempt, 30)
+            logger.debug(
+                "Task %s: backing off %ss before retry attempt %s",
+                current_task.id, wait_seconds, attempt + 2,
+            )
+            time.sleep(wait_seconds)
             continue
 
         # ── Step 4: Supervisor review ─────────────────────────────────────────
@@ -267,6 +274,12 @@ def execute_task_with_review(
                 f"after supervisor feedback."
             )
 
+        wait_seconds = min(2 ** attempt, 30)
+        logger.debug(
+            "Task %s: backing off %ss before rework attempt %s",
+            current_task.id, wait_seconds, attempt + 2,
+        )
+        time.sleep(wait_seconds)
         current_instruction = review.new_instruction  # type: ignore[assignment]
 
     raise RuntimeError(f"Task {task.id} exhausted all retries.")

@@ -28,6 +28,8 @@ class ExecutionResult:
     stdout: str
     stderr: str
     command: list[str]
+    attempt_number: int = 1
+    duration_seconds: float = 0.0
 
 
 @dataclass(frozen=True)

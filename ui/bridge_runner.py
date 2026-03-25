@@ -98,16 +98,14 @@ class BridgeRun:
             self.log_lines = []
             self.status = "running"
             self.run_id = run_id
-
-        cmd = self.build_command(settings)
-        self.command_preview = " ".join(cmd)
+            cmd = self.build_command(settings)
+            self.command_preview = " ".join(cmd)
+            thread = threading.Thread(
+                target=self._run_process, args=(cmd,), daemon=True
+            )
+            thread.start()
 
         self._emit("start", {"command": self.command_preview, "run_id": run_id})
-
-        thread = threading.Thread(
-            target=self._run_process, args=(cmd,), daemon=True
-        )
-        thread.start()
 
     def _run_process(self, cmd: list[str]) -> None:
         start_time = time.time()
