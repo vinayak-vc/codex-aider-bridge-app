@@ -14,6 +14,11 @@ class SupervisorError(Exception):
     pass
 
 
+# Maximum characters of idea/brief text injected into the planning prompt.
+# Keeps prompts within typical context-window budgets for local models.
+_IDEA_MAX_CHARS: int = 2000
+
+
 class SupervisorAgent:
     """Tech Supervisor agent — plans work and reviews Aider output.
 
@@ -44,11 +49,24 @@ class SupervisorAgent:
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
         prompt = self._build_plan_prompt(goal, repo_tree, idea_text, feedback)
+        self._logger.debug(
+            "Plan prompt (%d chars): %.500s%s",
+            len(prompt),
+            prompt,
+            "..." if len(prompt) > 500 else "",
+        )
         return self._run(prompt, self._plan_schema())
 
     def review_task(self, report: TaskReport) -> ReviewResult:
         """Ask the supervisor to review a completed task and return PASS or REWORK."""
         prompt = self._build_review_prompt(report)
+        self._logger.debug(
+            "Review prompt for task %s (%d chars): %.300s%s",
+            report.task.id,
+            len(prompt),
+            prompt,
+            "..." if len(prompt) > 300 else "",
+        )
         response = self._run(prompt)
         return self._parse_review(report.task.id, response)
 
@@ -65,7 +83,7 @@ class SupervisorAgent:
     ) -> str:
         idea_block = ""
         if idea_text:
-            trimmed = idea_text[:2000]
+            trimmed = idea_text[:_IDEA_MAX_CHARS]
             idea_block = f"\nProject brief:\n{trimmed}\n"
 
         feedback_block = ""
@@ -231,10 +249,14 @@ class SupervisorAgent:
     ) -> list[str]:
         command_text = self._command
 
-        if "{prompt}" in command_text:
-            command_text = command_text.replace("{prompt}", prompt)
+        # Substitute {output_file} inline — it is a safe file path we control.
         if "{output_file}" in command_text:
             command_text = command_text.replace("{output_file}", str(output_file))
+
+        # Strip any {prompt} placeholder from the template — the prompt is
+        # ALWAYS passed as a separate final argument (never inlined into the
+        # command string) to prevent shell-metacharacter injection.
+        command_text = command_text.replace("{prompt}", "").strip()
 
         arguments, _ = resolve_command_arguments(command_text, self._repo_root)
 
@@ -246,9 +268,9 @@ class SupervisorAgent:
         if schema_file is not None and "--output-schema" not in arguments and "exec" in arguments:
             arguments.extend(["--output-schema", str(schema_file)])
 
-        # Append prompt as final argument when not already embedded
-        if "{prompt}" not in self._command:
-            arguments.append(prompt)
+        # Prompt is always the final argument — a separate list element,
+        # never embedded in the command string that gets shell-parsed.
+        arguments.append(prompt)
 
         return arguments
 

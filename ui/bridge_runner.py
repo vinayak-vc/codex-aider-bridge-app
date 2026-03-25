@@ -83,6 +83,8 @@ class BridgeRun:
             cmd.extend(["--plan-file", settings["plan_file"].strip()])
         if settings.get("dry_run"):
             cmd.append("--dry-run")
+        if settings.get("task_timeout"):
+            cmd.extend(["--task-timeout", str(int(settings["task_timeout"]))])
 
         cmd.extend(["--log-level", "INFO"])
         return cmd

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 
 class DiffCollector:
@@ -46,6 +49,10 @@ class DiffCollector:
             if cut == -1:
                 cut = self._MAX_CHARS
             omitted_lines = combined[cut:].count("\n")
+            _logger.debug(
+                "Diff truncated: %d lines omitted (original %d chars, limit %d)",
+                omitted_lines, len(combined), self._MAX_CHARS,
+            )
             combined = (
                 combined[:cut]
                 + f"\n...[diff truncated — showing first {self._MAX_CHARS} chars,"

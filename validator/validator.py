@@ -10,6 +10,10 @@ from typing import Optional
 from models.task import Task, ValidationResult
 
 
+# Maximum seconds the CI gate command is allowed to run before being killed.
+_CI_TIMEOUT_SECONDS: int = 120
+
+
 class MechanicalValidator:
     """Runs fast, token-free mechanical checks after each Aider execution.
 
@@ -141,7 +145,7 @@ class MechanicalValidator:
                 text=True,
                 encoding="utf-8",
                 shell=False,
-                timeout=120,
+                timeout=_CI_TIMEOUT_SECONDS,
                 check=False,
             )
         except subprocess.TimeoutExpired:

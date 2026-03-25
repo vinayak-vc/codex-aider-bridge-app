@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ from executor.diff_collector import DiffCollector
 from models.task import BridgeConfig, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
+from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
 from validator.validator import MechanicalValidator
 
 
@@ -293,6 +295,31 @@ def _summarize_process_failure(stderr: str, stdout: str) -> str:
     return "No process output captured."
 
 
+def record_rollback_point(repo_root: Path, logger: logging.Logger) -> Optional[str]:
+    """Record the current HEAD SHA so the user can undo all bridge changes on failure.
+
+    Returns the SHA string, or None if the repo has no commits yet.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            sha = result.stdout.strip()
+            logger.info("Rollback point: %s", sha)
+            logger.info("If this run fails, undo all changes with:  git reset --hard %s", sha)
+            return sha
+    except Exception:
+        pass
+    logger.debug("Could not record rollback point (no commits yet or git unavailable).")
+    return None
+
+
 def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     """Validate environment before spending any tokens on planning or execution.
 
@@ -360,6 +387,8 @@ def main() -> int:
     )
 
     run_preflight_checks(config, logger)
+    rollback_sha = record_rollback_point(repo_root, logger)
+    run_start = time.monotonic()
 
     repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
@@ -376,20 +405,43 @@ def main() -> int:
         else:
             tasks = obtain_plan(config, supervisor, task_parser, repo_tree, logger)
 
+        completed_ids = load_checkpoint(repo_root)
+        skipped = 0
         for task in tasks:
+            if task.id in completed_ids:
+                logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
+                skipped += 1
+                continue
             execute_task_with_review(
                 task, config, supervisor, selector,
                 runner, diff_collector, validator, logger,
             )
+            completed_ids.add(task.id)
+            save_checkpoint(repo_root, completed_ids)
 
-        summary = json.dumps({"status": "success", "tasks": len(tasks)})
+        clear_checkpoint(repo_root)
+        elapsed = round(time.monotonic() - run_start, 1)
+        executed = len(tasks) - skipped
+        summary = json.dumps({
+            "status": "success",
+            "tasks": len(tasks),
+            "executed": executed,
+            "skipped": skipped,
+            "elapsed_seconds": elapsed,
+        })
         print(summary)
-        logger.info("Bridge run completed — %s task(s)", len(tasks))
+        logger.info(
+            "Bridge run completed — %s task(s) executed, %s skipped, %.1fs total",
+            executed, skipped, elapsed,
+        )
         return 0
 
     except Exception as ex:
-        logger.exception("Bridge run failed: %s", ex)
-        print(json.dumps({"status": "failure", "error": str(ex)}))
+        elapsed = round(time.monotonic() - run_start, 1)
+        logger.exception("Bridge run failed after %.1fs: %s", elapsed, ex)
+        if rollback_sha:
+            logger.warning("To undo all changes made during this run:  git reset --hard %s", rollback_sha)
+        print(json.dumps({"status": "failure", "error": str(ex), "elapsed_seconds": elapsed}))
         return 1
 
 
