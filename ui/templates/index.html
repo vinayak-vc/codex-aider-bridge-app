@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bridge App — AI Dev Orchestrator</title>
+<style>
+/* ── CSS Variables ─────────────────────────────────────────────────────── */
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --card:     #21262d;
+  --border:   #30363d;
+  --primary:  #58a6ff;
+  --success:  #3fb950;
+  --warning:  #d29922;
+  --danger:   #f85149;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --radius:   8px;
+  --shadow:   0 4px 16px rgba(0,0,0,.4);
+  --font:     -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono:     "Cascadia Code", "Fira Code", "Consolas", monospace;
+}
+[data-theme="light"] {
+  --bg:      #f6f8fa;
+  --surface: #ffffff;
+  --card:    #f6f8fa;
+  --border:  #d0d7de;
+  --primary: #0969da;
+  --success: #1a7f37;
+  --warning: #9a6700;
+  --danger:  #cf222e;
+  --text:    #1f2328;
+  --muted:   #636c76;
+  --shadow:  0 4px 16px rgba(0,0,0,.1);
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.5}
+a{color:var(--primary);text-decoration:none}
+input,select,textarea,button{font-family:inherit;font-size:inherit}
+button{cursor:pointer}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ── Nav ───────────────────────────────────────────────────────────────── */
+.nav{position:fixed;top:0;left:0;right:0;height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:8px;z-index:100;box-shadow:0 1px 0 var(--border)}
+.nav-logo{font-size:18px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px;margin-right:12px}
+.nav-logo-icon{font-size:22px}
+.nav-tabs{display:flex;gap:2px;flex:1}
+.nav-tab{padding:6px 16px;border-radius:var(--radius);border:none;background:transparent;color:var(--muted);font-weight:500;transition:.15s;cursor:pointer;font-size:14px}
+.nav-tab:hover{background:var(--card);color:var(--text)}
+.nav-tab.active{background:var(--card);color:var(--primary)}
+.nav-tab .tab-badge{display:inline-block;background:var(--primary);color:#fff;border-radius:10px;padding:0 6px;font-size:11px;margin-left:5px;vertical-align:middle}
+.nav-right{display:flex;align-items:center;gap:10px}
+.run-badge{padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px}
+.run-badge.idle{background:var(--card);color:var(--muted)}
+.run-badge.running{background:rgba(88,166,255,.15);color:var(--primary)}
+.run-badge.running .dot{width:7px;height:7px;border-radius:50%;background:var(--primary);animation:pulse 1.2s infinite}
+.run-badge.success{background:rgba(63,185,80,.15);color:var(--success)}
+.run-badge.failure{background:rgba(248,81,73,.15);color:var(--danger)}
+.run-badge.stopped{background:var(--card);color:var(--muted)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.theme-btn{padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:16px;transition:.15s}
+.theme-btn:hover{background:var(--card);color:var(--text)}
+
+/* ── Content ───────────────────────────────────────────────────────────── */
+.content{margin-top:56px;padding:24px 20px;max-width:1160px;margin-left:auto;margin-right:auto}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+h2{font-size:18px;font-weight:600;margin-bottom:4px}
+.section-desc{color:var(--muted);margin-bottom:20px;font-size:13px}
+
+/* ── Cards ─────────────────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+.card+.card{margin-top:12px}
+
+/* ── Check grid ────────────────────────────────────────────────────────── */
+.check-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.check-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;transition:.2s}
+.check-card.ok{border-color:rgba(63,185,80,.4)}
+.check-card.warn{border-color:rgba(248,81,73,.4)}
+.check-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.check-icon{font-size:22px;width:32px;text-align:center}
+.check-name{font-weight:600;font-size:15px;flex:1}
+.check-status{font-size:18px}
+.check-meta{font-size:12px;color:var(--muted);margin-bottom:10px;word-break:break-all}
+.check-hint{font-size:12px;color:var(--warning);margin-bottom:10px;padding:6px 8px;background:rgba(210,153,34,.1);border-radius:4px}
+.check-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ── Ollama models sub-section ─────────────────────────────────────────── */
+.model-list{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px}
+.model-tag{padding:3px 8px;background:var(--card);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--mono)}
+.model-pull-row{display:flex;gap:6px;margin-top:10px}
+.model-pull-row input{flex:1}
+
+/* ── Run layout ─────────────────────────────────────────────────────────── */
+.run-layout{display:grid;grid-template-columns:400px 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.run-layout{grid-template-columns:1fr}}
+
+/* ── Form ───────────────────────────────────────────────────────────────── */
+.form-group{margin-bottom:14px}
+label{display:block;font-weight:500;margin-bottom:5px;font-size:13px;color:var(--text)}
+label .opt{color:var(--muted);font-weight:400;font-size:12px}
+.input-row{display:flex;gap:6px}
+.input-row input,.input-row select{flex:1;min-width:0}
+input[type=text],input[type=number],select,textarea{
+  width:100%;padding:8px 10px;background:var(--card);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text);outline:none;transition:.15s
+}
+input[type=text]:focus,input[type=number]:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+input.error,select.error{border-color:var(--danger)}
+.field-error{color:var(--danger);font-size:12px;margin-top:3px}
+select option{background:var(--card)}
+.supervisor-row{display:flex;gap:6px}
+.sup-btn{flex:1;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--muted);font-size:13px;transition:.15s;cursor:pointer}
+.sup-btn:hover,.sup-btn.active{border-color:var(--primary);color:var(--primary);background:rgba(88,166,255,.1)}
+.advanced-toggle{background:none;border:none;color:var(--primary);font-size:13px;cursor:pointer;padding:4px 0;display:flex;align-items:center;gap:4px;margin-bottom:8px}
+.advanced-section{display:none}
+.advanced-section.open{display:block}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.toggle-row{display:flex;align-items:center;gap:8px;padding:6px 0}
+.toggle-label{flex:1;font-size:13px;color:var(--text)}
+.toggle{position:relative;width:36px;height:20px;cursor:pointer}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
+.toggle-slider{position:absolute;inset:0;background:var(--border);border-radius:10px;transition:.2s}
+.toggle input:checked+.toggle-slider{background:var(--primary)}
+.toggle-slider::before{content:"";position:absolute;width:14px;height:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+.toggle input:checked+.toggle-slider::before{transform:translateX(16px)}
+.run-actions{display:flex;gap:8px;margin-top:16px}
+.btn{padding:9px 18px;border-radius:var(--radius);border:none;font-weight:600;font-size:14px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{opacity:.9}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{background:var(--card);border:1px solid var(--border);color:var(--text)}
+.btn-secondary:hover{background:var(--border)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{opacity:.9}
+.btn-sm{padding:5px 10px;font-size:12px}
+.btn-icon{padding:5px 8px;font-size:14px}
+.command-preview{margin-top:10px;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:none}
+.command-preview.visible{display:block}
+
+/* ── Progress panel ─────────────────────────────────────────────────────── */
+.progress-panel{display:flex;flex-direction:column;gap:12px}
+.status-banner{padding:12px 16px;border-radius:var(--radius);border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-weight:500}
+.status-banner.idle{background:var(--surface);color:var(--muted)}
+.status-banner.running{background:rgba(88,166,255,.08);border-color:rgba(88,166,255,.3);color:var(--primary)}
+.status-banner.success{background:rgba(63,185,80,.08);border-color:rgba(63,185,80,.3);color:var(--success)}
+.status-banner.failure{background:rgba(248,81,73,.08);border-color:rgba(248,81,73,.3);color:var(--danger)}
+.status-banner.stopped{background:var(--surface);border-color:var(--border);color:var(--muted)}
+.status-spinner{width:16px;height:16px;border:2px solid rgba(88,166,255,.3);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tasks-container{display:flex;flex-direction:column;gap:8px}
+.task-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;animation:fadeIn .2s ease;transition:border-color .2s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.task-card.running{border-color:rgba(88,166,255,.4)}
+.task-card.approved{border-color:rgba(63,185,80,.4)}
+.task-card.rework{border-color:rgba(210,153,34,.4)}
+.task-card.failure{border-color:rgba(248,81,73,.4)}
+.task-card.dry-run{border-color:rgba(139,148,158,.3)}
+.task-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.task-id{font-weight:700;color:var(--text);font-size:13px}
+.task-status-badge{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-running{background:rgba(88,166,255,.15);color:var(--primary)}
+.badge-approved{background:rgba(63,185,80,.15);color:var(--success)}
+.badge-rework{background:rgba(210,153,34,.15);color:var(--warning)}
+.badge-retrying{background:rgba(88,166,255,.1);color:var(--muted)}
+.badge-failure{background:rgba(248,81,73,.15);color:var(--danger)}
+.badge-dry-run{background:var(--card);color:var(--muted)}
+.task-attempt{font-size:11px;color:var(--muted);margin-left:auto}
+.task-files{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.file-tag{padding:2px 7px;background:var(--card);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:var(--mono);color:var(--muted)}
+.task-instruction{font-size:12px;color:var(--text);padding:6px 8px;background:var(--card);border-radius:4px;margin-bottom:4px}
+.rework-block{margin-top:6px;padding:6px 8px;background:rgba(210,153,34,.08);border:1px solid rgba(210,153,34,.2);border-radius:4px;font-size:12px;color:var(--warning)}
+.rework-label{font-weight:600;margin-bottom:2px}
+.log-container{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;max-height:280px}
+.log-header{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--muted)}
+.log-body{overflow-y:auto;padding:10px 12px;flex:1}
+.log-line{font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.log-line.info{color:var(--text)}
+.log-line.warn{color:var(--warning)}
+.log-line.error{color:var(--danger)}
+
+/* ── History tab ────────────────────────────────────────────────────────── */
+.history-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:16px}
+.history-toolbar h2{margin:0;flex:1}
+.history-table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}
+th{color:var(--muted);font-weight:500;font-size:12px;background:var(--surface)}
+tr:hover td{background:rgba(255,255,255,.02)}
+.status-pill{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.pill-success{background:rgba(63,185,80,.15);color:var(--success)}
+.pill-failure{background:rgba(248,81,73,.15);color:var(--danger)}
+.pill-running{background:rgba(88,166,255,.15);color:var(--primary)}
+.pill-stopped{background:var(--card);color:var(--muted)}
+.actions-cell{display:flex;gap:4px}
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty-state .empty-icon{font-size:40px;margin-bottom:12px}
+.empty-state p{font-size:14px}
+
+/* ── Log modal ──────────────────────────────────────────────────────────── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:800px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+.modal-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.modal-header h3{flex:1;font-size:15px}
+.modal-body{overflow-y:auto;padding:16px 20px;flex:1}
+.modal-log{font-family:var(--mono);font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-all;line-height:1.7}
+.modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+
+/* ── Install terminal ───────────────────────────────────────────────────── */
+.install-terminal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--mono);font-size:11px;max-height:160px;overflow-y:auto;margin-top:8px;display:none}
+.install-terminal.visible{display:block}
+.install-line{color:var(--muted);line-height:1.6}
+
+/* ── Toasts ─────────────────────────────────────────────────────────────── */
+.toast-area{position:fixed;bottom:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{padding:10px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;box-shadow:var(--shadow);animation:slideIn .2s ease;max-width:340px}
+@keyframes slideIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
+.toast.success{background:var(--success);color:#fff}
+.toast.error{background:var(--danger);color:#fff}
+.toast.info{background:var(--primary);color:#fff}
+
+/* ── Divider ─────────────────────────────────────────────────────────────── */
+.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
+</style>
+</head>
+<body>
+
+<!-- ── Nav ───────────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="nav-logo">
+    <span class="nav-logo-icon">🌉</span>
+    Bridge App
+  </div>
+  <div class="nav-tabs">
+    <button class="nav-tab" data-tab="setup" onclick="switchTab('setup')">
+      🔧 Setup
+      <span class="tab-badge" id="setup-badge" style="display:none"></span>
+    </button>
+    <button class="nav-tab active" data-tab="run" onclick="switchTab('run')">
+      ▶ Run
+    </button>
+    <button class="nav-tab" data-tab="history" onclick="switchTab('history')">
+      📋 History
+      <span class="tab-badge" id="history-badge" style="display:none"></span>
+    </button>
+  </div>
+  <div class="nav-right">
+    <div class="run-badge idle" id="run-badge">
+      <span class="dot" style="display:none"></span>
+      <span id="run-badge-text">Idle</span>
+    </div>
+    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="theme-btn">🌙</button>
+  </div>
+</nav>
+
+<!-- ── Toast area ───────────────────────────────────────────────────────── -->
+<div class="toast-area" id="toast-area"></div>
+
+<!-- ══════════════════════ SETUP TAB ═══════════════════════════════════════ -->
+<div class="content tab-panel" id="tab-setup">
+  <h2>System Setup</h2>
+  <p class="section-desc">All items below must be installed before you can run the bridge.</p>
+  <div class="check-grid" id="check-grid">
+    <div class="card" style="text-align:center;padding:40px;color:var(--muted)">Checking your system…</div>
+  </div>
+</div>
+
+<!-- ══════════════════════ RUN TAB ═════════════════════════════════════════ -->
+<div class="content tab-panel active" id="tab-run">
+  <div class="run-layout">
+
+    <!-- Left: Form ─────────────────────────────────────────────────────── -->
+    <div>
+      <h2 style="margin-bottom:16px">Configure & Run</h2>
+
+      <div class="card">
+        <!-- Goal -->
+        <div class="form-group">
+          <label for="f-goal">Goal <span style="color:var(--danger)">*</span></label>
+          <textarea id="f-goal" rows="3" placeholder="e.g. Build a user login page with validation" style="resize:vertical"></textarea>
+          <div class="field-error" id="err-goal"></div>
+        </div>
+
+        <!-- Repo root -->
+        <div class="form-group">
+          <label for="f-repo">Project Folder <span style="color:var(--danger)">*</span></label>
+          <div class="input-row">
+            <input type="text" id="f-repo" placeholder="C:\MyProject\GameRepo">
+            <button class="btn btn-secondary btn-sm" onclick="browseFolder('f-repo')" title="Browse">📁</button>
+          </div>
+          <div class="field-error" id="err-repo"></div>
+        </div>
+
+        <!-- Idea file -->
+        <div class="form-group">
+          <label for="f-idea">Idea / Brief File <span class="opt">(optional)</span></label>
+          <div class="input-row">
+            <input type="text" id="f-idea" placeholder="C:\MyProject\GAME_IDEA.md">
+            <button class="btn btn-secondary btn-sm" onclick="browseFile('f-idea')" title="Browse">📄</button>
+          </div>
+        </div>
+
+        <!-- Aider model -->
+        <div class="form-group">
+          <label for="f-model">Aider Local LLM Model <span style="color:var(--danger)">*</span></label>
+          <div class="input-row">
+            <select id="f-model">
+              <option value="">— Loading models… —</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="refreshModels()" title="Refresh model list">↺</button>
+          </div>
+          <div class="field-error" id="err-model"></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Popular: <a href="#" onclick="setModel('ollama/mistral')">mistral</a> ·
+            <a href="#" onclick="setModel('ollama/codellama')">codellama</a> ·
+            <a href="#" onclick="setModel('ollama/deepseek-coder')">deepseek-coder</a>
+          </div>
+        </div>
+
+        <!-- Supervisor -->
+        <div class="form-group">
+          <label>Supervisor Agent</label>
+          <div class="supervisor-row">
+            <button class="sup-btn active" id="sup-codex" onclick="setSupervisor('codex')">🤖 Codex</button>
+            <button class="sup-btn" id="sup-claude" onclick="setSupervisor('claude')">🤖 Claude</button>
+            <button class="sup-btn" id="sup-custom" onclick="setSupervisor('custom')">⚙ Custom</button>
+          </div>
+          <div id="custom-cmd-wrap" style="display:none;margin-top:6px">
+            <input type="text" id="f-supervisor-command" placeholder="e.g. my-agent --print">
+          </div>
+        </div>
+
+        <!-- Advanced options -->
+        <button class="advanced-toggle" onclick="toggleAdvanced()">
+          <span id="adv-arrow">▶</span> Advanced Options
+        </button>
+        <div class="advanced-section" id="advanced-section">
+          <div class="grid-2">
+            <div class="form-group">
+              <label for="f-max-plan">Max Plan Attempts</label>
+              <input type="number" id="f-max-plan" min="1" max="10" value="3">
+            </div>
+            <div class="form-group">
+              <label for="f-max-retry">Max Task Retries</label>
+              <input type="number" id="f-max-retry" min="0" max="10" value="2">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="f-validation">CI Gate Command <span class="opt">(optional)</span></label>
+            <input type="text" id="f-validation" placeholder="e.g. python -m pytest">
+          </div>
+          <div class="form-group">
+            <label for="f-plan-file">Load Existing Plan File <span class="opt">(skips supervisor planning)</span></label>
+            <div class="input-row">
+              <input type="text" id="f-plan-file" placeholder="e.g. plan.json">
+              <button class="btn btn-secondary btn-sm" onclick="browseFile('f-plan-file')" title="Browse">📄</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="f-plan-out">Save Plan To File <span class="opt">(optional)</span></label>
+            <div class="input-row">
+              <input type="text" id="f-plan-out" placeholder="e.g. plan.json">
+              <button class="btn btn-secondary btn-sm" onclick="browseFile('f-plan-out')" title="Browse">📄</button>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Dry Run (plan only — no file changes)</span>
+            <label class="toggle">
+              <input type="checkbox" id="f-dry-run">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <hr class="divider">
+        <div class="run-actions">
+          <button class="btn btn-primary" id="run-btn" onclick="startRun()">▶ Run</button>
+          <button class="btn btn-danger" id="stop-btn" onclick="stopRun()" style="display:none">⏹ Stop</button>
+          <button class="btn btn-secondary" onclick="toggleCommandPreview()" title="Show command">{ }</button>
+        </div>
+        <div class="command-preview" id="cmd-preview"></div>
+      </div>
+    </div>
+
+    <!-- Right: Progress ─────────────────────────────────────────────────── -->
+    <div class="progress-panel" id="progress-panel">
+      <div class="status-banner idle" id="status-banner">
+        <span>Ready — fill in the form and click Run</span>
+      </div>
+
+      <div class="tasks-container" id="tasks-container"></div>
+
+      <div class="log-container" id="log-container" style="display:none">
+        <div class="log-header">
+          Live Log
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" onclick="clearLog()">Clear</button>
+            <button class="btn btn-secondary btn-sm" id="autoscroll-btn" onclick="toggleAutoscroll()">⬇ Auto-scroll</button>
+          </div>
+        </div>
+        <div class="log-body" id="log-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ HISTORY TAB ═════════════════════════════════════ -->
+<div class="content tab-panel" id="tab-history">
+  <div class="history-toolbar">
+    <h2>Run History</h2>
+    <button class="btn btn-secondary btn-sm" onclick="loadHistory()">↺ Refresh</button>
+    <button class="btn btn-secondary btn-sm" onclick="clearHistory()">🗑 Clear All</button>
+  </div>
+  <div id="history-content">
+    <div class="card empty-state">
+      <div class="empty-icon">📋</div>
+      <p>No runs yet. Head to the <strong>Run</strong> tab to get started.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ── Log modal ──────────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="log-modal" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title">Run Log</h3>
+      <button class="btn btn-secondary btn-sm" onclick="copyModalLog()">📋 Copy</button>
+      <button class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <pre class="modal-log" id="modal-log"></pre>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let currentSupervisor = 'codex';
+let autoscroll = true;
+let sseSource = null;
+let taskCards = {};
+
+const SUPERVISOR_COMMANDS = {
+  codex:  'codex.cmd exec --skip-git-repo-check --color never',
+  claude: 'claude --print',
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  applyTheme(localStorage.getItem('theme') || 'dark');
+  await loadSettings();
+  await refreshModels();
+  runSetupChecks();
+  connectSSE();
+  // Ctrl+Enter to run
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey && e.key === 'Enter') startRun();
+  });
+});
+
+// ── Theme ─────────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  localStorage.setItem('theme', next);
+}
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  document.getElementById('theme-btn').textContent = t === 'dark' ? '☀️' : '🌙';
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelector(`[data-tab="${name}"]`).classList.add('active');
+  if (name === 'history') loadHistory();
+}
+
+// ── Settings persistence ──────────────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const s = await apiFetch('/api/settings');
+    if (s.goal)               document.getElementById('f-goal').value = s.goal;
+    if (s.repo_root)          document.getElementById('f-repo').value = s.repo_root;
+    if (s.idea_file)          document.getElementById('f-idea').value = s.idea_file;
+    if (s.validation_command) document.getElementById('f-validation').value = s.validation_command;
+    if (s.plan_output_file)   document.getElementById('f-plan-out').value = s.plan_output_file;
+    if (s.plan_file)          document.getElementById('f-plan-file').value = s.plan_file;
+    if (s.max_plan_attempts)  document.getElementById('f-max-plan').value = s.max_plan_attempts;
+    if (s.max_task_retries !== undefined) document.getElementById('f-max-retry').value = s.max_task_retries;
+    if (s.dry_run)            document.getElementById('f-dry-run').checked = s.dry_run;
+    setSupervisor(s.supervisor || 'codex', s.supervisor_command);
+    // Model selection restored after models are loaded
+    window._savedModel = s.aider_model;
+  } catch(_) {}
+}
+
+function gatherSettings() {
+  const supervisorCmd = currentSupervisor === 'custom'
+    ? document.getElementById('f-supervisor-command').value.trim()
+    : SUPERVISOR_COMMANDS[currentSupervisor];
+  return {
+    goal:               document.getElementById('f-goal').value.trim(),
+    repo_root:          document.getElementById('f-repo').value.trim(),
+    idea_file:          document.getElementById('f-idea').value.trim(),
+    aider_model:        document.getElementById('f-model').value.trim(),
+    supervisor:         currentSupervisor,
+    supervisor_command: supervisorCmd,
+    validation_command: document.getElementById('f-validation').value.trim(),
+    max_plan_attempts:  parseInt(document.getElementById('f-max-plan').value) || 3,
+    max_task_retries:   parseInt(document.getElementById('f-max-retry').value) || 2,
+    plan_output_file:   document.getElementById('f-plan-out').value.trim(),
+    plan_file:          document.getElementById('f-plan-file').value.trim(),
+    dry_run:            document.getElementById('f-dry-run').checked,
+  };
+}
+
+// ── Supervisor selector ───────────────────────────────────────────────────
+function setSupervisor(name, customCmd) {
+  currentSupervisor = name;
+  ['codex','claude','custom'].forEach(n => {
+    document.getElementById('sup-' + n).classList.toggle('active', n === name);
+  });
+  const customWrap = document.getElementById('custom-cmd-wrap');
+  customWrap.style.display = name === 'custom' ? 'block' : 'none';
+  if (name === 'custom' && customCmd) {
+    document.getElementById('f-supervisor-command').value = customCmd;
+  }
+}
+
+// ── Advanced toggle ───────────────────────────────────────────────────────
+function toggleAdvanced() {
+  const sec = document.getElementById('advanced-section');
+  const open = sec.classList.toggle('open');
+  document.getElementById('adv-arrow').textContent = open ? '▼' : '▶';
+}
+
+// ── Browse dialogs ────────────────────────────────────────────────────────
+async function browseFolder(targetId) {
+  try {
+    const r = await apiFetch('/api/browse/folder');
+    if (r.path) document.getElementById(targetId).value = r.path;
+  } catch(e) { toast('Could not open folder picker', 'error'); }
+}
+async function browseFile(targetId) {
+  try {
+    const r = await apiFetch('/api/browse/file');
+    if (r.path) document.getElementById(targetId).value = r.path;
+  } catch(e) { toast('Could not open file picker', 'error'); }
+}
+
+// ── Model list ────────────────────────────────────────────────────────────
+async function refreshModels() {
+  const sel = document.getElementById('f-model');
+  try {
+    const models = await apiFetch('/api/ollama/models');
+    const saved = window._savedModel || sel.value;
+    sel.innerHTML = '';
+    const presets = ['ollama/mistral','ollama/codellama','ollama/deepseek-coder','ollama/llama3','ollama/qwen2.5-coder'];
+    const all = [...new Set([...models.map(m => 'ollama/' + m), ...presets])];
+    all.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      sel.appendChild(opt);
+    });
+    // Add "custom" option
+    const custom = document.createElement('option');
+    custom.value = '__custom__'; custom.textContent = '— Type custom model —';
+    sel.appendChild(custom);
+    if (saved) sel.value = saved;
+    if (!sel.value && all.length) sel.value = all[0];
+  } catch(_) {
+    sel.innerHTML = '<option value="ollama/mistral">ollama/mistral</option>';
+  }
+}
+
+function setModel(m) {
+  const sel = document.getElementById('f-model');
+  let found = false;
+  for (let opt of sel.options) {
+    if (opt.value === m) { sel.value = m; found = true; break; }
+  }
+  if (!found) {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    sel.insertBefore(opt, sel.lastElementChild);
+    sel.value = m;
+  }
+  return false;
+}
+
+document.addEventListener('change', e => {
+  if (e.target.id === 'f-model' && e.target.value === '__custom__') {
+    const m = prompt('Enter custom model name (e.g. ollama/llama3.2):');
+    if (m) setModel(m.trim());
+  }
+});
+
+// ── Validation ────────────────────────────────────────────────────────────
+function validateForm() {
+  let ok = true;
+  const clearErr = id => { document.getElementById(id).textContent = ''; document.getElementById(id.replace('err-','f-')).classList.remove('error'); };
+  const setErr = (id, msg) => { document.getElementById(id).textContent = msg; document.getElementById(id.replace('err-','f-')).classList.add('error'); ok = false; };
+  clearErr('err-goal'); clearErr('err-repo'); clearErr('err-model');
+  if (!document.getElementById('f-goal').value.trim()) setErr('err-goal', 'Goal is required.');
+  if (!document.getElementById('f-plan-file').value.trim()) { // only require repo when no plan-file
+    if (!document.getElementById('f-repo').value.trim()) setErr('err-repo', 'Project folder is required.');
+  }
+  if (!document.getElementById('f-model').value.trim() || document.getElementById('f-model').value === '__custom__') setErr('err-model', 'Select an Aider model.');
+  return ok;
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────
+async function startRun() {
+  if (!validateForm()) return;
+  const settings = gatherSettings();
+  setRunState('running');
+  clearTasks();
+  clearLog();
+  document.getElementById('log-container').style.display = 'block';
+  setBanner('running', '⟳ Requesting plan from supervisor…');
+  try {
+    const r = await apiFetch('/api/run', { method: 'POST', body: JSON.stringify(settings) });
+    if (r.error) { toast(r.error, 'error'); setRunState('idle'); }
+  } catch(e) {
+    toast('Failed to start run: ' + e.message, 'error');
+    setRunState('idle');
+  }
+}
+
+async function stopRun() {
+  if (!confirm('Stop the current run?')) return;
+  await apiFetch('/api/run/stop', { method: 'POST' });
+  toast('Run stopped.', 'info');
+}
+
+// ── Command preview ───────────────────────────────────────────────────────
+async function toggleCommandPreview() {
+  const el = document.getElementById('cmd-preview');
+  if (el.classList.toggle('visible')) {
+    const status = await apiFetch('/api/run/status');
+    const settings = gatherSettings();
+    const parts = ['python main.py', JSON.stringify(settings.goal)];
+    if (settings.repo_root)          parts.push('--repo-root ' + JSON.stringify(settings.repo_root));
+    if (settings.aider_model)        parts.push('--aider-model ' + settings.aider_model);
+    if (settings.supervisor_command) parts.push('--supervisor-command ' + JSON.stringify(settings.supervisor_command));
+    if (settings.dry_run)            parts.push('--dry-run');
+    el.textContent = parts.join(' ');
+  }
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────
+function connectSSE() {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource('/api/run/stream');
+  sseSource.onmessage = e => {
+    let evt;
+    try { evt = JSON.parse(e.data); } catch(_) { return; }
+    handleEvent(evt);
+  };
+  sseSource.onerror = () => { setTimeout(connectSSE, 3000); };
+}
+
+function handleEvent(evt) {
+  switch (evt.type) {
+    case 'start':
+      setBanner('running', '⟳ Bridge started…');
+      document.getElementById('cmd-preview').textContent = evt.command || '';
+      break;
+    case 'plan_ready':
+      setBanner('running', `⟳ Plan ready — ${evt.task_count} task(s)`);
+      break;
+    case 'task_update':
+      updateTaskCard(evt.task);
+      break;
+    case 'log':
+      appendLog(evt.line);
+      break;
+    case 'complete':
+      if (evt.status === 'success') {
+        setBanner('success', `✓ Completed ${evt.task_count || ''} task(s) in ${evt.elapsed}s`);
+        toast('Run completed successfully!', 'success');
+      } else {
+        setBanner('failure', `✗ Run failed (exit code ${evt.exit_code})`);
+        toast('Run failed. Check the log.', 'error');
+      }
+      setRunState(evt.status);
+      updateNavBadge('history');
+      break;
+    case 'error':
+      setBanner('failure', '✗ ' + (evt.message || 'Unexpected error'));
+      toast(evt.message || 'Error', 'error');
+      setRunState('failure');
+      break;
+    case 'stopped':
+      setBanner('stopped', '⏹ Run stopped');
+      setRunState('stopped');
+      break;
+  }
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────
+function setRunState(state) {
+  const runBtn  = document.getElementById('run-btn');
+  const stopBtn = document.getElementById('stop-btn');
+  const badge   = document.getElementById('run-badge');
+  const dot     = badge.querySelector('.dot');
+  const text    = document.getElementById('run-badge-text');
+  badge.className = 'run-badge ' + state;
+  dot.style.display = state === 'running' ? 'block' : 'none';
+  text.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+  runBtn.disabled = state === 'running';
+  stopBtn.style.display = state === 'running' ? 'inline-flex' : 'none';
+}
+
+function setBanner(state, msg) {
+  const el = document.getElementById('status-banner');
+  el.className = 'status-banner ' + state;
+  const spinner = state === 'running' ? '<div class="status-spinner"></div>' : '';
+  el.innerHTML = spinner + `<span>${msg}</span>`;
+}
+
+function clearTasks() { taskCards = {}; document.getElementById('tasks-container').innerHTML = ''; }
+function clearLog()   { document.getElementById('log-body').innerHTML = ''; }
+
+function updateTaskCard(task) {
+  const container = document.getElementById('tasks-container');
+  let card = document.getElementById('task-' + task.id);
+  const statusBadge = {
+    running: '<span class="task-status-badge badge-running">⟳ Running</span>',
+    approved: '<span class="task-status-badge badge-approved">✓ Approved</span>',
+    rework: '<span class="task-status-badge badge-rework">↻ Rework</span>',
+    retrying: '<span class="task-status-badge badge-retrying">↺ Retrying</span>',
+    failure: '<span class="task-status-badge badge-failure">✗ Failed</span>',
+    'dry-run': '<span class="task-status-badge badge-dry-run">Dry Run</span>',
+  }[task.status] || '';
+
+  const files = (task.files || []).map(f => `<span class="file-tag">${f}</span>`).join('');
+  const instr = task.instruction ? `<div class="task-instruction">${escHtml(task.instruction)}</div>` : '';
+  const reworks = (task.reworks || []).map(r =>
+    `<div class="rework-block"><div class="rework-label">↻ Supervisor rework instruction:</div>${escHtml(r)}</div>`
+  ).join('');
+
+  const html = `
+    <div class="task-header">
+      <span class="task-id">Task ${task.id}</span>
+      ${statusBadge}
+      <span class="task-attempt">attempt ${task.attempt || 1}</span>
+    </div>
+    ${files ? `<div class="task-files">${files}</div>` : ''}
+    ${instr}${reworks}
+  `;
+
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'task-' + task.id;
+    card.className = 'task-card';
+    container.appendChild(card);
+  }
+  card.className = `task-card ${task.status}`;
+  card.innerHTML = html;
+}
+
+function appendLog(line) {
+  const body = document.getElementById('log-body');
+  const el = document.createElement('div');
+  el.className = 'log-line' + (line.includes('| ERROR |') || line.includes('ERROR') ? ' error' : line.includes('| WARNING |') ? ' warn' : line.includes('| INFO |') ? ' info' : '');
+  el.textContent = line;
+  body.appendChild(el);
+  if (autoscroll) body.scrollTop = body.scrollHeight;
+}
+
+function toggleAutoscroll() {
+  autoscroll = !autoscroll;
+  document.getElementById('autoscroll-btn').style.opacity = autoscroll ? '1' : '0.5';
+}
+
+function updateNavBadge(tab) {
+  const badge = document.getElementById(tab + '-badge');
+  if (badge) { badge.style.display = 'inline-block'; }
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const content = document.getElementById('history-content');
+  try {
+    const history = await apiFetch('/api/history');
+    document.getElementById('history-badge').style.display = history.length ? 'inline-block' : 'none';
+    document.getElementById('history-badge').textContent = history.length;
+    if (!history.length) {
+      content.innerHTML = `<div class="card empty-state"><div class="empty-icon">📋</div><p>No runs yet.</p></div>`;
+      return;
+    }
+    const rows = history.map(h => {
+      const pill = {
+        success: '<span class="status-pill pill-success">✓ Success</span>',
+        failure: '<span class="status-pill pill-failure">✗ Failed</span>',
+        running: '<span class="status-pill pill-running">⟳ Running</span>',
+        stopped: '<span class="status-pill pill-stopped">⏹ Stopped</span>',
+      }[h.status] || `<span class="status-pill">${h.status}</span>`;
+      const elapsed = h.elapsed ? `${h.elapsed}s` : '—';
+      const goal = escHtml((h.goal || '').substring(0, 60)) + (h.goal && h.goal.length > 60 ? '…' : '');
+      const repo = escHtml((h.repo_root || '').split(/[\\/]/).pop() || h.repo_root || '—');
+      return `<tr>
+        <td style="color:var(--muted);font-size:12px">${h.timestamp || '—'}</td>
+        <td title="${escHtml(h.goal || '')}">${goal}</td>
+        <td title="${escHtml(h.repo_root || '')}" style="font-family:var(--mono);font-size:12px">${repo}</td>
+        <td style="font-family:var(--mono);font-size:12px">${escHtml(h.aider_model || '—')}</td>
+        <td>${pill}</td>
+        <td>${h.tasks || 0}</td>
+        <td>${elapsed}</td>
+        <td>
+          <div class="actions-cell">
+            <button class="btn btn-secondary btn-sm" onclick="viewLog('${h.id}')">Log</button>
+            <button class="btn btn-secondary btn-sm" onclick="reRun('${h.id}')">↺ Re-run</button>
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="deleteHistory('${h.id}')" title="Delete">🗑</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+    content.innerHTML = `
+      <div class="history-table-wrap">
+        <table>
+          <thead><tr>
+            <th>Time</th><th>Goal</th><th>Repo</th><th>Model</th>
+            <th>Status</th><th>Tasks</th><th>Duration</th><th>Actions</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    content.innerHTML = `<div class="card" style="color:var(--danger)">Could not load history: ${e.message}</div>`;
+  }
+}
+
+async function viewLog(id) {
+  const entry = await apiFetch(`/api/history/${id}`);
+  const lines = (entry.log || []).join('\n');
+  document.getElementById('modal-title').textContent = `Log — ${entry.goal || id}`;
+  document.getElementById('modal-log').textContent = lines || '(no log captured)';
+  document.getElementById('log-modal').classList.add('open');
+}
+
+async function reRun(id) {
+  const entry = await apiFetch(`/api/history/${id}`);
+  if (entry.goal)               document.getElementById('f-goal').value = entry.goal;
+  if (entry.repo_root)          document.getElementById('f-repo').value = entry.repo_root;
+  if (entry.aider_model)        setModel(entry.aider_model);
+  if (entry.supervisor_command) setSupervisor(entry.supervisor || 'custom', entry.supervisor_command);
+  switchTab('run');
+  toast('Settings restored — review and click Run.', 'info');
+}
+
+async function deleteHistory(id) {
+  if (!confirm('Delete this history entry?')) return;
+  await apiFetch(`/api/history/${id}`, { method: 'DELETE' });
+  loadHistory();
+}
+
+async function clearHistory() {
+  if (!confirm('Clear all history? This cannot be undone.')) return;
+  await apiFetch('/api/history', { method: 'DELETE' });
+  loadHistory();
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('log-modal') || e.currentTarget === e.target) {
+    document.getElementById('log-modal').classList.remove('open');
+  }
+}
+
+function copyModalLog() {
+  const text = document.getElementById('modal-log').textContent;
+  navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success'));
+}
+
+// ── Setup checks ──────────────────────────────────────────────────────────
+async function runSetupChecks() {
+  const grid = document.getElementById('check-grid');
+  grid.innerHTML = '';
+  let issues = 0;
+  try {
+    const checks = await apiFetch('/api/check');
+    const items = [
+      { key: 'python',  icon: '🐍', name: 'Python 3.10+' },
+      { key: 'aider',   icon: '✏️',  name: 'Aider' },
+      { key: 'ollama',  icon: '🦙', name: 'Ollama (Local LLM)' },
+      { key: 'codex',   icon: '🤖', name: 'Codex CLI' },
+      { key: 'claude',  icon: '🤖', name: 'Claude CLI' },
+    ];
+    for (const item of items) {
+      const info = checks[item.key];
+      const ok = info.installed && (item.key !== 'python' || info.ok);
+      if (!ok) issues++;
+      grid.appendChild(makeCheckCard(item, info, ok));
+    }
+    const badge = document.getElementById('setup-badge');
+    if (issues > 0) {
+      badge.textContent = issues; badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch(e) {
+    grid.innerHTML = `<div class="card" style="color:var(--danger)">Setup check failed: ${e.message}</div>`;
+  }
+}
+
+function makeCheckCard(item, info, ok) {
+  const card = document.createElement('div');
+  card.className = `check-card ${ok ? 'ok' : 'warn'}`;
+  const statusIcon = ok ? '✅' : '❌';
+  let meta = '';
+  if (info.version) meta += `<div>Version: ${escHtml(info.version)}</div>`;
+  if (info.path)    meta += `<div>Path: ${escHtml(info.path)}</div>`;
+
+  let actions = '';
+  let extra = '';
+
+  if (!info.installed && item.key === 'aider') {
+    actions = `<button class="btn btn-primary btn-sm" onclick="installAider(this)">📦 Install Aider</button>`;
+    card.innerHTML += `<div class="install-terminal" id="aider-terminal"></div>`;
+  }
+  if (!info.installed && item.key === 'ollama') {
+    actions = `<a class="btn btn-primary btn-sm" href="https://ollama.com" target="_blank">⬇ Download Ollama</a>`;
+  }
+  if (!info.installed && item.key === 'codex') {
+    actions = `<a class="btn btn-secondary btn-sm" href="https://github.com/openai/codex" target="_blank">📖 Setup Codex</a>`;
+  }
+  if (!info.installed && item.key === 'claude') {
+    actions = `<a class="btn btn-secondary btn-sm" href="https://claude.ai/download" target="_blank">📖 Setup Claude CLI</a>`;
+  }
+
+  // Ollama model management
+  if (item.key === 'ollama' && info.installed) {
+    const modelTags = (info.models || []).map(m => `<span class="model-tag">${escHtml(m)}</span>`).join('');
+    extra = `
+      ${info.models && info.models.length ? `<div class="model-list">${modelTags}</div>` : '<div style="font-size:12px;color:var(--muted)">No models installed yet.</div>'}
+      <div class="model-pull-row">
+        <input type="text" id="pull-model-input" placeholder="Model name e.g. mistral" style="font-size:12px">
+        <button class="btn btn-primary btn-sm" onclick="pullOllamaModel()">⬇ Pull</button>
+      </div>
+      <div class="install-terminal" id="ollama-terminal"></div>
+    `;
+    if (!info.models || !info.models.length) actions = '';
+    else { document.getElementById('setup-badge') && (info.hint = null); }
+  }
+
+  card.className = `check-card ${ok ? 'ok' : 'warn'}`;
+  card.innerHTML = `
+    <div class="check-header">
+      <span class="check-icon">${item.icon}</span>
+      <span class="check-name">${item.name}</span>
+      <span class="check-status">${statusIcon}</span>
+    </div>
+    ${meta ? `<div class="check-meta">${meta}</div>` : ''}
+    ${info.hint ? `<div class="check-hint">💡 ${escHtml(info.hint)}</div>` : ''}
+    ${extra}
+    ${actions ? `<div class="check-actions">${actions}<button class="btn btn-secondary btn-sm" onclick="runSetupChecks()">↺ Recheck</button></div>` : `<div class="check-actions"><button class="btn btn-secondary btn-sm" onclick="runSetupChecks()">↺ Recheck</button></div>`}
+  `;
+  return card;
+}
+
+async function installAider(btn) {
+  btn.disabled = true; btn.textContent = '⟳ Installing…';
+  const terminal = document.getElementById('aider-terminal');
+  terminal.innerHTML = ''; terminal.classList.add('visible');
+  try {
+    const es = new EventSource('/api/install/aider');
+    es.onmessage = e => {
+      const d = JSON.parse(e.data);
+      if (d.done) {
+        es.close();
+        btn.textContent = d.status === 'success' ? '✓ Installed' : '✗ Failed';
+        if (d.status === 'success') { toast('Aider installed!', 'success'); setTimeout(runSetupChecks, 800); }
+        else toast('Aider install failed. See terminal output.', 'error');
+      } else {
+        const line = document.createElement('div');
+        line.className = 'install-line'; line.textContent = d.line;
+        terminal.appendChild(line);
+        terminal.scrollTop = terminal.scrollHeight;
+      }
+    };
+  } catch(e) { toast('Install failed: ' + e.message, 'error'); btn.disabled = false; }
+}
+
+async function pullOllamaModel() {
+  const model = document.getElementById('pull-model-input').value.trim();
+  if (!model) { toast('Enter a model name first.', 'error'); return; }
+  const terminal = document.getElementById('ollama-terminal');
+  terminal.innerHTML = `<div class="install-line">Pulling ${escHtml(model)}…</div>`;
+  terminal.classList.add('visible');
+  try {
+    const es = new EventSource('/api/ollama/pull');
+    // Can't POST via EventSource natively — use fetch + ReadableStream
+    es.close();
+    const resp = await fetch('/api/ollama/pull', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ model }),
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n\n');
+      buf = lines.pop();
+      for (const chunk of lines) {
+        if (!chunk.startsWith('data: ')) continue;
+        const d = JSON.parse(chunk.slice(6));
+        if (d.done) {
+          if (d.status === 'success') { toast(`Model ${model} pulled!`, 'success'); setTimeout(runSetupChecks, 800); }
+          else toast('Pull failed.', 'error');
+        } else {
+          const line = document.createElement('div');
+          line.className = 'install-line'; line.textContent = d.line;
+          terminal.appendChild(line);
+          terminal.scrollTop = terminal.scrollHeight;
+        }
+      }
+    }
+    refreshModels();
+  } catch(e) { toast('Pull failed: ' + e.message, 'error'); }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+async function apiFetch(url, opts = {}) {
+  const defaults = { headers: { 'Content-Type': 'application/json' } };
+  const res = await fetch(url, { ...defaults, ...opts });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toast(msg, type = 'info') {
+  const area = document.getElementById('toast-area');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  area.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+</script>
+</body>
+</html>

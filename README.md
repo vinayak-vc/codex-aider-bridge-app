@@ -1,6 +1,10 @@
 # Codex Aider Bridge App
 
-`codex-aider-bridge-app` is a CLI orchestrator that separates **planning and review** (done by a supervisor AI agent) from **code execution** (done by Aider running on a local LLM).
+`codex-aider-bridge-app` is a local orchestrator that separates **planning and review** (done by a supervisor AI agent) from **code execution** (done by Aider running on a local LLM).
+
+It ships with a **web UI** you can launch by double-clicking `launch_ui.bat`, and a CLI you can drive directly from the terminal.
+
+---
 
 ## Architecture
 
@@ -42,88 +46,27 @@ Supervisor → atomic plan
 
 ---
 
-## Features
+## Quick Start — Web UI
 
-- Supervisor agent produces atomic sequential plans from the live repo tree — no hardcoded file lists
-- Supervisor reviews each task's git diff before the next task is allowed to start
-- Aider runs on a local LLM (`--aider-model ollama/mistral`, `ollama/codellama`, etc.)
-- Mechanical validation (file existence, Python syntax, optional CI gate) runs without supervisor tokens
-- Supervisor tokens are only spent on planning and quality review — never on mechanical retries
-- No fallback planner — if the supervisor fails, use `--plan-file` to supply a plan manually
-- Dry-run mode generates and parses the plan without invoking Aider
-- Persistent file and console logging
+The easiest way to use the app. No terminal required after setup.
 
----
-
-## Project Structure
-
-```text
-bridge-app/
-├── main.py
-├── supervisor/
-│   ├── __init__.py
-│   └── agent.py              SupervisorAgent — plan + review
-├── planner/
-│   ├── __init__.py
-│   ├── codex_client.py       Backwards-compat shim → supervisor.agent
-│   └── fallback_planner.py   Removed (raises NotImplementedError)
-├── executor/
-│   ├── __init__.py
-│   ├── aider_runner.py       Runs Aider with local LLM model support
-│   └── diff_collector.py     Collects git diff after each Aider run
-├── parser/
-│   ├── __init__.py
-│   └── task_parser.py        Validates supervisor JSON plan
-├── validator/
-│   ├── __init__.py
-│   └── validator.py          Mechanical checks only (MechanicalValidator)
-├── context/
-│   ├── __init__.py
-│   ├── file_selector.py      Resolves task file paths
-│   ├── idea_loader.py        Loads optional idea/brief file
-│   └── repo_scanner.py       Produces compact repo tree for supervisor
-├── models/
-│   ├── __init__.py
-│   └── task.py               Task, TaskReport, ReviewResult, BridgeConfig, …
-├── utils/
-│   ├── __init__.py
-│   └── command_resolution.py Resolves executables across PATH and venv Scripts
-├── bridge_logging/
-│   ├── __init__.py
-│   └── logger.py
-├── logs/
-│   └── .gitkeep
-├── example plan.json
-├── requirements.txt
-├── AI_SUPERVISOR_PROMPT.md   Prompt reference and backend configuration guide
-├── README.md
-├── CHANGELOG.md
-└── AGENT_CONTEXT.md
+```
+python launch_ui.py
 ```
 
----
+Or on Windows, just double-click **`launch_ui.bat`**.
 
-## Requirements
+A browser window opens at `http://127.0.0.1:7823` with:
 
-- Python 3.10+
-- A supervisor agent CLI: `codex`, `claude`, or any agent that reads a prompt and writes JSON
-- `aider` CLI installed
-- A local LLM accessible via Aider (Ollama, LM Studio, etc.) — or Aider's own cloud model
+- **Setup tab** — detects Python, Aider, Ollama, Codex CLI, Claude CLI. Shows install hints and one-click install buttons for missing tools.
+- **Run tab** — fill in your goal, repo path, model, and supervisor settings. Click **Start Run** to watch task-by-task progress in real time with live log streaming.
+- **History tab** — every run is saved. Re-run, view logs, or delete entries.
 
-No external Python packages are required for the bridge itself.
-
----
-
-## Setup
-
-1. Ensure `python` and `aider` are available in your shell, or configure `BRIDGE_AIDER_COMMAND`.
-2. Ensure your supervisor command is available (`codex`, `claude --print`, etc.) or configure `BRIDGE_SUPERVISOR_COMMAND`.
-3. If using a local LLM, start Ollama or LM Studio and note the model name.
-4. Optionally provide a product or architecture brief with `--idea-file`.
+Flask is installed automatically if it is not present.
 
 ---
 
-## Usage
+## Quick Start — CLI
 
 ```bash
 # Basic run — supervisor plans, Aider executes on local LLM
@@ -157,11 +100,100 @@ python main.py "Add unit tests" \
 
 ---
 
+## Features
+
+- **Web UI** with setup wizard, live task progress, run history, and persisted settings
+- Supervisor agent produces atomic sequential plans from the live repo tree — no hardcoded file lists
+- Supervisor reviews each task's git diff before the next task is allowed to start
+- Aider runs on a local LLM (`--aider-model ollama/mistral`, `ollama/codellama`, etc.)
+- Mechanical validation (file existence, Python syntax, optional CI gate) runs without supervisor tokens
+- Supervisor tokens are only spent on planning and quality review — never on mechanical retries
+- No fallback planner — if the supervisor fails, use `--plan-file` to supply a plan manually
+- Dry-run mode generates and parses the plan without invoking Aider
+- Persistent file and console logging
+
+---
+
+## Requirements
+
+- Python 3.10+
+- A supervisor agent CLI: `codex`, `claude`, or any agent that reads a prompt and writes JSON
+- `aider` CLI (`pip install aider-chat`)
+- A local LLM accessible via Aider (Ollama, LM Studio, etc.) — or Aider's own cloud model
+- `flask>=3.0` for the web UI (auto-installed by `launch_ui.py`)
+
+No external Python packages are required for the CLI bridge itself.
+
+---
+
+## Project Structure
+
+```text
+bridge-app/
+├── main.py                       CLI entry point
+├── launch_ui.py                  Web UI launcher (auto-installs Flask, opens browser)
+├── launch_ui.bat                 Windows double-click launcher
+├── requirements.txt              Bridge CLI dependencies
+├── requirements_ui.txt           Web UI dependency (flask)
+│
+├── ui/                           Web UI package
+│   ├── __init__.py
+│   ├── app.py                    Flask server (18 API routes)
+│   ├── bridge_runner.py          Subprocess manager + SSE event broadcaster
+│   ├── setup_checker.py          Detects Python, Aider, Ollama, Codex, Claude
+│   ├── state_store.py            JSON persistence for settings and run history
+│   ├── data/                     Runtime data (settings.json, history.json)
+│   └── templates/
+│       └── index.html            Single-page app (Setup / Run / History tabs)
+│
+├── supervisor/
+│   ├── __init__.py
+│   └── agent.py                  SupervisorAgent — plan + review
+├── planner/
+│   ├── __init__.py
+│   ├── codex_client.py           Backwards-compat shim → supervisor.agent
+│   └── fallback_planner.py       Removed (raises NotImplementedError)
+├── executor/
+│   ├── __init__.py
+│   ├── aider_runner.py           Runs Aider with local LLM model support
+│   └── diff_collector.py         Collects git diff after each Aider run
+├── parser/
+│   ├── __init__.py
+│   └── task_parser.py            Validates supervisor JSON plan
+├── validator/
+│   ├── __init__.py
+│   └── validator.py              Mechanical checks only (MechanicalValidator)
+├── context/
+│   ├── __init__.py
+│   ├── file_selector.py          Resolves task file paths
+│   ├── idea_loader.py            Loads optional idea/brief file
+│   └── repo_scanner.py           Produces compact repo tree for supervisor
+├── models/
+│   ├── __init__.py
+│   └── task.py                   Task, TaskReport, ReviewResult, BridgeConfig, …
+├── utils/
+│   ├── __init__.py
+│   └── command_resolution.py     Resolves executables across PATH and venv Scripts
+├── bridge_logging/
+│   ├── __init__.py
+│   └── logger.py
+├── logs/
+│   └── .gitkeep
+├── example plan.json
+├── AI_SUPERVISOR_PROMPT.md       Prompt reference and backend configuration guide
+├── HOW_TO.md                     Plain-English guide for non-Python users
+├── README.md
+├── CHANGELOG.md
+└── AGENT_CONTEXT.md
+```
+
+---
+
 ## CLI Options
 
 | Option | Default | Description |
 |---|---|---|
-| `goal` | `Build a logging system feature` | High-level goal |
+| `goal` | *(required)* | High-level goal |
 | `--repo-root` | Current directory | Target repository |
 | `--idea-file` | — | Architecture/product brief for the supervisor |
 | `--plan-file` | — | Execute a pre-made plan instead of asking the supervisor |
@@ -228,3 +260,4 @@ prompts and compact diff payloads.
 - The supervisor receives the live repo tree at runtime — no hardcoded file paths anywhere.
 - If the supervisor fails to produce a valid plan after all retries, use `--plan-file` to supply one manually.
 - The bridge does not depend on a specific project type and works against any repo reachable via `--repo-root`.
+- For a non-technical user guide, see `HOW_TO.md`.
