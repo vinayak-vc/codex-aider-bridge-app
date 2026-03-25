@@ -1,31 +1,43 @@
-# bridge.spec — PyInstaller build specification
+# bridge.spec — PyInstaller onefile build
 #
-# Build with:
-#   pip install pyinstaller
+# Produces: dist/bridge-app.exe  (single file, no _internal folder)
+#
+# Usage:
+#   pip install pyinstaller flask pywebview
 #   pyinstaller bridge.spec --clean
 #
-# Output: dist/bridge-app/bridge-app.exe  (one-folder distribution)
+# Or just run: build.bat
 #
-# NOTE: The bundled exe still requires aider, ollama, and a supervisor CLI
-# (codex / claude) to be installed on the target machine — those are external
-# programs that the bridge calls out to, not Python libraries.
+# The exe embeds a Flask server + pywebview window (Edge WebView2).
+# aider, ollama, and a supervisor CLI (codex/claude) must still be installed
+# on the target machine — they are external tools the bridge shells out to.
 
 block_cipher = None
+
+# Collect all pywebview runtime files (Edge WebView2 glue DLLs, etc.)
+try:
+    from PyInstaller.utils.hooks import collect_all, collect_submodules
+    _wv_datas, _wv_bins, _wv_hidden = collect_all("webview")
+    _wv_mods = collect_submodules("webview")
+except Exception:
+    _wv_datas, _wv_bins, _wv_hidden, _wv_mods = [], [], [], []
 
 a = Analysis(
     ["launch_ui.py"],
     pathex=["."],
-    binaries=[],
+    binaries=[*_wv_bins],
     datas=[
-        # Flask templates — must be a real directory, not bytecode
+        # Flask templates (HTML — not Python, must be explicit)
         ("ui/templates", "ui/templates"),
-        # Initial data directory (holds .gitkeep; runtime JSON written here)
+        # Persistent data directory placeholder
         ("ui/data", "ui/data"),
         # Log directory placeholder
         ("logs", "logs"),
+        # pywebview runtime assets
+        *_wv_datas,
     ],
     hiddenimports=[
-        # Flask and its dependencies are not always auto-discovered
+        # ── Flask stack ──────────────────────────────────────────────────────
         "flask",
         "flask.json.provider",
         "jinja2",
@@ -36,13 +48,13 @@ a = Analysis(
         "click",
         "itsdangerous",
         "markupsafe",
-        # UI package
+        # ── UI package ───────────────────────────────────────────────────────
         "ui",
         "ui.app",
         "ui.bridge_runner",
         "ui.setup_checker",
         "ui.state_store",
-        # Bridge packages (imported transitively via --_bridge-run path)
+        # ── Bridge packages (loaded via --_bridge-run path) ─────────────────
         "supervisor",
         "supervisor.agent",
         "executor",
@@ -65,20 +77,25 @@ a = Analysis(
         "planner",
         "planner.codex_client",
         "planner.fallback_planner",
+        # ── pywebview Windows backends ───────────────────────────────────────
+        *_wv_hidden,
+        *_wv_mods,
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Trim unused heavy packages
         "matplotlib",
         "numpy",
         "pandas",
         "PIL",
         "scipy",
-        "tkinter.test",
         "test",
         "unittest",
+        "email",
+        "html",       # not needed — webview handles rendering
+        "xmlrpc",
+        "pydoc",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -91,30 +108,23 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,   # ← onefile: embed all binaries directly in the exe
+    a.zipfiles,
+    a.datas,      # ← onefile: embed all datas directly in the exe
     [],
-    exclude_binaries=True,
     name="bridge-app",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,           # compress binaries (requires upx.exe on PATH, optional)
+    upx=True,           # compress — requires upx.exe on PATH (optional, skip if absent)
     upx_exclude=[],
-    console=True,       # keep console window — useful for error messages
+    runtime_tmpdir=None,
+    console=False,      # ← no CMD window when double-clicked
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,          # set to "icon.ico" if you add an icon file
+    icon=None,          # replace with "assets/icon.ico" if you have one
 )
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="bridge-app",
-)
+# NOTE: No COLLECT step — onefile mode embeds everything in the single exe.

@@ -1,17 +1,20 @@
 @echo off
-REM build.bat — Build bridge-app.exe with PyInstaller
+REM build.bat — Build bridge-app.exe and (optionally) the installer
 REM
-REM Requirements:
-REM   - Python 3.10+ on PATH
-REM   - pip install pyinstaller  (this script does it automatically)
+REM Steps:
+REM   1. Install PyInstaller + dependencies
+REM   2. Build dist\bridge-app.exe  (single file, no _internal folder)
+REM   3. If Inno Setup is found, build dist\CodexAiderBridgeSetup.exe
 REM
-REM Output: dist\bridge-app\bridge-app.exe
+REM Requirements on the BUILD machine:
+REM   - Python 3.10+  on PATH
+REM   - Inno Setup 6  (optional, for installer) https://jrsoftware.org/isinfo.php
 
-title Building Codex-Aider Bridge App
+title Building Codex-Aider Bridge
 
 cd /d "%~dp0"
 
-REM ── Check Python ────────────────────────────────────────────────────────────
+REM ── 1. Check Python ──────────────────────────────────────────────────────────
 where python >nul 2>&1
 if errorlevel 1 (
     echo.
@@ -19,50 +22,82 @@ if errorlevel 1 (
     echo  Install Python 3.10+ from https://www.python.org/downloads/
     echo  and tick "Add Python to PATH" during setup.
     echo.
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
+for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo  Python: %%v
 
-REM ── Install / upgrade dependencies ──────────────────────────────────────────
+REM ── 2. Install / upgrade build dependencies ──────────────────────────────────
 echo.
-echo  [1/3] Installing dependencies...
-python -m pip install --quiet --upgrade pyinstaller flask
+echo  [1/3] Installing build dependencies...
+python -m pip install --quiet --upgrade pyinstaller flask pywebview
 if errorlevel 1 (
     echo  ERROR: pip install failed.
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
 
-REM ── Clean previous build ────────────────────────────────────────────────────
-echo  [2/3] Cleaning previous build...
-if exist build rmdir /s /q build
-if exist dist\bridge-app rmdir /s /q dist\bridge-app
+REM ── 3. Clean previous PyInstaller output ────────────────────────────────────
+echo  [2/3] Cleaning previous build artefacts...
+if exist build          rmdir /s /q build
+if exist dist\bridge-app.exe del /f /q dist\bridge-app.exe
 
-REM ── Run PyInstaller ─────────────────────────────────────────────────────────
-echo  [3/3] Building executable...
+REM ── 4. PyInstaller — single exe ─────────────────────────────────────────────
+echo  [3/3] Building bridge-app.exe (this may take 1-3 minutes)...
 echo.
 python -m PyInstaller bridge.spec --clean --noconfirm
 if errorlevel 1 (
     echo.
     echo  BUILD FAILED — see output above for details.
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
 
-REM ── Copy launcher bat into dist ─────────────────────────────────────────────
-copy /y launch_ui.bat dist\bridge-app\launch_ui.bat >nul
+echo.
+echo  PyInstaller done: dist\bridge-app.exe
 
-REM ── Done ────────────────────────────────────────────────────────────────────
+REM ── 5. Inno Setup — installer wizard (optional) ──────────────────────────────
 echo.
-echo  ============================================================
+set ISCC=
+for %%p in (
+    "C:\Program Files (x86)\Inno Setup 6\iscc.exe"
+    "C:\Program Files\Inno Setup 6\iscc.exe"
+    "C:\Program Files (x86)\Inno Setup 5\iscc.exe"
+) do (
+    if exist %%p set ISCC=%%~p
+)
+
+REM Also try iscc on PATH
+where iscc >nul 2>&1 && set ISCC=iscc
+
+if "%ISCC%"=="" (
+    echo  Inno Setup not found — skipping installer build.
+    echo  To build the installer, install Inno Setup 6 from:
+    echo  https://jrsoftware.org/isinfo.php
+    echo  then re-run build.bat.
+) else (
+    echo  Building installer with Inno Setup...
+    "%ISCC%" installer.iss
+    if errorlevel 1 (
+        echo  WARNING: Inno Setup failed — exe build is still valid.
+    ) else (
+        echo  Installer done: dist\CodexAiderBridgeSetup.exe
+    )
+)
+
+REM ── Done ─────────────────────────────────────────────────────────────────────
+echo.
+echo  ================================================================
 echo   BUILD COMPLETE
-echo  ============================================================
-echo   Executable : dist\bridge-app\bridge-app.exe
-echo   Launcher   : dist\bridge-app\launch_ui.bat  (double-click)
+echo  ================================================================
 echo.
-echo   To distribute: copy the entire dist\bridge-app\ folder.
-echo   aider, ollama, and codex/claude must be installed on the
-echo   target machine — they are external tools, not bundled.
-echo  ============================================================
+if exist dist\bridge-app.exe (
+    echo   Single exe  : dist\bridge-app.exe
+)
+if exist dist\CodexAiderBridgeSetup.exe (
+    echo   Installer   : dist\CodexAiderBridgeSetup.exe
+)
+echo.
+echo   Distribute the installer to end users.
+echo   The target machine needs aider, ollama, and codex/claude
+echo   installed — those are external tools, not bundled in the exe.
+echo  ================================================================
 echo.
 pause
