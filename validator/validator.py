@@ -9,40 +9,66 @@ from typing import Optional
 from models.task import Task, ValidationResult
 
 
-class ProjectValidator:
-    def __init__(self, repo_root: Path, validation_command: Optional[str], logger: logging.Logger) -> None:
-        self._repo_root: Path = repo_root
-        self._validation_command: Optional[str] = validation_command
-        self._logger: logging.Logger = logger
+class MechanicalValidator:
+    """Runs fast, token-free mechanical checks after each Aider execution.
+
+    This validator handles structural correctness only:
+    - Required files exist on disk after create/modify tasks.
+    - Python source files compile without syntax errors.
+    - Optional CI gate command passes (e.g. pytest, mypy).
+
+    Quality review — deciding whether the implementation is correct or complete —
+    is handled exclusively by the SupervisorAgent via diff review (PASS / REWORK).
+    This validator never calls the supervisor and never spends supervisor tokens.
+    """
+
+    def __init__(
+        self,
+        repo_root: Path,
+        validation_command: Optional[str],
+        logger: logging.Logger,
+    ) -> None:
+        self._repo_root = repo_root
+        self._validation_command = validation_command
+        self._logger = logger
 
     def validate(self, task: Task, file_paths: list[Path]) -> ValidationResult:
-        existence_result: ValidationResult = self._validate_file_existence(task, file_paths)
-        if not existence_result.succeeded:
-            return existence_result
+        existence = self._check_file_existence(task, file_paths)
+        if not existence.succeeded:
+            return existence
 
-        python_result: ValidationResult = self._validate_python_sources(file_paths)
-        if not python_result.succeeded:
-            return python_result
+        python_check = self._check_python_syntax(task.id, file_paths)
+        if not python_check.succeeded:
+            return python_check
 
-        command_result: ValidationResult = self._run_custom_validation_command()
-        if not command_result.succeeded:
-            return command_result
+        ci_check = self._run_ci_command(task.id)
+        if not ci_check.succeeded:
+            return ci_check
 
         return ValidationResult(
             task_id=task.id,
             succeeded=True,
-            message="Validation completed successfully.",
+            message="Mechanical checks passed.",
             stdout="",
             stderr="",
         )
 
-    def _validate_file_existence(self, task: Task, file_paths: list[Path]) -> ValidationResult:
-        missing_paths: list[str] = [str(path) for path in file_paths if not path.exists()]
-        if missing_paths and task.type in {"create", "modify"}:
+    def _check_file_existence(self, task: Task, file_paths: list[Path]) -> ValidationResult:
+        if task.type not in {"create", "modify"}:
+            return ValidationResult(
+                task_id=task.id,
+                succeeded=True,
+                message="File existence check skipped for validate tasks.",
+                stdout="",
+                stderr="",
+            )
+
+        missing = [str(p) for p in file_paths if not p.exists()]
+        if missing:
             return ValidationResult(
                 task_id=task.id,
                 succeeded=False,
-                message=f"Expected files were not found after execution: {missing_paths}",
+                message=f"Expected files missing after execution: {missing}",
                 stdout="",
                 stderr="",
             )
@@ -50,28 +76,24 @@ class ProjectValidator:
         return ValidationResult(
             task_id=task.id,
             succeeded=True,
-            message="File existence checks passed.",
+            message="All expected files exist.",
             stdout="",
             stderr="",
         )
 
-    def _validate_python_sources(self, file_paths: list[Path]) -> ValidationResult:
-        python_files: list[Path] = [path for path in file_paths if path.suffix.lower() == ".py" and path.exists()]
-        if not python_files:
+    def _check_python_syntax(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        py_files = [p for p in file_paths if p.suffix.lower() == ".py" and p.exists()]
+        if not py_files:
             return ValidationResult(
-                task_id=0,
+                task_id=task_id,
                 succeeded=True,
                 message="No Python files to compile.",
                 stdout="",
                 stderr="",
             )
 
-        arguments: list[str] = [sys.executable, "-m", "compileall"]
-        for python_file in python_files:
-            arguments.append(str(python_file))
-
-        result: subprocess.CompletedProcess[str] = subprocess.run(
-            arguments,
+        result = subprocess.run(
+            [sys.executable, "-m", "compileall"] + [str(p) for p in py_files],
             cwd=self._repo_root,
             capture_output=True,
             text=True,
@@ -80,24 +102,25 @@ class ProjectValidator:
         )
 
         return ValidationResult(
-            task_id=0,
+            task_id=task_id,
             succeeded=result.returncode == 0,
-            message="Python compilation validation completed.",
+            message="Python syntax check.",
             stdout=result.stdout,
             stderr=result.stderr,
         )
 
-    def _run_custom_validation_command(self) -> ValidationResult:
+    def _run_ci_command(self, task_id: int) -> ValidationResult:
         if not self._validation_command:
             return ValidationResult(
-                task_id=0,
+                task_id=task_id,
                 succeeded=True,
-                message="No custom validation command configured.",
+                message="No CI gate command configured.",
                 stdout="",
                 stderr="",
             )
 
-        result: subprocess.CompletedProcess[str] = subprocess.run(
+        self._logger.debug("Running CI gate: %s", self._validation_command)
+        result = subprocess.run(
             self._validation_command,
             cwd=self._repo_root,
             capture_output=True,
@@ -108,9 +131,13 @@ class ProjectValidator:
         )
 
         return ValidationResult(
-            task_id=0,
+            task_id=task_id,
             succeeded=result.returncode == 0,
-            message="Custom validation command completed.",
+            message="CI gate command.",
             stdout=result.stdout,
             stderr=result.stderr,
         )
+
+
+# Backwards-compatible alias
+ProjectValidator = MechanicalValidator
