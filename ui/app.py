@@ -344,3 +344,26 @@ def api_delete_history_entry(entry_id: str):
 def api_clear_history():
     state_store.clear_history()
     return jsonify({"ok": True})
+
+
+# ── Token usage ─────────────────────────────────────────────────────────────────
+
+@app.route("/api/tokens")
+def api_get_tokens():
+    """Return the full persisted token log (all sessions + all-time totals)."""
+    return jsonify(state_store.load_token_log())
+
+
+@app.route("/api/tokens/current")
+def api_get_tokens_current():
+    """Return live token stats for the currently running (or last) run."""
+    run = get_run()
+    token_data = getattr(run, "token_data", None)
+    if token_data:
+        return jsonify(token_data)
+    # Fall back to the most recent persisted session if no live data
+    log = state_store.load_token_log()
+    sessions = log.get("sessions", [])
+    if sessions:
+        return jsonify({"source": "persisted", "session": sessions[0], "totals": log.get("totals", {})})
+    return jsonify({"source": "none", "session": None, "totals": log.get("totals", {})})

@@ -32,6 +32,7 @@ class BridgeRun:
         self.command_preview: str = ""
         self.total_tasks: int = 0
         self.completed_tasks: int = 0
+        self.token_data: Optional[dict] = None
 
     # ── Listener management ────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ class BridgeRun:
             self.run_id = run_id
             self.total_tasks = 0
             self.completed_tasks = 0
+            self.token_data = None
             cmd = self.build_command(settings)
             self.command_preview = " ".join(cmd)
             thread = threading.Thread(
@@ -193,6 +195,10 @@ class BridgeRun:
                 elif event_type == "resumed":
                     self.status = "running"
                     self._emit("resumed", {})
+                elif event_type == "token_report":
+                    report = event.get("report", {})
+                    self.token_data = {"source": "live", "session": report}
+                    self._emit("token_report", {"report": report})
             except Exception:
                 pass
             return

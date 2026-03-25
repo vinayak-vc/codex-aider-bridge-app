@@ -13,6 +13,7 @@ else:
     DATA_DIR = Path(__file__).parent / "data"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 HISTORY_FILE = DATA_DIR / "history.json"
+TOKEN_LOG_FILE = DATA_DIR / "token_log.json"
 MAX_HISTORY = 50
 MAX_LOG_LINES = 500
 
@@ -99,3 +100,27 @@ def delete_history_entry(entry_id: str) -> None:
 
 def clear_history() -> None:
     _save_history([])
+
+
+# ── Token log ─────────────────────────────────────────────────────────────────
+
+def load_token_log() -> dict:
+    """Load the token log from the UI data directory."""
+    _ensure()
+    if TOKEN_LOG_FILE.exists():
+        try:
+            return json.loads(TOKEN_LOG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"sessions": [], "totals": _empty_token_totals()}
+
+
+def _empty_token_totals() -> dict:
+    return {
+        "sessions_count": 0,
+        "tasks_executed_total": 0,
+        "supervisor_tokens_total": 0,
+        "tokens_saved_total": 0,
+        "savings_percent_avg": 0.0,
+        "last_updated": None,
+    }

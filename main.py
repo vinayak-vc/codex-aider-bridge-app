@@ -22,6 +22,7 @@ from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
 from models.task import SubTask
+from utils.token_tracker import TokenTracker, save_session_to_log
 from validator.validator import MechanicalValidator
 
 
@@ -454,10 +455,18 @@ def main() -> int:
     rollback_sha = record_rollback_point(repo_root, logger)
     run_start = time.monotonic()
 
+    token_tracker = TokenTracker()
+
     repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
-    supervisor = SupervisorAgent(repo_root, config.supervisor_command, logger, timeout=config.task_timeout_seconds)
+    supervisor = SupervisorAgent(
+        repo_root,
+        config.supervisor_command,
+        logger,
+        timeout=config.task_timeout_seconds,
+        token_tracker=token_tracker,
+    )
     runner = AiderRunner(repo_root, config.aider_command, logger, config.aider_model, timeout=config.task_timeout_seconds)
     diff_collector = DiffCollector(repo_root)
     validator = MechanicalValidator(repo_root, config.validation_command, logger)
@@ -487,12 +496,40 @@ def main() -> int:
         clear_checkpoint(repo_root)
         elapsed = round(time.monotonic() - run_start, 1)
         executed = len(tasks) - skipped
+
+        # ── Token tracking: build session report and persist ─────────────────
+        token_report = token_tracker.build_session_report(
+            goal=config.goal,
+            repo_root=repo_root,
+            supervisor_command=config.supervisor_command,
+            tasks_executed=executed,
+            tasks_skipped=skipped,
+            elapsed_seconds=elapsed,
+        )
+        # Write to the bridge root's UI data dir so the web dashboard can read it.
+        # Falls back to repo_root/logs/ if BRIDGE_ROOT cannot be determined.
+        _ui_data_dir = Path(__file__).parent / "ui" / "data"
+        _token_log_path = _ui_data_dir / "token_log.json"
+        try:
+            save_session_to_log(token_report, _token_log_path)
+            logger.info(
+                "Token usage: %s supervisor tokens used, ~%s saved (%.1f%%)",
+                token_report["savings"]["actual_supervisor_tokens"],
+                token_report["savings"]["tokens_saved"],
+                token_report["savings"]["savings_percent"],
+            )
+        except Exception as _tok_ex:
+            logger.warning("Could not save token log: %s", _tok_ex)
+
+        _emit_structured({"type": "token_report", "report": token_report})
+
         summary = json.dumps({
             "status": "success",
             "tasks": len(tasks),
             "executed": executed,
             "skipped": skipped,
             "elapsed_seconds": elapsed,
+            "tokens": token_tracker.snapshot(),
         })
         print(summary)
         logger.info(

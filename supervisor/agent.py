@@ -9,6 +9,7 @@ from typing import Optional
 
 from models.task import ReviewResult, SubTask, Task, TaskReport
 from utils.command_resolution import resolve_command_arguments
+from utils.token_tracker import TokenTracker
 
 
 class SupervisorError(Exception):
@@ -31,11 +32,19 @@ class SupervisorAgent:
     It only decides WHAT to build (planning) and WHETHER it was built correctly (review).
     """
 
-    def __init__(self, repo_root: Path, command: str, logger: logging.Logger, timeout: int = 300) -> None:
+    def __init__(
+        self,
+        repo_root: Path,
+        command: str,
+        logger: logging.Logger,
+        timeout: int = 300,
+        token_tracker: Optional[TokenTracker] = None,
+    ) -> None:
         self._repo_root = repo_root
         self._command = command
         self._logger = logger
         self._timeout = timeout
+        self._tracker = token_tracker
 
     # ------------------------------------------------------------------
     # Public API
@@ -56,7 +65,10 @@ class SupervisorAgent:
             prompt,
             "..." if len(prompt) > 500 else "",
         )
-        return self._run(prompt, self._plan_schema())
+        response = self._run(prompt, self._plan_schema())
+        if self._tracker is not None:
+            self._tracker.record_plan(prompt, response)
+        return response
 
     def generate_subplan(self, task: Task, error_message: str) -> list[SubTask]:
         """Ask the supervisor for micro-tasks to fix a mechanical validation failure.
@@ -71,6 +83,8 @@ class SupervisorAgent:
             task.id, len(prompt), prompt, "..." if len(prompt) > 300 else "",
         )
         raw = self._run(prompt)
+        if self._tracker is not None:
+            self._tracker.record_subplan(prompt, raw)
         return self._parse_subplan(task, raw)
 
     def review_task(self, report: TaskReport) -> ReviewResult:
@@ -84,6 +98,9 @@ class SupervisorAgent:
             "..." if len(prompt) > 300 else "",
         )
         response = self._run(prompt)
+        if self._tracker is not None:
+            is_rework = response.strip().upper().startswith("REWORK")
+            self._tracker.record_review(prompt, response, is_rework=is_rework)
         return self._parse_review(report.task.id, response)
 
     # ------------------------------------------------------------------
