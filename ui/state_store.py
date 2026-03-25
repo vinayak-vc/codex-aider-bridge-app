@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data"
+# In a PyInstaller bundle, store persistent data next to the .exe so it
+# survives across updates (sys._MEIPASS is a temp dir that changes each run).
+if getattr(sys, "frozen", False):
+    DATA_DIR = Path(sys.executable).parent / "data"
+else:
+    DATA_DIR = Path(__file__).parent / "data"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 HISTORY_FILE = DATA_DIR / "history.json"
 MAX_HISTORY = 50

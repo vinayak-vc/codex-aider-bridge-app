@@ -11,6 +11,10 @@ from typing import Callable, Optional
 
 BRIDGE_ROOT = Path(__file__).parent.parent
 
+# When running as a PyInstaller bundle, sys.executable is the .exe itself,
+# not the Python interpreter.  We detect this once at import time.
+_FROZEN = getattr(sys, "frozen", False)
+
 
 class BridgeRun:
     """Manages one bridge subprocess, parses its log output into structured
@@ -48,7 +52,12 @@ class BridgeRun:
     # ── Command builder ────────────────────────────────────────────────────
 
     def build_command(self, settings: dict) -> list[str]:
-        cmd = [sys.executable, str(BRIDGE_ROOT / "main.py")]
+        if _FROZEN:
+            # Re-invoke the bundled exe in bridge-subprocess mode.
+            # launch_ui.py strips --_bridge-run and calls main.main().
+            cmd = [sys.executable, "--_bridge-run"]
+        else:
+            cmd = [sys.executable, str(BRIDGE_ROOT / "main.py")]
 
         goal = settings.get("goal", "").strip()
         if goal:
