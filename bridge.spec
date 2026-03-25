@@ -92,8 +92,6 @@ a = Analysis(
         "scipy",
         "test",
         "unittest",
-        "email",
-        "html",       # not needed — webview handles rendering
         "xmlrpc",
         "pydoc",
     ],
