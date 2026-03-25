@@ -1,160 +1,230 @@
 # Codex Aider Bridge App
 
-`codex-aider-bridge-app` is a CLI bridge whose primary job is to let Codex act as the task brain while Aider does the file editing work.
+`codex-aider-bridge-app` is a CLI orchestrator that separates **planning and review** (done by a supervisor AI agent) from **code execution** (done by Aider running on a local LLM).
 
-It turns a high-level development goal into an execution loop:
+## Architecture
 
-`Codex -> Plan -> Aider -> Execute -> Validate -> Feedback`
+```
+Supervisor Agent (Codex / Claude / any)
+  = Tech Supervisor
+  │  - Reads the repo tree
+  │  - Produces atomic sequential JSON tasks
+  │  - Reviews each completed task's diff
+  │  - Returns PASS or REWORK
+  │  - Never writes code
+  │
+Bridge (this app)
+  │  - Routes messages between supervisor and Aider
+  │  - Collects git diffs after execution
+  │  - Runs mechanical checks (file existence, syntax, CI gate)
+  │  - Sends compact review payloads to supervisor
+  │  - Never makes coding decisions
+  │
+Aider (local LLM)
+  = Developer
+     - Receives one atomic instruction + file list
+     - Applies code changes using a local model
+     - Reports back via exit code + stdout/stderr
+```
 
-The app is designed for local development and generic codebases, including Unity, WPF, and standard Python or mixed-language repositories. It keeps planning and execution decoupled so Codex can focus on choosing the right atomic tasks while Aider applies file-level changes.
+### Execution loop
+
+```
+Supervisor → atomic plan
+  For each task (sequentially):
+    Aider executes instruction on target files
+    Bridge collects git diff
+    Bridge runs mechanical checks (no supervisor tokens)
+    Supervisor reviews diff → PASS or REWORK
+      PASS   → next task
+      REWORK → Aider retries with supervisor's new instruction
+```
+
+---
 
 ## Features
 
-- Codex-based planner that requests atomic JSON tasks and can ingest architecture briefs
-- Robust external command resolution for `codex` and `aider` across PATH and local Windows virtual environments
-- Strict JSON task parsing and validation
-- Fallback numbered-plan parsing for non-JSON Codex responses
-- File selection layer for task-scoped execution
-- Aider execution wrapper with retry support
-- Deterministic fallback planning when Codex output is not actionable
-- Validation layer with file existence checks, optional custom commands, and Python syntax compilation
+- Supervisor agent produces atomic sequential plans from the live repo tree — no hardcoded file lists
+- Supervisor reviews each task's git diff before the next task is allowed to start
+- Aider runs on a local LLM (`--aider-model ollama/mistral`, `ollama/codellama`, etc.)
+- Mechanical validation (file existence, Python syntax, optional CI gate) runs without supervisor tokens
+- Supervisor tokens are only spent on planning and quality review — never on mechanical retries
+- No fallback planner — if the supervisor fails, use `--plan-file` to supply a plan manually
+- Dry-run mode generates and parses the plan without invoking Aider
 - Persistent file and console logging
-- Incrementally maintained project memory via `README.md`, `CHANGELOG.md`, and `AGENT_CONTEXT.md`
+
+---
 
 ## Project Structure
 
 ```text
 bridge-app/
-|-- main.py
-|-- planner/
-|   |-- __init__.py
-|   |-- codex_client.py
-|   `-- fallback_planner.py
-|-- executor/
-|   |-- __init__.py
-|   `-- aider_runner.py
-|-- parser/
-|   |-- __init__.py
-|   `-- task_parser.py
-|-- validator/
-|   |-- __init__.py
-|   `-- validator.py
-|-- context/
-|   |-- __init__.py
-|   |-- file_selector.py
-|   `-- idea_loader.py
-|-- models/
-|   |-- __init__.py
-|   `-- task.py
-|-- bridge_logging/
-|   |-- __init__.py
-|   `-- logger.py
-|-- logs/
-|   `-- .gitkeep
-|-- example plan.json
-|-- requirements.txt
-|-- README.md
-|-- CHANGELOG.md
-`-- AGENT_CONTEXT.md
+├── main.py
+├── supervisor/
+│   ├── __init__.py
+│   └── agent.py              SupervisorAgent — plan + review
+├── planner/
+│   ├── __init__.py
+│   ├── codex_client.py       Backwards-compat shim → supervisor.agent
+│   └── fallback_planner.py   Removed (raises NotImplementedError)
+├── executor/
+│   ├── __init__.py
+│   ├── aider_runner.py       Runs Aider with local LLM model support
+│   └── diff_collector.py     Collects git diff after each Aider run
+├── parser/
+│   ├── __init__.py
+│   └── task_parser.py        Validates supervisor JSON plan
+├── validator/
+│   ├── __init__.py
+│   └── validator.py          Mechanical checks only (MechanicalValidator)
+├── context/
+│   ├── __init__.py
+│   ├── file_selector.py      Resolves task file paths
+│   ├── idea_loader.py        Loads optional idea/brief file
+│   └── repo_scanner.py       Produces compact repo tree for supervisor
+├── models/
+│   ├── __init__.py
+│   └── task.py               Task, TaskReport, ReviewResult, BridgeConfig, …
+├── utils/
+│   ├── __init__.py
+│   └── command_resolution.py Resolves executables across PATH and venv Scripts
+├── bridge_logging/
+│   ├── __init__.py
+│   └── logger.py
+├── logs/
+│   └── .gitkeep
+├── example plan.json
+├── requirements.txt
+├── AI_SUPERVISOR_PROMPT.md   Prompt reference and backend configuration guide
+├── README.md
+├── CHANGELOG.md
+└── AGENT_CONTEXT.md
 ```
+
+---
 
 ## Requirements
 
 - Python 3.10+
-- `codex` CLI installed and authenticated
-- `aider` CLI installed and authenticated
+- A supervisor agent CLI: `codex`, `claude`, or any agent that reads a prompt and writes JSON
+- `aider` CLI installed
+- A local LLM accessible via Aider (Ollama, LM Studio, etc.) — or Aider's own cloud model
 
 No external Python packages are required for the bridge itself.
 
+---
+
 ## Setup
 
-1. Ensure `python`, `codex`, and `aider` are available in your shell, or configure `BRIDGE_CODEX_COMMAND` / `BRIDGE_AIDER_COMMAND` with explicit executable paths.
-2. From the repository root, optionally create and activate a virtual environment.
-3. Review configuration options:
-   - `BRIDGE_CODEX_COMMAND`
-   - `BRIDGE_AIDER_COMMAND`
-   - `BRIDGE_DEFAULT_VALIDATION`
+1. Ensure `python` and `aider` are available in your shell, or configure `BRIDGE_AIDER_COMMAND`.
+2. Ensure your supervisor command is available (`codex`, `claude --print`, etc.) or configure `BRIDGE_SUPERVISOR_COMMAND`.
+3. If using a local LLM, start Ollama or LM Studio and note the model name.
 4. Optionally provide a product or architecture brief with `--idea-file`.
-5. Run the bridge:
+
+---
+
+## Usage
 
 ```bash
-python main.py "Build a logging system feature"
+# Basic run — supervisor plans, Aider executes on local LLM
+python main.py "Build a logging system feature" --aider-model ollama/mistral
+
+# With a product brief and explicit repo target
+python main.py "Build the first playable vertical slice" \
+  --repo-root "H:\\MyProject\\GameRepo" \
+  --idea-file "H:\\MyProject\\GAME_IDEA.md" \
+  --aider-model ollama/deepseek-coder
+
+# Dry-run — generate plan only, no Aider invocation
+python main.py "Refactor settings loading" --dry-run
+
+# Execute from an existing plan file (skip supervisor planning)
+python main.py --plan-file "my-plan.json" --aider-model ollama/codellama
+
+# Save the generated plan for inspection
+python main.py "Add telemetry" --plan-output-file "plan.json" --dry-run
+
+# Use Claude CLI as the supervisor instead of Codex
+python main.py "Add error handling" \
+  --supervisor-command "claude --print" \
+  --aider-model ollama/mistral
+
+# With a CI gate command run after each task
+python main.py "Add unit tests" \
+  --aider-model ollama/mistral \
+  --validation-command "python -m pytest"
 ```
 
-## How It Works
+---
 
-1. `main.py` receives a high-level goal.
-2. `planner/codex_client.py` asks Codex for an atomic technical plan and can inject content from an idea file such as `GAME_IDEA.md`.
-3. `parser/task_parser.py` validates and converts the JSON into typed task models.
-4. `context/file_selector.py` resolves task file paths relative to the target repository.
-5. `executor/aider_runner.py` sends each task to Aider with the task-specific files.
-6. `validator/validator.py` checks the result:
-   - task files exist when expected
-   - optional validation command passes
-   - Python files compile when present
-7. If Codex returns a recoverable numbered technical plan instead of JSON, the parser converts it into typed tasks.
-8. If Codex planning remains non-actionable after retries, `planner/fallback_planner.py` generates a deterministic plan from the goal and idea context.
-9. If execution fails, the bridge logs the concrete Aider startup or process error and can ask Codex for a refined retry instruction when the planner is available.
+## CLI Options
 
-## CLI Usage
+| Option | Default | Description |
+|---|---|---|
+| `goal` | `Build a logging system feature` | High-level goal |
+| `--repo-root` | Current directory | Target repository |
+| `--idea-file` | — | Architecture/product brief for the supervisor |
+| `--plan-file` | — | Execute a pre-made plan instead of asking the supervisor |
+| `--plan-output-file` | — | Save the generated plan JSON |
+| `--dry-run` | false | Plan only, skip Aider execution |
+| `--max-plan-attempts` | 3 | Retries on invalid supervisor JSON |
+| `--max-task-retries` | 2 | Max REWORK cycles per task |
+| `--supervisor-command` | `codex.cmd exec …` | Supervisor agent command |
+| `--aider-command` | `aider` | Aider command prefix |
+| `--aider-model` | — | Local LLM model for Aider (e.g. `ollama/mistral`) |
+| `--validation-command` | — | Optional CI gate run after each task |
+| `--log-level` | `INFO` | Logging verbosity |
 
-```bash
-python main.py "Build a logging system feature" --dry-run
-python main.py "Add telemetry configuration" --max-plan-attempts 3 --max-task-retries 2
-python main.py "Refactor settings loading" --repo-root "H:\\AnotherProject" --validation-command "python -m pytest"
-python main.py "Build the first playable vertical slice for Phase Flip Runner." --repo-root "H:\\Vinayak_Project\\codex-aider-first-unity-game\\Phase Flip Runner" --idea-file "H:\\Vinayak_Project\\codex-aider-first-unity-game\\GAME_IDEA.md" --plan-output-file "H:\\Vinayak_Project\\codex-aider-first-unity-game\\Phase Flip Runner\\bridge-plan.json" --dry-run
-```
+### Environment variables
 
-### Common Options
+| Variable | Maps to |
+|---|---|
+| `BRIDGE_SUPERVISOR_COMMAND` | `--supervisor-command` |
+| `BRIDGE_AIDER_COMMAND` | `--aider-command` |
+| `BRIDGE_AIDER_MODEL` | `--aider-model` |
+| `BRIDGE_DEFAULT_VALIDATION` | `--validation-command` |
 
-- `goal`: High-level user request. Defaults to `Build a logging system feature` if omitted.
-- `--repo-root`: Repository to operate on. Defaults to the current working directory.
-- `--idea-file`: Optional architecture or product brief injected into planning prompts.
-- `--dry-run`: Generate and parse the plan without invoking Aider.
-- `--plan-file`: Execute tasks from an existing JSON plan instead of calling Codex.
-- `--plan-output-file`: Persist the generated plan JSON for inspection or reuse.
-- `--max-plan-attempts`: Retry count for invalid planner output.
-- `--max-task-retries`: Retry count for failed Aider or validation steps.
-- `--validation-command`: Optional command run after each task.
-- `--log-level`: Logging verbosity.
-- `--aider-command`: Override the executable or full command used to invoke Aider.
-- `--codex-command`: Override the executable or full command used to invoke Codex.
+---
 
-## Planner JSON Contract
+## Supervisor JSON Contract
 
-Codex is instructed to return only this shape:
+The supervisor must return exactly this shape:
 
 ```json
 {
   "tasks": [
     {
       "id": 1,
-      "files": ["file1.cs"],
-      "instruction": "Do specific change",
-      "type": "modify"
+      "files": ["relative/path/file.ext"],
+      "instruction": "Create X that does Y.",
+      "type": "create"
     }
   ]
 }
 ```
 
-The parser accepts only non-empty task lists with integer `id`, string `instruction`, string `type`, and a non-empty `files` array of strings.
+See `AI_SUPERVISOR_PROMPT.md` for full prompt specifications, review format,
+and backend configuration (Codex, Claude, custom agents, local LLMs).
 
-## Example Plan File
+---
 
-See [`example plan.json`](./example%20plan.json) for a ready-made plan that targets a logging feature.
+## Token Usage
+
+| Event | Supervisor tokens |
+|---|---|
+| Planning | One call (+ retries on parse failure) |
+| Mechanical check failure | **Zero** — retries with same instruction |
+| Task review (after mechanical pass) | One call per task |
+| REWORK retry | One call per retry |
+
+Aider handles all code generation locally. The supervisor only receives compact
+prompts and compact diff payloads.
+
+---
 
 ## Notes
 
-- The bridge keeps commands configurable because Codex CLI and Aider invocation patterns can vary by environment.
-- The default planner command is `codex.cmd exec --skip-git-repo-check --color never`.
-- The bridge will also look for executables in local script directories such as `.venv\Scripts`, `venv\Scripts`, and `aider-env\Scripts` before failing.
-- Idea-driven planning is a first-class workflow for documents such as `GAME_IDEA.md`.
-- If Codex returns numbered technical steps instead of JSON, the bridge attempts to normalize them into Aider-ready tasks.
-- If Codex planning still fails after retries, the bridge falls back to a deterministic local planner so execution can continue.
-- If `codex` is unavailable, use `--plan-file` to run the executor loop against a hand-authored plan.
-- The bridge does not depend on a specific project type and can target any repo reachable from `--repo-root`.
-- Verified locally in this workspace:
-  - `python main.py --help`
-  - `python main.py --plan-file "example plan.json" --dry-run`
-  - `python main.py "Build the first playable vertical slice for Phase Flip Runner." --repo-root "H:\\Vinayak_Project\\codex-aider-first-unity-game\\Phase Flip Runner" --idea-file "H:\\Vinayak_Project\\codex-aider-first-unity-game\\GAME_IDEA.md" --plan-output-file "H:\\Vinayak_Project\\codex-aider-first-unity-game\\Phase Flip Runner\\bridge-plan.json" --dry-run`
-  - `python -m compileall .`
+- The bridge resolves `codex`, `aider`, and other executables from PATH, `.venv\Scripts`, `venv\Scripts`, and `aider-env\Scripts` automatically on Windows.
+- The supervisor receives the live repo tree at runtime — no hardcoded file paths anywhere.
+- If the supervisor fails to produce a valid plan after all retries, use `--plan-file` to supply one manually.
+- The bridge does not depend on a specific project type and works against any repo reachable via `--repo-root`.
