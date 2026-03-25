@@ -3,6 +3,19 @@
 
 ---
 
+## Two Ways to Use This App
+
+| Method | Best for |
+|---|---|
+| **Web UI** (recommended) | Everyone — point and click, no typing commands |
+| **Command Line** | Advanced users who prefer a terminal |
+
+Jump to the method you want:
+- [Web UI — Setup and Launch](#using-the-web-ui)
+- [Command Line — First Run](#your-first-run-command-line)
+
+---
+
 ## What Does This Tool Do?
 
 Imagine you have two AI helpers:
@@ -110,7 +123,60 @@ You only need one of these. Either works fine.
 
 ---
 
-## Your First Run
+---
+
+## Using the Web UI
+
+### Step 1 — Launch the UI
+
+In File Explorer, navigate to the app folder and **double-click `launch_ui.bat`**.
+
+A Command Prompt window opens briefly, then your browser opens automatically at:
+```
+http://127.0.0.1:7823
+```
+
+> If the browser does not open, type that address manually into Chrome, Firefox, or Edge.
+
+---
+
+### Step 2 — Check Setup (first time only)
+
+The app opens on the **Setup** tab. It scans your computer for required tools and shows a green tick or a red warning next to each one.
+
+- If **Aider** is missing → click **Install Aider** and watch it install in real time.
+- If **Ollama** is installed but has no models → type a model name (e.g. `mistral`) and click **Pull Model**.
+- If **Python** is missing → see [Install Python](#1-python-310-or-newer) below and re-launch.
+
+---
+
+### Step 3 — Run a task
+
+Click the **Run** tab. Fill in:
+
+| Field | What to enter |
+|---|---|
+| **Goal** | Plain-English description of what you want built |
+| **Repo / Project Folder** | Click **Browse** and pick your project folder |
+| **Aider Model** | Choose from the dropdown, or type `ollama/mistral` |
+| **Supervisor Command** | Leave as default (Codex), or change to `claude --print` for Claude |
+
+Click **Start Run**. Watch task cards appear as each step is planned, executed, reviewed, and approved. The live log scrolls below.
+
+Click **Stop** at any time to cancel.
+
+---
+
+### Step 4 — Review history
+
+Click the **History** tab to see every run you have ever started. You can:
+- **Re-run** — fills the Run form with the exact same settings
+- **View Log** — see the full output from any past run
+- **Delete** — remove an entry from the list
+
+---
+
+## Your First Run (Command Line)
 
 ### Step 1 — Open Command Prompt in the app folder
 
@@ -256,6 +322,13 @@ Every run saves a detailed log to `logs\bridge-app.log` inside your project fold
 
 ## Troubleshooting
 
+### The browser did not open / "This site can't be reached"
+The server takes about 2 seconds to start. Wait a moment and refresh. If it still fails, open Command Prompt, go to the app folder, and run:
+```
+python launch_ui.py --no-browser
+```
+Then open `http://127.0.0.1:7823` manually. Read the error message printed in the Command Prompt window.
+
 ### "python is not recognized"
 You forgot to tick **"Add Python to PATH"** during installation. Re-run the Python installer, choose **Modify**, and tick that option.
 
@@ -306,6 +379,12 @@ python main.py "Add a search feature" --repo-root "C:\MyProject"
 ## Quick Reference Card
 
 ```
+# Web UI (recommended)
+launch_ui.bat                                 Double-click to open browser UI
+python launch_ui.py                           Same, from terminal
+python launch_ui.py --port 8080               Use a different port
+
+# Command line
 python main.py "<your goal>" [options]
 
 Essential options:

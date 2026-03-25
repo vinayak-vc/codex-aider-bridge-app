@@ -32,9 +32,15 @@ Aider (local LLM)
 The loop is strictly sequential and acknowledgement-gated:
 the supervisor must approve each task before the next one starts.
 
+A **web UI** (`ui/`) provides a browser-based front end over the same bridge,
+enabling setup detection, live task progress, and run history without any
+terminal interaction.
+
 ---
 
 ## Module Responsibilities
+
+### Core bridge (CLI)
 
 - `main.py`
   Orchestrates repo scanning, plan acquisition, the sequential task-review loop,
@@ -96,12 +102,77 @@ the supervisor must approve each task before the next one starts.
   Removed. Raises `NotImplementedError` with a clear message directing the user
   to `--plan-file`.
 
+### Web UI
+
+- `ui/app.py`
+  Flask application. Exposes 18 API routes:
+  `GET /` — serves the single-page UI.
+  `GET /api/check` — runs setup detection, returns JSON per-tool status.
+  `GET /api/ollama/models` — lists locally installed Ollama models.
+  `POST /api/install/aider` — streams `pip install aider-chat` output as SSE.
+  `POST /api/ollama/pull` — streams `ollama pull <model>` output as SSE.
+  `GET/POST /api/settings` — load / persist settings to `ui/data/settings.json`.
+  `GET /api/browse/folder` — opens OS native folder picker (tkinter).
+  `GET /api/browse/file` — opens OS native file picker (tkinter).
+  `POST /api/run` — starts a bridge run in a background thread.
+  `POST /api/run/stop` — terminates the running subprocess.
+  `GET /api/run/status` — returns current run state + task list.
+  `GET /api/run/stream` — SSE stream of all bridge events to the browser.
+  `GET/DELETE /api/history` — list or clear run history.
+  `GET/DELETE /api/history/<id>` — fetch or delete a specific history entry.
+
+- `ui/bridge_runner.py` (`BridgeRun`)
+  Module-level singleton. `start(settings, run_id)` spawns `main.py` in a
+  background thread. Reads stdout line-by-line, emits structured events parsed
+  from log lines via regex. Events: `start`, `log`, `task_update`, `plan_ready`,
+  `bridge_started`, `bridge_failed`, `complete`, `error`, `stopped`.
+  Listeners (SSE handler) register/deregister dynamically.
+
+- `ui/setup_checker.py`
+  `check_all()` returns a dict keyed by tool name (`python`, `aider`, `ollama`,
+  `codex`, `claude`). Each value includes `installed`, `version`, `path`, `hint`.
+  Ollama check also returns `models` list.
+
+- `ui/state_store.py`
+  JSON persistence layer.
+  Settings saved to `ui/data/settings.json` (only known keys persisted).
+  History saved to `ui/data/history.json` (MAX_HISTORY=50, MAX_LOG_LINES=500).
+  Functions: `load_settings`, `save_settings`, `load_history`, `add_history_entry`,
+  `update_history_entry`, `delete_history_entry`, `clear_history`.
+
+- `ui/templates/index.html`
+  Single-page application. Three tabs:
+  **Setup** — dependency cards with status badges, one-click install buttons for
+  Aider/Ollama, model pull UI with progress stream.
+  **Run** — goal, repo root, idea file, aider model, supervisor command, validation
+  command, retry settings, dry-run toggle. Command preview. Start/Stop buttons.
+  Task progress cards (running / approved / rework / retrying / dry-run). Live log.
+  **History** — table of past runs with status, elapsed time, task count.
+  Re-run (pre-fills form), view log, delete actions.
+  Dark/light theme toggle. Auto-saves settings. Ctrl+Enter shortcut.
+  Native OS folder/file browse dialogs. Toast notifications.
+
+### Launchers
+
+- `launch_ui.py`
+  Auto-installs Flask if missing. Opens a browser window after 1.5s. Starts Flask
+  on `http://127.0.0.1:7823` (configurable via `--port` / `--host`). `--no-browser`
+  suppresses the browser open.
+
+- `launch_ui.bat`
+  Windows batch file. Changes to the app directory, checks Python is on PATH,
+  then calls `python launch_ui.py`. Pauses on error so the user can read the message.
+
 ---
 
 ## File Structure
 
 ```text
 main.py
+launch_ui.py
+launch_ui.bat
+requirements.txt
+requirements_ui.txt
 supervisor/         SupervisorAgent — plan and review
 executor/           AiderRunner + DiffCollector
 parser/             TaskParser
@@ -111,12 +182,20 @@ utils/              Command resolution
 models/             Dataclasses
 bridge_logging/     Logger
 planner/            Compat shims only (no active logic)
+ui/                 Web UI (Flask + templates + state)
+  app.py
+  bridge_runner.py
+  setup_checker.py
+  state_store.py
+  data/             Runtime JSON (gitignored except .gitkeep)
+  templates/
+    index.html
 logs/
 AI_SUPERVISOR_PROMPT.md
+HOW_TO.md
 README.md
 CHANGELOG.md
 AGENT_CONTEXT.md
-requirements.txt
 example plan.json
 ```
 
@@ -145,6 +224,9 @@ main()
         → on retries exhausted: raise RuntimeError
   6. Print JSON summary {"status": "success", "tasks": N}
 ```
+
+Web UI wraps the same `main.py` subprocess — events are streamed from stdout
+back to the browser via Server-Sent Events.
 
 ---
 
@@ -183,10 +265,9 @@ main()
 
 ---
 
-## Pending Improvements
+## Known Limitations / Future Work
 
-- Add unit tests for SupervisorAgent prompt building, review parsing, and MechanicalValidator
-- Add resumable run state so interrupted multi-task sessions can be resumed
-- Support streaming supervisor output for long planning responses
-- Add configurable allowlists or denylists for editable paths
-- Support multiple supervisor backends via a plugin interface
+- No unit tests for `SupervisorAgent`, `MechanicalValidator`, or `BridgeRun` yet.
+- Runs are not resumable — interrupted sessions must restart from `--plan-file`.
+- Web UI supports one concurrent run per server instance (single `BridgeRun` singleton).
+- Supervisor streaming output (progressive JSON) is not yet supported.

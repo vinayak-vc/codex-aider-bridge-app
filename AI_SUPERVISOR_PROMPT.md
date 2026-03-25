@@ -4,6 +4,10 @@ This document describes how the bridge communicates with the supervisor agent
 (Codex, Claude CLI, or any coding agent), what prompts are sent, and how to
 configure different backends.
 
+> **Web UI users:** Supervisor command and Aider model are configured on the
+> **Run** tab in the web UI (`launch_ui.bat`). The prompts below are sent
+> automatically — you do not need to write them manually.
+
 ---
 
 ## Supervisor Role
