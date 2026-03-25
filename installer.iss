@@ -53,10 +53,7 @@ MinVersion=10.0
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; \
-  Description: "Create a &desktop shortcut"; \
-  GroupDescription: "Additional shortcuts:"; \
-  Flags: checked
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
 ; The single bundled exe — everything is inside it
