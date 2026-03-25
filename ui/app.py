@@ -206,7 +206,69 @@ def api_run_status():
         "status": run.status,
         "tasks": list(run.tasks.values()),
         "command": run.command_preview,
+        "total_tasks": run.total_tasks,
+        "completed_tasks": run.completed_tasks,
+        "percent": (
+            round(run.completed_tasks / run.total_tasks * 100)
+            if run.total_tasks > 0 else 0
+        ),
     })
+
+
+@app.route("/api/run/log")
+def api_run_log():
+    """Return the current run's full log as a JSON array of strings."""
+    run = get_run()
+    offset = request.args.get("offset", 0, type=int)
+    return jsonify({
+        "lines": run.log_lines[offset:],
+        "total": len(run.log_lines),
+    })
+
+
+@app.route("/api/run/tasks")
+def api_run_tasks():
+    """Return structured task objects from the current (or last) run."""
+    run = get_run()
+    return jsonify({
+        "tasks": list(run.tasks.values()),
+        "total": run.total_tasks,
+        "completed": run.completed_tasks,
+    })
+
+
+@app.route("/api/run/pause", methods=["POST"])
+def api_pause_run():
+    """Create the pause file so the bridge stops between tasks."""
+    run = get_run()
+    if not run.is_running:
+        return jsonify({"error": "No run in progress."}), 400
+    settings = state_store.load_settings()
+    repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root not set."}), 400
+    pause_file = Path(repo_root) / ".bridge_pause"
+    try:
+        pause_file.touch()
+        return jsonify({"ok": True, "pause_file": str(pause_file)})
+    except OSError as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/run/resume", methods=["POST"])
+def api_resume_run():
+    """Delete the pause file so the bridge continues."""
+    settings = state_store.load_settings()
+    repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root not set."}), 400
+    pause_file = Path(repo_root) / ".bridge_pause"
+    try:
+        if pause_file.exists():
+            pause_file.unlink()
+        return jsonify({"ok": True})
+    except OSError as ex:
+        return jsonify({"error": str(ex)}), 500
 
 
 @app.route("/api/run/stream")
@@ -241,7 +303,27 @@ def api_run_stream():
 
 @app.route("/api/history")
 def api_get_history():
-    return jsonify(state_store.load_history())
+    """Return run history with optional server-side filtering.
+
+    Query params:
+      ?status=success|failure|running|stopped  — filter by run status
+      ?q=<text>                                — case-insensitive search in goal
+      ?limit=<n>                               — max entries to return (default: all)
+    """
+    history = state_store.load_history()
+
+    status_filter = request.args.get("status", "").strip().lower()
+    query = request.args.get("q", "").strip().lower()
+    limit = request.args.get("limit", 0, type=int)
+
+    if status_filter:
+        history = [e for e in history if e.get("status", "").lower() == status_filter]
+    if query:
+        history = [e for e in history if query in e.get("goal", "").lower()]
+    if limit > 0:
+        history = history[:limit]
+
+    return jsonify(history)
 
 
 @app.route("/api/history/<entry_id>")

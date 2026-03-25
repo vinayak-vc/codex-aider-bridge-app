@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
 
-from models.task import ReviewResult, TaskReport
+from models.task import ReviewResult, SubTask, Task, TaskReport
 from utils.command_resolution import resolve_command_arguments
 
 
@@ -56,6 +57,21 @@ class SupervisorAgent:
             "..." if len(prompt) > 500 else "",
         )
         return self._run(prompt, self._plan_schema())
+
+    def generate_subplan(self, task: Task, error_message: str) -> list[SubTask]:
+        """Ask the supervisor for micro-tasks to fix a mechanical validation failure.
+
+        Called when a task fails mechanical checks (syntax error, missing file, CI
+        failure) and simple retry is unlikely to succeed. The supervisor returns
+        1–3 atomic correction sub-tasks targeting the same files.
+        """
+        prompt = self._build_subplan_prompt(task, error_message)
+        self._logger.debug(
+            "Sub-plan prompt for task %s (%d chars): %.300s%s",
+            task.id, len(prompt), prompt, "..." if len(prompt) > 300 else "",
+        )
+        raw = self._run(prompt)
+        return self._parse_subplan(task, raw)
 
     def review_task(self, report: TaskReport) -> ReviewResult:
         """Ask the supervisor to review a completed task and return PASS or REWORK."""
@@ -112,6 +128,22 @@ class SupervisorAgent:
             f"{feedback_block}"
         )
 
+    def _build_subplan_prompt(self, task: Task, error_message: str) -> str:
+        return (
+            "You are a Tech Supervisor. A development task failed mechanical validation.\n\n"
+            "Create 1–3 atomic correction sub-tasks that fix the specific error.\n\n"
+            "STRICT RULES:\n"
+            "- Return ONLY JSON. No prose. No code. No questions.\n"
+            "- Sub-tasks must target only files from the parent task's file list.\n"
+            "- Instructions must be concrete but code-free: say WHAT to fix, never HOW.\n"
+            "- Maximum 3 sub-tasks. Prefer fewer.\n\n"
+            f"Parent Task {task.id} ({task.type})\n"
+            f"Files: {', '.join(task.files)}\n"
+            f"Original instruction: {task.instruction}\n\n"
+            f"Mechanical validation error:\n{error_message}\n\n"
+            'Return format: {"sub_tasks": [{"instruction": "...", "files": ["..."], "type": "modify"}]}'
+        )
+
     def _build_review_prompt(self, report: TaskReport) -> str:
         task = report.task
         result = report.execution_result
@@ -164,6 +196,51 @@ class SupervisorAgent:
             f"Supervisor returned an unrecognized review response for task {task_id}: "
             f"{stripped[:140]!r}"
         )
+
+    def _parse_subplan(self, parent: Task, raw: str) -> list[SubTask]:
+        """Parse supervisor sub-plan JSON into a list of SubTask objects."""
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if len(lines) >= 3:
+                cleaned = "\n".join(lines[1:-1]).strip()
+
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as ex:
+            raise SupervisorError(
+                f"Sub-plan response was not valid JSON: {ex}. Raw: {raw[:200]!r}"
+            ) from ex
+
+        sub_tasks_raw = payload.get("sub_tasks", [])
+        if not isinstance(sub_tasks_raw, list) or not sub_tasks_raw:
+            raise SupervisorError(
+                "Sub-plan must contain a non-empty 'sub_tasks' array."
+            )
+
+        sub_tasks: list[SubTask] = []
+        for i, item in enumerate(sub_tasks_raw[:3]):   # cap at 3 sub-tasks
+            if not isinstance(item, dict):
+                continue
+            instruction = str(item.get("instruction", "")).strip()
+            files = item.get("files", parent.files)
+            task_type = str(item.get("type", "modify"))
+            if not instruction:
+                continue
+            sub_tasks.append(SubTask(
+                parent_id=parent.id,
+                step=i + 1,
+                instruction=instruction,
+                files=files if isinstance(files, list) else parent.files,
+                type=task_type if task_type in {"create", "modify", "validate"} else "modify",
+            ))
+
+        if not sub_tasks:
+            raise SupervisorError(
+                f"Sub-plan for task {parent.id} contained no valid sub-tasks."
+            )
+
+        return sub_tasks
 
     # ------------------------------------------------------------------
     # Subprocess runner

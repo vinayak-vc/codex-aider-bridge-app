@@ -30,6 +30,8 @@ class BridgeRun:
         self.status = "idle"   # idle | running | success | failure | stopped
         self.run_id: Optional[str] = None
         self.command_preview: str = ""
+        self.total_tasks: int = 0
+        self.completed_tasks: int = 0
 
     # ── Listener management ────────────────────────────────────────────────
 
@@ -100,6 +102,8 @@ class BridgeRun:
             self.log_lines = []
             self.status = "running"
             self.run_id = run_id
+            self.total_tasks = 0
+            self.completed_tasks = 0
             cmd = self.build_command(settings)
             self.command_preview = " ".join(cmd)
             thread = threading.Thread(
@@ -171,6 +175,28 @@ class BridgeRun:
     # ── Log parser — extracts structured task events from INFO lines ───────
 
     def _parse_log_line(self, line: str) -> None:
+        # ── Structured JSON events emitted by main._emit_structured() ────────
+        stripped_line = line.strip()
+        if stripped_line.startswith('{"_bridge_event"'):
+            try:
+                event = json.loads(stripped_line)
+                event_type = event.get("type", "")
+                if event_type == "task_complete":
+                    task_id = int(event.get("task_id", 0))
+                    diff = event.get("diff", "")
+                    if task_id in self.tasks:
+                        self.tasks[task_id]["diff"] = diff
+                    self._emit("task_diff", {"task_id": task_id, "diff": diff})
+                elif event_type == "paused":
+                    self.status = "paused"
+                    self._emit("paused", {"pause_file": event.get("pause_file", "")})
+                elif event_type == "resumed":
+                    self.status = "running"
+                    self._emit("resumed", {})
+            except Exception:
+                pass
+            return
+
         # Strip the log prefix: "YYYY-MM-DD HH:MM:SS | LEVEL | name | <message>"
         msg_match = re.search(r"\|\s*bridge_app\s*\|\s*(.+)$", line)
         msg = msg_match.group(1).strip() if msg_match else line.strip()
@@ -205,6 +231,14 @@ class BridgeRun:
             if task_id in self.tasks:
                 self.tasks[task_id]["status"] = "approved"
                 self._emit("task_update", {"task": dict(self.tasks[task_id])})
+            self.completed_tasks += 1
+            if self.total_tasks > 0:
+                pct = round(self.completed_tasks / self.total_tasks * 100)
+                self._emit("progress", {
+                    "completed": self.completed_tasks,
+                    "total": self.total_tasks,
+                    "percent": pct,
+                })
             return
 
         # ── Supervisor REWORK ─────────────────────────────────────────────
@@ -252,7 +286,9 @@ class BridgeRun:
         # ── Plan ready ────────────────────────────────────────────────────
         m = re.search(r"Supervisor produced (\d+) task", msg)
         if m:
-            self._emit("plan_ready", {"task_count": int(m.group(1))})
+            self.total_tasks = int(m.group(1))
+            self._emit("plan_ready", {"task_count": self.total_tasks})
+            self._emit("progress", {"completed": 0, "total": self.total_tasks, "percent": 0})
             return
 
         # ── Bridge started ────────────────────────────────────────────────

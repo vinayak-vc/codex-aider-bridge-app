@@ -21,6 +21,7 @@ from models.task import BridgeConfig, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
+from models.task import SubTask
 from validator.validator import MechanicalValidator
 
 
@@ -241,7 +242,35 @@ def execute_task_with_review(
                     f"Task {current_task.id} failed mechanical checks after "
                     f"{attempt + 1} attempt(s): {validation_result.message}"
                 )
-            # Retry with the same instruction — no supervisor call needed
+
+            # ── Sub-plan: ask supervisor for atomic corrective micro-tasks ──
+            try:
+                sub_tasks = supervisor.generate_subplan(current_task, validation_result.message)
+                logger.info(
+                    "Task %s: supervisor generated %d sub-task(s) to fix: %s",
+                    current_task.id, len(sub_tasks), validation_result.message,
+                )
+                for sub_task in sub_tasks:
+                    sub_files = selector.select(sub_task.files)
+                    # Convert SubTask to a Task-compatible object for the runner
+                    runner_task = Task(
+                        id=sub_task.id,
+                        files=sub_task.files,
+                        instruction=sub_task.instruction,
+                        type=sub_task.type,
+                    )
+                    sub_result = runner.run(runner_task, sub_files.all_paths)
+                    logger.info(
+                        "Task %s — sub-task %s.%s: exit code %s",
+                        current_task.id, sub_task.parent_id, sub_task.step,
+                        sub_result.exit_code,
+                    )
+            except SupervisorError as sub_ex:
+                logger.warning(
+                    "Task %s: sub-plan generation failed (%s) — retrying original instruction",
+                    current_task.id, sub_ex,
+                )
+
             wait_seconds = min(2 ** attempt, 30)
             logger.debug(
                 "Task %s: backing off %ss before retry attempt %s",
@@ -260,6 +289,11 @@ def execute_task_with_review(
 
         if review.verdict == "PASS":
             logger.info("Task %s: supervisor approved", current_task.id)
+            _emit_structured({
+                "type": "task_complete",
+                "task_id": current_task.id,
+                "diff": diff[:1500],
+            })
             return
 
         # REWORK — supervisor provides a corrected instruction
@@ -285,6 +319,36 @@ def execute_task_with_review(
         current_instruction = review.new_instruction  # type: ignore[assignment]
 
     raise RuntimeError(f"Task {task.id} exhausted all retries.")
+
+
+_PAUSE_FILENAME = ".bridge_pause"
+
+
+def wait_if_paused(repo_root: Path, logger: logging.Logger) -> None:
+    """Block execution if a pause file exists at the repo root.
+
+    The UI creates .bridge_pause to pause and deletes it to resume.
+    Checks every second so the bridge stays responsive to resume requests.
+    """
+    pause_file = repo_root / _PAUSE_FILENAME
+    if not pause_file.exists():
+        return
+    logger.info("Bridge paused — waiting for resume (delete %s to continue)", _PAUSE_FILENAME)
+    _emit_structured({"type": "paused", "pause_file": str(pause_file)})
+    while pause_file.exists():
+        time.sleep(1)
+    logger.info("Bridge resumed.")
+    _emit_structured({"type": "resumed"})
+
+
+def _emit_structured(data: dict) -> None:
+    """Print a machine-readable JSON event on stdout for the UI bridge runner.
+
+    bridge_runner.py detects lines starting with {"_bridge_event": true} and
+    parses them into rich SSE events for the frontend. Regular log lines are
+    unaffected — they don't start with that key.
+    """
+    print(json.dumps({"_bridge_event": True, **data}), flush=True)
 
 
 def _summarize_process_failure(stderr: str, stdout: str) -> str:
@@ -408,6 +472,7 @@ def main() -> int:
         completed_ids = load_checkpoint(repo_root)
         skipped = 0
         for task in tasks:
+            wait_if_paused(repo_root, logger)
             if task.id in completed_ids:
                 logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
                 skipped += 1
