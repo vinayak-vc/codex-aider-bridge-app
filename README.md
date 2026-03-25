@@ -201,7 +201,7 @@ bridge-app/
 | `--dry-run` | false | Plan only, skip Aider execution |
 | `--max-plan-attempts` | 3 | Retries on invalid supervisor JSON |
 | `--max-task-retries` | 2 | Max REWORK cycles per task |
-| `--supervisor-command` | `codex.cmd exec …` | Supervisor agent command |
+| `--supervisor-command` | `codex.cmd exec …` | Command used to invoke the supervisor agent. Can be set to `interactive` to provide supervisor inputs manually via the terminal. |
 | `--aider-command` | `aider` | Aider command prefix |
 | `--aider-model` | — | Local LLM model for Aider (e.g. `ollama/mistral`) |
 | `--validation-command` | — | Optional CI gate run after each task |

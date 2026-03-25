@@ -258,7 +258,7 @@ back to the browser via Server-Sent Events.
 
 | CLI flag | Env var | Purpose |
 |---|---|---|
-| `--supervisor-command` | `BRIDGE_SUPERVISOR_COMMAND` | Supervisor agent CLI |
+| `--supervisor-command` | `BRIDGE_SUPERVISOR_COMMAND` | Supervisor agent CLI. Set to `interactive` for manual/terminal review. |
 | `--aider-command` | `BRIDGE_AIDER_COMMAND` | Aider executable |
 | `--aider-model` | `BRIDGE_AIDER_MODEL` | Local LLM model for Aider |
 | `--validation-command` | `BRIDGE_DEFAULT_VALIDATION` | Optional CI gate command |
