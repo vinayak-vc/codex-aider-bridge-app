@@ -25,10 +25,11 @@ class SupervisorAgent:
     It only decides WHAT to build (planning) and WHETHER it was built correctly (review).
     """
 
-    def __init__(self, repo_root: Path, command: str, logger: logging.Logger) -> None:
+    def __init__(self, repo_root: Path, command: str, logger: logging.Logger, timeout: int = 300) -> None:
         self._repo_root = repo_root
         self._command = command
         self._logger = logger
+        self._timeout = timeout
 
     # ------------------------------------------------------------------
     # Public API
@@ -151,6 +152,21 @@ class SupervisorAgent:
     # ------------------------------------------------------------------
 
     def _run(self, prompt: str, output_schema: Optional[str] = None) -> str:
+        if self._command == "interactive":
+            print("\n" + "="*80)
+            print("INTERACTIVE SUPERVISOR REQUIRED")
+            print("="*80)
+            print(prompt)
+            print("="*80)
+            if output_schema:
+                import sys
+                print("\nEXPECTED SCHEMA:")
+                print(output_schema)
+                print("\nPlease enter your JSON plan below (Press Ctrl+Z/Ctrl+D and Enter to finish):")
+                return sys.stdin.read().strip()
+            else:
+                return input("\nReview Result (PASS / REWORK: <instruction>): ").strip()
+
         with tempfile.TemporaryDirectory(prefix="supervisor-bridge-") as tmp_dir:
             output_file = Path(tmp_dir) / "supervisor-output.txt"
             schema_file: Optional[Path] = None
@@ -176,7 +192,15 @@ class SupervisorAgent:
                     text=True,
                     encoding="utf-8",
                     check=False,
+                    timeout=self._timeout,
                 )
+            except subprocess.TimeoutExpired as ex:
+                if ex.process:
+                    ex.process.kill()
+                raise SupervisorError(
+                    f"Supervisor timed out after {self._timeout}s — "
+                    "command may be hung or waiting for input."
+                ) from ex
             except OSError as ex:
                 raise SupervisorError(
                     f"Cannot start supervisor command '{self._command}': {ex}"

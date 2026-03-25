@@ -24,11 +24,13 @@ class AiderRunner:
         command: str,
         logger: logging.Logger,
         model: Optional[str] = None,
+        timeout: int = 300,
     ) -> None:
         self._repo_root = repo_root
         self._command = command
         self._logger = logger
         self._model = model
+        self._timeout = timeout
 
     def run(self, task: Task, file_paths: list[Path]) -> ExecutionResult:
         try:
@@ -53,6 +55,18 @@ class AiderRunner:
                 text=True,
                 encoding="utf-8",
                 check=False,
+                timeout=self._timeout,
+            )
+        except subprocess.TimeoutExpired as ex:
+            if ex.process:
+                ex.process.kill()
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=-1,
+                stdout="",
+                stderr=f"Aider timed out after {self._timeout}s",
+                command=arguments,
             )
         except OSError as ex:
             return ExecutionResult(

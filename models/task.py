@@ -80,3 +80,4 @@ class BridgeConfig:
     idea_file: Optional[Path]
     idea_text: Optional[str]
     plan_output_file: Optional[Path]
+    task_timeout_seconds: int = 300

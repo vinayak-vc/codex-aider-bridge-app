@@ -115,6 +115,11 @@ class TaskParser:
                 raise PlanParseError(
                     f"Task {task_id} must target specific files, not the repository root."
                 )
+            if ".." in Path(fp).parts:
+                raise PlanParseError(
+                    f"Task {task_id} contains a path traversal sequence: {fp!r}. "
+                    "All file paths must stay within the repository root."
+                )
 
         normalized_instruction = instruction.strip()
         lower = normalized_instruction.lower()

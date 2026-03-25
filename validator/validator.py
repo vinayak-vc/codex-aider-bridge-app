@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -120,15 +121,37 @@ class MechanicalValidator:
             )
 
         self._logger.debug("Running CI gate: %s", self._validation_command)
-        result = subprocess.run(
-            self._validation_command,
-            cwd=self._repo_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            shell=True,
-            check=False,
-        )
+
+        try:
+            cmd_parts = shlex.split(self._validation_command)
+        except ValueError:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message=f"CI gate command could not be parsed: {self._validation_command!r}",
+                stdout="",
+                stderr="",
+            )
+
+        try:
+            result = subprocess.run(
+                cmd_parts,
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                shell=False,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message="CI gate command timed out after 120s",
+                stdout="",
+                stderr="",
+            )
 
         return ValidationResult(
             task_id=task_id,

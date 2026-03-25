@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -84,7 +85,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=(
             "Command used to invoke the supervisor agent "
             "(Codex, Claude CLI, or any coding agent). "
-            "Supports {prompt} and {output_file} placeholders."
+            "Supports {prompt} and {output_file} placeholders. "
+            "Set to 'interactive' to provide supervisor inputs manually."
         ),
     )
     parser.add_argument(
@@ -100,6 +102,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "(e.g. ollama/mistral, ollama/codellama, ollama/deepseek-coder). "
             "Leave unset to use Aider's default model configuration."
         ),
+    )
+    parser.add_argument(
+        "--task-timeout",
+        type=int,
+        default=300,
+        help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 300.",
     )
     parser.add_argument(
         "--log-level",
@@ -272,6 +280,39 @@ def _summarize_process_failure(stderr: str, stdout: str) -> str:
     return "No process output captured."
 
 
+def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
+    """Validate environment before spending any tokens on planning or execution.
+
+    Checks (in order):
+    1. Aider executable is installed and on PATH.
+    2. Repo root is a git repository.
+    3. At least 50 MB of free disk space is available at the repo root.
+    """
+    aider_bin = config.aider_command.split()[0]
+    logger.debug("Pre-flight: checking Aider binary %r", aider_bin)
+    if shutil.which(aider_bin) is None:
+        raise RuntimeError(
+            f"Aider not found: {aider_bin!r}. Install it with: pip install aider-chat"
+        )
+
+    logger.debug("Pre-flight: checking git repository at %s", config.repo_root)
+    if not (config.repo_root / ".git").exists():
+        raise RuntimeError(
+            f"Repo root is not a git repository: {config.repo_root}. "
+            "Initialise with: git init"
+        )
+
+    logger.debug("Pre-flight: checking disk space at %s", config.repo_root)
+    free_bytes = shutil.disk_usage(config.repo_root).free
+    if free_bytes < 50 * 1024 * 1024:
+        raise RuntimeError(
+            f"Insufficient disk space at {config.repo_root}: "
+            f"less than 50 MB free ({free_bytes // (1024 * 1024)} MB available)."
+        )
+
+    logger.info("Pre-flight checks passed.")
+
+
 def main() -> int:
     arg_parser = build_argument_parser()
     args = arg_parser.parse_args()
@@ -302,13 +343,16 @@ def main() -> int:
         idea_file=idea_file,
         idea_text=idea_text,
         plan_output_file=plan_output_file,
+        task_timeout_seconds=int(args.task_timeout),
     )
+
+    run_preflight_checks(config, logger)
 
     repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
-    supervisor = SupervisorAgent(repo_root, config.supervisor_command, logger)
-    runner = AiderRunner(repo_root, config.aider_command, logger, config.aider_model)
+    supervisor = SupervisorAgent(repo_root, config.supervisor_command, logger, timeout=config.task_timeout_seconds)
+    runner = AiderRunner(repo_root, config.aider_command, logger, config.aider_model, timeout=config.task_timeout_seconds)
     diff_collector = DiffCollector(repo_root)
     validator = MechanicalValidator(repo_root, config.validation_command, logger)
 
