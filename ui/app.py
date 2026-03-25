@@ -14,7 +14,16 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from . import setup_checker, state_store
 from .bridge_runner import get_run
 
-app = Flask(__name__)
+# When bundled by PyInstaller, Flask cannot locate templates via __file__.
+# Point it explicitly at the extracted bundle path.
+_frozen = getattr(sys, "frozen", False)
+_template_folder = (
+    str(Path(sys._MEIPASS) / "ui" / "templates")  # type: ignore[attr-defined]
+    if _frozen
+    else None  # Flask default: templates/ next to this file
+)
+
+app = Flask(__name__, template_folder=_template_folder)
 app.config["JSON_SORT_KEYS"] = False
 
 # Per-client SSE queue registry

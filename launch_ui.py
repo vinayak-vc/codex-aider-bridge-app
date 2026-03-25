@@ -4,12 +4,28 @@ Usage:
     python launch_ui.py              # opens browser automatically
     python launch_ui.py --no-browser # skip opening browser
     python launch_ui.py --port 8080  # use a different port (default 7823)
+
+When bundled as a PyInstaller exe, bridge_runner re-invokes this exe with
+--_bridge-run prepended.  In that mode we bypass the UI and run the bridge
+CLI (main.main()) directly, using the remaining argv as CLI arguments.
 """
 from __future__ import annotations
 
+import sys
+
+# ── PyInstaller bridge-subprocess mode ────────────────────────────────────────
+# Must be checked before any other imports so the bridge process starts cleanly
+# without importing Flask or tkinter.
+if "--_bridge-run" in sys.argv:
+    sys.argv.remove("--_bridge-run")
+    # sys.argv[0] is the exe / script; sys.argv[1:] are the bridge CLI args.
+    # main.main() calls argparse.parse_args() which reads sys.argv[1:].
+    from main import main as _bridge_main  # noqa: E402
+    sys.exit(_bridge_main())
+# ──────────────────────────────────────────────────────────────────────────────
+
 import argparse
 import subprocess
-import sys
 import threading
 import time
 import webbrowser
