@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +11,23 @@ class Task:
     files: list[str]
     instruction: str
     type: str
+    # Feature 4: read-only reference files Aider may consult but will not modify.
+    context_files: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class AiderContext:
+    """Per-task runtime context injected into every Aider message.
+
+    Gives Aider the full picture: what the overall goal is, where this task
+    sits in the sequence, and what was already completed — so each task is
+    never treated in isolation.
+    """
+
+    goal: str
+    task_number: int
+    total_tasks: int
+    completed_summaries: list[str]  # e.g. ["[1] create GameColor.cs"]
 
 
 @dataclass(frozen=True)

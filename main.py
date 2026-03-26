@@ -17,7 +17,7 @@ from context.idea_loader import IdeaLoader
 from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
-from models.task import BridgeConfig, Task, TaskReport
+from models.task import AiderContext, BridgeConfig, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
@@ -115,6 +115,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 300.",
     )
     parser.add_argument(
+        "--confirm-plan",
+        action="store_true",
+        help=(
+            "Show a preview of all tasks after planning and ask for confirmation "
+            "before any Aider task runs. Useful when running interactively."
+        ),
+    )
+    parser.add_argument(
         "--aider-no-map",
         action="store_true",
         help=(
@@ -177,6 +185,37 @@ def obtain_plan(
     )
 
 
+def show_plan_preview(tasks: list[Task], logger: logging.Logger) -> bool:
+    """Print the task plan and ask the user to confirm before execution.
+
+    Returns True if the user confirms, False if they cancel.
+    """
+    print("\n" + "=" * 60)
+    print(f"  PLAN PREVIEW — {len(tasks)} task(s)")
+    print("=" * 60)
+    for task in tasks:
+        files_display = ", ".join(task.files) if task.files else "(no specific files — Aider chooses)"
+        ctx_display = f"  [reads: {', '.join(task.context_files)}]" if task.context_files else ""
+        instruction_preview = task.instruction[:120].replace("\n", " ")
+        if len(task.instruction) > 120:
+            instruction_preview += "..."
+        print(f"\n  [{task.id}] {task.type.upper()}  {files_display}{ctx_display}")
+        print(f"       {instruction_preview}")
+    print("\n" + "=" * 60)
+
+    try:
+        answer = input("Proceed? [y]es / [n]o: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+    if answer in {"y", "yes"}:
+        return True
+
+    logger.info("Run cancelled by user at plan preview.")
+    return False
+
+
 def execute_task_with_review(
     task: Task,
     config: BridgeConfig,
@@ -186,6 +225,7 @@ def execute_task_with_review(
     diff_collector: DiffCollector,
     validator: MechanicalValidator,
     logger: logging.Logger,
+    aider_context: Optional[AiderContext] = None,
 ) -> None:
     """Run one task through the full Aider → diff → mechanical check → supervisor review loop.
 
@@ -221,7 +261,7 @@ def execute_task_with_review(
             return
 
         # ── Step 1: Execute via Aider ────────────────────────────────────────
-        execution_result = runner.run(current_task, selected_files.all_paths)
+        execution_result = runner.run(current_task, selected_files.all_paths, aider_context)
 
         if execution_result.exit_code == -1:
             raise RuntimeError(
@@ -292,7 +332,7 @@ def execute_task_with_review(
                         instruction=sub_task.instruction,
                         type=sub_task.type,
                     )
-                    sub_result = runner.run(runner_task, sub_files.all_paths)
+                    sub_result = runner.run(runner_task, sub_files.all_paths, aider_context)
                     logger.info(
                         "Task %s — sub-task %s.%s: exit code %s",
                         current_task.id, sub_task.parent_id, sub_task.step,
@@ -518,20 +558,46 @@ def main() -> int:
         else:
             tasks = obtain_plan(config, supervisor, task_parser, repo_tree, logger)
 
+        # Feature 6: plan preview + confirmation before any Aider task runs.
+        if args.confirm_plan and not args.dry_run:
+            if not show_plan_preview(tasks, logger):
+                return 0
+
         completed_ids = load_checkpoint(repo_root)
+        completed_summaries: list[str] = []
         skipped = 0
-        for task in tasks:
+
+        for task_index, task in enumerate(tasks):
             wait_if_paused(repo_root, logger)
+
             if task.id in completed_ids:
                 logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
+                completed_summaries.append(
+                    f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
+                    + (" ..." if len(task.files) > 2 else "")
+                )
                 skipped += 1
                 continue
+
+            # Feature 1: build per-task AiderContext so Aider sees the full picture.
+            aider_context = AiderContext(
+                goal=config.goal,
+                task_number=task_index + 1,
+                total_tasks=len(tasks),
+                completed_summaries=list(completed_summaries),
+            )
+
             execute_task_with_review(
                 task, config, supervisor, selector,
                 runner, diff_collector, validator, logger,
+                aider_context=aider_context,
             )
             completed_ids.add(task.id)
             save_checkpoint(repo_root, completed_ids)
+            completed_summaries.append(
+                f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
+                + (" ..." if len(task.files) > 2 else "")
+            )
 
         clear_checkpoint(repo_root)
         elapsed = round(time.monotonic() - run_start, 1)

@@ -86,6 +86,7 @@ class TaskParser:
         files: Any = item.get("files")
         instruction: Any = item.get("instruction")
         task_type: Any = item.get("type")
+        context_files: Any = item.get("context_files", [])
 
         # Fix #5: coerce string IDs like "1" or "task-1" to int where possible.
         if not isinstance(task_id, int):
@@ -141,9 +142,23 @@ class TaskParser:
                 f"Task {task_id} asked for clarification instead of specifying implementation work."
             )
 
+        # Feature 4: optional context_files — read-only references passed via --read.
+        normalized_context_files: list[str] = []
+        if isinstance(context_files, list):
+            for cf in context_files:
+                if not isinstance(cf, str) or not cf.strip():
+                    continue
+                cf = cf.strip()
+                if ".." in Path(cf).parts or Path(cf).is_absolute():
+                    raise PlanParseError(
+                        f"Task {task_id} context_files contains invalid path: {cf!r}"
+                    )
+                normalized_context_files.append(cf)
+
         return Task(
             id=task_id,
             files=normalized_files,
             instruction=normalized_instruction,
             type=task_type,
+            context_files=normalized_context_files,
         )
