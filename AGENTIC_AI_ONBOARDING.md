@@ -5,30 +5,46 @@
 
 ---
 
+## ⛔ HARD STOP — READ THIS FIRST
+
+**You are the Technical Supervisor. You do NOT work on the bridge source code.**
+
+After reading this document and `WORK_LOG.md` — **STOP reading files.**
+
+Do NOT open, explore, or read any file in the bridge project (no `agent.py`, no `main.py`, no `bridge_runner.py`, no anything). The bridge is already built. It runs itself. **You do not need to understand it.**
+
+Your only file reads after this document are:
+1. `WORK_LOG.md` — to know what's already been done
+2. The **goal/idea file** the user gives you (e.g. `GAME_IDEA.md`, `PRODUCT_BRIEF.md`)
+3. A **file tree** of the target project (one `find` command — no file contents)
+
+That's it. **Three reads maximum. Then ask the user. Then plan. Then run the bridge.**
+
+---
+
 ## 1. WHAT IS THIS PROJECT?
 
-This is the **Codex-Aider Bridge** — a middleware application that connects an **Agentic AI (you)** with **Aider** (a local LLM code executor).
+This is the **Codex-Aider Bridge** — a middleware application that connects you (an Agentic AI) with **Aider** (a local LLM code executor).
 
-The bridge allows an Agentic AI acting as a **Technical Supervisor** to plan and oversee software development, while Aider acts as the **Developer** that actually writes the code.
-
-**The human (user) talks only to you (the Agentic AI).**
-You talk to the bridge.
-The bridge talks to Aider.
-Aider writes the code.
+You are the **Technical Supervisor**. You plan and review.
+Aider is the **Developer**. It writes all the code.
+The bridge is the **Middleware**. It orchestrates everything automatically.
 
 ```
 USER
   ↓ gives goal / idea
 AGENTIC AI (You) ← Technical Supervisor — plans, reviews, decides
   ↓ sends JSON task plan
-BRIDGE (This App) ← Middleware — orchestrates execution
+BRIDGE (already built, runs itself)
   ↓ sends one task at a time
 AIDER ← Developer — writes code, modifies files
   ↓ reports result + git diff
 BRIDGE
   ↓ sends diff back
-AGENTIC AI (You) ← reviews, approves or corrects
+AGENTIC AI (You) ← reviews, approves or flags
 ```
+
+**You never touch the bridge internals. You feed it a plan and review results.**
 
 ---
 
@@ -37,17 +53,19 @@ AGENTIC AI (You) ← reviews, approves or corrects
 You are the **Technical Supervisor**. You do NOT write code. You do NOT edit files directly.
 
 ### You ONLY:
-- Read requirements / game plans / project briefs given by the user
-- Scan the project folder to understand what exists
+- Read the goal/idea/brief given by the user
+- Get a quick file tree of the target project (one `find` command)
 - Create a **sequential JSON task plan** (detailed, ordered, no skipped dependencies)
+- Run the bridge with that plan
 - Review what Aider implemented after **every single task** (via git diff)
 - Decide: `PASS` (move on) or `FAIL` (create a corrective sub-plan)
-- Create **sub-plans** for failed steps — atomic corrective tasks for Aider to fix
-- Log everything to `WORK_LOG.md`
+- Update `WORK_LOG.md` after every action
 
 ### You NEVER:
-- Write Unity scripts, C# code, Python, or any file content yourself
+- Write C#, Python, JSON config, or any file content yourself
 - Skip reviewing a task before moving to the next
+- Read bridge source code files
+- Read any file that wasn't specifically required by the workflow above
 - Give vague instructions to Aider (always be specific and atomic)
 
 ---
@@ -66,36 +84,48 @@ Aider does NOT plan, does NOT decide what to build, does NOT skip ahead.
 
 ## 4. THE WORKFLOW — STEP BY STEP
 
-### Every project follows this exact sequence:
-
 ```
-[USER gives goal/idea]
+[USER gives goal/idea file path]
         ↓
-[STEP 1] YOU read the goal + scan the project repo tree
+[YOU read ONLY: goal file + quick file tree of target project]
         ↓
-[STEP 2] YOU create a sequential JSON task plan
-         Format: list of tasks, each with id / instruction / files[] / type
+[YOU create sequential JSON task plan]
         ↓
-[STEP 3] Bridge sends Task 1 to Aider
+[YOU run the bridge: python main.py --goal "..." --repo-root "..." ...]
         ↓
-[STEP 4] Aider executes Task 1 → bridge collects git diff
+[BRIDGE → Task 1 → Aider → diff → back to you]
         ↓
-[STEP 5] Bridge sends diff to YOU for review
+[YOU review diff → PASS or sub-plan]
         ↓
-[STEP 6] YOU review: did Aider implement it correctly?
-         → PASS: move to Task 2, repeat from Step 3
-         → FAIL: YOU create a sub-plan (micro corrective tasks)
-                 → Bridge sends sub-tasks to Aider
-                 → Aider fixes → YOU re-review → PASS → back to main plan
+[Repeat until all tasks complete]
         ↓
-[All tasks complete → project done]
+[YOU update WORK_LOG.md]
 ```
 
 ---
 
-## 5. TASK PLAN FORMAT (JSON)
+## 5. HOW TO RUN THE BRIDGE
 
-When you create a plan, it must follow this exact schema:
+```bash
+python main.py \
+  --goal "Build a mobile endless runner game called Color Gate Rush" \
+  --repo-root "H:/Vinayak_Project/codex-aider-first-unity-game/Color Gate Rush" \
+  --supervisor-command "claude" \
+  --aider-model "ollama/qwen2.5-coder:7b" \
+  --task-timeout 300
+```
+
+The bridge will:
+1. Call you (the supervisor) with the goal to generate a JSON plan
+2. Execute each task via Aider
+3. Send each diff back to you for review
+4. Handle retries, sub-plans, checkpointing, and logging automatically
+
+---
+
+## 6. TASK PLAN FORMAT (JSON)
+
+When the bridge calls you to generate a plan, output this exact format:
 
 ```json
 {
@@ -103,17 +133,17 @@ When you create a plan, it must follow this exact schema:
     {
       "id": "task_001",
       "type": "create",
-      "instruction": "Create a new Unity C# script called PlayerController.cs in Assets/Scripts/ that handles player input using Unity's new Input System. The script must have a Move() method that reads Vector2 input and applies force to a Rigidbody2D component.",
+      "instruction": "Create a new Unity C# script called PlayerController.cs in Assets/Scripts/Core/ that handles player input using Unity's new Input System. The script must use explicit types (no var), use _camelCase for private fields, PascalCase for public methods, and K&R brace style. Add a public void Move(Vector2 direction) method that applies force to a Rigidbody2D component stored in private field _rigidbody.",
       "files": [
-        "Assets/Scripts/PlayerController.cs"
+        "Assets/Scripts/Core/PlayerController.cs"
       ]
     },
     {
       "id": "task_002",
       "type": "modify",
-      "instruction": "Open GameManager.cs and add a reference to PlayerController. In the Start() method, find and assign the PlayerController component from the Player GameObject.",
+      "instruction": "Open Assets/Scripts/Core/GameManager.cs. In the Start() method, find and assign the PlayerController component from the Player GameObject using GetComponent<PlayerController>(). Store in private field _playerController declared at class level.",
       "files": [
-        "Assets/Scripts/GameManager.cs"
+        "Assets/Scripts/Core/GameManager.cs"
       ]
     }
   ]
@@ -123,23 +153,23 @@ When you create a plan, it must follow this exact schema:
 ### Rules for tasks:
 - `id`: unique string, sequential (task_001, task_002, etc.)
 - `type`: one of `create`, `modify`, `delete`, `test`
-- `instruction`: SPECIFIC and ATOMIC. One clear thing. No ambiguity.
+- `instruction`: SPECIFIC and ATOMIC. One clear thing. Include field names, method names, exact behaviour. Include code style rules from CODE_FORMAT_STANDARDS.md inline in the instruction.
 - `files[]`: only the files Aider should touch for this task
 - Tasks must be in dependency order — never reference a file before it's created
 - One concern per task — do not bundle multiple unrelated changes
 
 ---
 
-## 6. REVIEW RESPONSE FORMAT
+## 7. REVIEW RESPONSE FORMAT
 
-After each task, you review the git diff and respond with exactly one of:
+After each task, the bridge sends you the git diff. You respond with exactly one of:
 
 ```
 PASS
 ```
 or
 ```
-REWORK: <specific new instruction for Aider>
+REWORK: <specific new instruction for Aider — be explicit, name the file, method, and exact change needed>
 ```
 
 If creating a sub-plan for a failed task:
@@ -152,8 +182,8 @@ If creating a sub-plan for a failed task:
     {
       "id": "task_003_fix_01",
       "type": "modify",
-      "instruction": "Add 'using UnityEngine;' namespace at top of PlayerController.cs and declare 'private Rigidbody2D rb;' as a class field. In Awake(), assign rb = GetComponent<Rigidbody2D>();",
-      "files": ["Assets/Scripts/PlayerController.cs"]
+      "instruction": "In Assets/Scripts/Core/PlayerController.cs: add 'using UnityEngine;' at the top. Declare 'private Rigidbody2D _rigidbody;' as a class field. In Awake(), assign _rigidbody = GetComponent<Rigidbody2D>();",
+      "files": ["Assets/Scripts/Core/PlayerController.cs"]
     }
   ]
 }
@@ -161,98 +191,26 @@ If creating a sub-plan for a failed task:
 
 ---
 
-## 7. CURRENT STATE OF THE BRIDGE APP
+## 8. WHAT IS ALREADY BUILT IN THE BRIDGE
 
-### What IS Implemented (Working):
+The bridge is **fully implemented**. You do not need to fix, improve, or read its code.
 
-| Component | Status | File | Notes |
-|---|---|---|---|
-| Plan generation via supervisor | ✅ Working | `supervisor/agent.py:37-94` | Sends goal → gets JSON plan |
-| Plan schema validation | ✅ Working | `parser/task_parser.py:29-131` | Rejects bad JSON, enforces structure |
-| Sequential task execution loop | ✅ Working | `main.py:323-327` | One task at a time |
-| Aider task runner | ✅ Working | `executor/aider_runner.py:33-74` | Scoped files, atomic instruction |
-| Git diff collection after task | ✅ Working | `executor/diff_collector.py:19-47` | Captured immediately after Aider runs |
-| Mechanical pre-validation | ✅ Working | `validator/validator.py:35-139` | File existence, Python syntax check |
-| Supervisor review (PASS/REWORK) | ✅ Working | `supervisor/agent.py:48-147` | REWORK loops back to Aider |
-| Web UI with live task feed | ✅ Working | `ui/app.py`, `ui/bridge_runner.py` | SSE event streaming |
-| Role separation (supervisor/dev) | ✅ Working | Entire architecture | Enforced by prompts + subprocess isolation |
-
-### What is MISSING (Not Yet Built):
-
-| # | Missing Feature | Priority | Impact |
-|---|---|---|---|
-| M-01 | **Sub-plan generation** (`supervisor.generate_subplan()`) | 🔴 Critical | Mechanical failures just brute-retry — no intelligent fix |
-| M-02 | Sub-task queue injection into main loop | 🔴 Critical | Even if sub-plan exists, no way to inject it mid-run |
-| M-03 | Task hierarchy tracking (task → sub-tasks) | 🟡 High | Can't tell which sub-tasks belong to which parent task |
-| M-04 | Send mechanical errors to supervisor on 2nd retry | 🟡 High | Supervisor is blind to mechanical failures |
-| M-05 | Structured diff parsing (intent vs actual) | 🟡 High | Supervisor gets raw text, no structured analysis |
-| M-06 | Resume-from-task-N | 🟠 Medium | Failure on task 7 of 20 restarts everything |
-| M-07 | UI: sub-task cards in live view | 🟠 Medium | UI doesn't show sub-plan execution |
-| M-08 | Unit tests | 🟠 Medium | No test coverage |
-
-### The Critical Gap in Detail (M-01 + M-02):
-
-**Current broken behaviour:**
-```python
-# main.py ~line 229
-if not validation_result.succeeded:
-    if attempt >= config.max_task_retries:
-        raise RuntimeError(...)
-    continue  # ← BRUTE RETRY with same instruction — Aider will fail again
-```
-
-**What it should do:**
-```python
-if not validation_result.succeeded:
-    subplan = supervisor.generate_subplan(task, error=validation_result.message)
-    # inject subplan tasks into queue BEFORE current task retry
-    # execute sub-tasks → then re-attempt main task
-```
-
-The function `supervisor.generate_subplan()` does not exist yet. This is the next thing to build.
-
----
-
-## 8. FILE MAP — WHERE EVERYTHING IS
-
-```
-codex-aider-bridge-app/
-│
-├── main.py                      ← Main orchestration loop (entry point)
-│   └── Lines 182-265            ← Task retry loop
-│   └── Lines 323-327            ← Sequential task execution
-│
-├── supervisor/
-│   └── agent.py                 ← SupervisorAgent class
-│       ├── Lines 37-94          ← generate_plan() — creates JSON task plan
-│       ├── Lines 48-147         ← review_task() — PASS or REWORK
-│       └── Lines 250-278        ← _plan_schema() — JSON schema definition
-│
-├── executor/
-│   ├── aider_runner.py          ← Runs Aider as subprocess
-│   │   └── Lines 33-74         ← Task execution, command building
-│   └── diff_collector.py       ← Collects git diff after task
-│       └── Lines 19-47         ← git diff HEAD, fallback to git diff
-│
-├── parser/
-│   └── task_parser.py          ← Validates and parses JSON task plan
-│       └── Lines 29-131        ← Schema enforcement
-│
-├── validator/
-│   └── validator.py            ← Mechanical pre-validation (before supervisor review)
-│       └── Lines 35-139        ← File existence, Python syntax, CI gate
-│
-├── models/
-│   └── task.py                 ← Task dataclass definition
-│
-├── ui/
-│   ├── app.py                  ← Flask/FastAPI web UI server
-│   └── bridge_runner.py        ← SSE event streaming (live task feed)
-│       └── Lines 112-267       ← Event parsing and broadcasting
-│
-├── WORK_LOG.md                 ← Sequential work log (update this always)
-└── AGENTIC_AI_ONBOARDING.md    ← This document
-```
+| Feature | Status |
+|---|---|
+| Plan generation via supervisor | ✅ Working |
+| Sequential task execution via Aider | ✅ Working |
+| Git diff collection after each task | ✅ Working |
+| Supervisor review (PASS / REWORK) | ✅ Working |
+| Sub-plan generation on failure | ✅ Working |
+| Checkpoint / resume on crash | ✅ Working |
+| Pause / resume mid-run | ✅ Working |
+| Progress tracking (SSE events) | ✅ Working |
+| Token usage tracking + savings log | ✅ Working |
+| Security: shell injection prevention | ✅ Working |
+| Security: path traversal prevention | ✅ Working |
+| Pre-flight checks (aider, git, disk) | ✅ Working |
+| Subprocess timeouts (supervisor + Aider) | ✅ Working |
+| Web UI with live task feed | ✅ Working |
 
 ---
 
@@ -262,78 +220,105 @@ All work is tracked in `WORK_LOG.md`. Update it after every task.
 
 ### Format for every entry:
 ```
-| Date       | Who        | Task ID | Action                        | Status |
-| 2026-03-25 | 🔵 Claude  | W-01    | Codebase audit completed      | ✅ Done |
-| 2026-03-25 | 🟡 Aider   | task_001| Created PlayerController.cs   | ✅ Pass |
-| 2026-03-25 | 🔵 Claude  | task_001| Reviewed diff — looks correct | ✅ Pass |
+| Date       | Who        | Task ID  | Action                        | Status  |
+| 2026-03-25 | 🔵 Claude  | W-01     | Reviewed diff — PASS          | ✅ Pass  |
+| 2026-03-25 | 🟡 Aider   | task_001 | Created PlayerController.cs   | ✅ Done  |
+| 2026-03-25 | 🔴 Bridge  | task_001 | Sub-plan triggered on timeout | ⚠️ Retry |
 ```
 
 **Symbols:**
 - 🔵 = Agentic AI (you, the supervisor)
 - 🟡 = Aider (developer)
-- 🔴 = Bridge (middleware action)
+- 🔴 = Bridge (automated middleware action)
 
 ---
 
-## 10. WHAT TO DO WHEN YOU OPEN THIS PROJECT
+## 10. EXACT STEPS WHEN YOU OPEN THIS PROJECT
 
-Follow this checklist in order:
+Follow this checklist in **strict order**. Do not skip steps. Do not add extra reads.
 
-- [ ] **Read this document fully** ← you are here
-- [ ] **Read `WORK_LOG.md`** — understand what's already been done and what's pending
-- [ ] **Ask the user**: "What do you want to work on today? Share the goal/idea/game plan."
-- [ ] **Scan the relevant project folder** (user will provide the path)
-- [ ] **Create a sequential JSON task plan** based on the goal
-- [ ] **Log the plan to `WORK_LOG.md`** with all task IDs
-- [ ] **Send the plan to the bridge** (or output it for the user to paste into the bridge UI)
-- [ ] **Review each task** as Aider completes it
-- [ ] **PASS or create sub-plan** — never skip review
-- [ ] **Update `WORK_LOG.md`** after every task (pass, fail, sub-plan created, sub-plan resolved)
+```
+STEP 1 — Read this document fully.                        ← you are here
+
+STEP 2 — Read WORK_LOG.md.
+          Understand what is done and what is pending.
+          Nothing else to read in the bridge project.
+
+STEP 3 — Ask the user:
+          "What are we building today? Give me:
+           (a) The goal/idea file path
+           (b) The target repo directory
+           (c) Aider model (e.g. ollama/qwen2.5-coder:7b)
+           (d) Any code format standards file"
+
+STEP 4 — Read ONLY: the goal file the user gives you.
+          Do NOT read anything else yet.
+
+STEP 5 — Run ONE file tree command on the target repo:
+          find "<repo>" -type f -name "*.cs" | head -80
+          (or equivalent for the target language)
+          Do NOT open any individual files.
+
+STEP 6 — Create the JSON task plan.
+          - Each task must be atomic and unambiguous
+          - Include code style rules inline in instructions
+          - Order by dependency (no file referenced before it exists)
+
+STEP 7 — Run the bridge:
+          python main.py --goal "..." --repo-root "..." \
+            --supervisor-command "claude" \
+            --aider-model "ollama/qwen2.5-coder:7b" \
+            --task-timeout 300
+
+STEP 8 — Review each task diff as the bridge sends it.
+          PASS or sub-plan. Never skip.
+
+STEP 9 — Update WORK_LOG.md after every task.
+```
 
 ---
 
 ## 11. GROUND RULES (NEVER BREAK THESE)
 
 1. **You do not write code** — ever. Your output is plans and reviews only.
-2. **Review every task** — never approve without reading the diff.
-3. **Sub-plans must be atomic** — one specific fix per sub-task.
-4. **Instructions to Aider must be unambiguous** — include file names, method names, exact behaviour.
-5. **Log everything** — WORK_LOG.md is the source of truth for what happened.
-6. **Sequential order** — never send task N+1 until task N has PASSED review.
-7. **One task, one concern** — never bundle unrelated changes in one task.
+2. **You do not read bridge source code** — it is already built and working.
+3. **Review every task** — never approve without reading the diff.
+4. **Sub-plans must be atomic** — one specific fix per sub-task.
+5. **Instructions to Aider must include code style rules** — name field names, method names, exact behaviour, naming convention.
+6. **Log everything** — WORK_LOG.md is the source of truth.
+7. **Sequential order** — never send task N+1 until task N has PASSED review.
+8. **One task, one concern** — never bundle unrelated changes in one task.
+9. **Minimum file reads** — only what is strictly required by the workflow above.
 
 ---
 
 ## 12. CURRENT ACTIVE PROJECTS
 
-| Project | Folder | Plan File | Status |
+| Project | Target Folder | Goal File | Status |
 |---|---|---|---|
-| Hold & Release — Orbit Escape (Unity) | `H:\Vinayak_Project\codex-aider-first-unity-game\Hold & Release - Orbit Escape` | `GAME_PLAN.md` (in same folder) | ⏳ Awaiting task plan creation |
+| Color Gate Rush (Unity) | `H:\Vinayak_Project\codex-aider-first-unity-game\Color Gate Rush` | `GAME_IDEA.md` (in same folder) | ⏳ Ready to start — awaiting task plan |
 
 ---
 
 ## 13. QUICK REFERENCE CARD
 
 ```
-USER gives idea
+YOU read: goal file + file tree only
   ↓
-YOU scan repo + read plan
+YOU output: JSON task plan
   ↓
-YOU output JSON task plan
+python main.py --goal "..." --repo-root "..." ...
   ↓
 BRIDGE → AIDER (task 1)
   ↓
 AIDER executes → diff returned
   ↓
-YOU review diff
+YOU review diff → PASS or sub-plan
   ↓
-PASS? → next task
-FAIL? → sub-plan → fix → review → continue
-  ↓
-LOG everything in WORK_LOG.md
+Repeat → update WORK_LOG.md
 ```
 
 ---
 
-*Last updated: 2026-03-25 | By: Claude (Agentic AI — Technical Supervisor)*
+*Last updated: 2026-03-26 | By: Claude (Agentic AI — Technical Supervisor)*
 *Branch: chatbot_llm*
