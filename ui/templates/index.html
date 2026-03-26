@@ -462,6 +462,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
   <!-- ── Token summary cards ── -->
   <div id="reports-token-summary" style="display:none">
+    <!-- auto-approve mode notice — shown when supervisor tokens are all 0 -->
+    <div id="auto-approve-notice" style="display:none;padding:10px 14px;background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.25);border-radius:var(--radius);margin-bottom:14px;font-size:13px">
+      <strong style="color:var(--primary)">ℹ Interactive Supervisor Mode</strong>
+      <span style="color:var(--muted);margin-left:6px">Supervisor Tokens = 0 because <em>you</em> are the supervisor — the plan was written directly in the AI session (Claude Code / Codex), not by a spawned CLI subprocess. Token usage for planning is billed to your AI account, not tracked here. The metrics below show Aider execution stats only.</span>
+    </div>
+
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px" id="token-stat-cards"></div>
 
     <!-- Last session detail -->
@@ -720,13 +726,17 @@ function renderTokenReport(tok) {
   const last = sessions[0] || {};
   const sav = last.savings || {};
 
-  // Stat cards
+  // Detect interactive-supervisor (auto-approve) mode: all sessions have 0 supervisor tokens
+  const isAutoApprove = (totals.supervisor_tokens_total || 0) === 0 && (totals.sessions_count || 0) > 0;
+  document.getElementById('auto-approve-notice').style.display = isAutoApprove ? '' : 'none';
+
+  // Stat cards — replace misleading 0s with "—" in auto-approve mode
   const cards = [
     { label: 'Sessions', value: totals.sessions_count || 0, sub: 'total runs', highlight: false },
     { label: 'Tasks Executed', value: totals.tasks_executed_total || 0, sub: 'all time', highlight: false },
-    { label: 'Supervisor Tokens', value: fmtNum(totals.supervisor_tokens_total || 0), sub: 'used by AI planner', highlight: false },
-    { label: 'Tokens Saved', value: fmtNum(totals.tokens_saved_total || 0), sub: 'by using Aider', highlight: true },
-    { label: 'Avg Savings', value: (totals.savings_percent_avg || 0).toFixed(1) + '%', sub: 'vs writing code directly', highlight: true },
+    { label: 'Supervisor Tokens', value: isAutoApprove ? '—' : fmtNum(totals.supervisor_tokens_total || 0), sub: isAutoApprove ? 'you are the supervisor' : 'used by AI planner', highlight: false },
+    { label: 'Tokens Saved', value: isAutoApprove ? '—' : fmtNum(totals.tokens_saved_total || 0), sub: isAutoApprove ? 'n/a in interactive mode' : 'by using Aider', highlight: !isAutoApprove },
+    { label: 'Avg Savings', value: isAutoApprove ? '—' : (totals.savings_percent_avg || 0).toFixed(1) + '%', sub: isAutoApprove ? 'n/a in interactive mode' : 'vs writing code directly', highlight: !isAutoApprove },
   ];
   document.getElementById('token-stat-cards').innerHTML = cards.map(c => `
     <div class="stat-card${c.highlight ? ' highlight' : ''}">
@@ -745,13 +755,18 @@ function renderTokenReport(tok) {
       <div><div style="font-size:11px;color:var(--muted)">Elapsed</div><div style="font-size:13px">${(last.elapsed_seconds || 0).toFixed(1)}s</div></div>
       <div><div style="font-size:11px;color:var(--muted)">Supervisor</div><div style="font-size:13px;font-family:var(--mono)">${esc(last.supervisor || '—')}</div></div>
     </div>
+    ${isAutoApprove ? `
+    <div style="padding:8px 10px;background:rgba(88,166,255,.07);border-radius:var(--radius);font-size:12px;color:var(--muted)">
+      Token cost tracking is not available in interactive supervisor mode. Planning happened inside your AI session (Claude Code / Codex) — those tokens are billed to your AI account directly.
+    </div>` : `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:8px">
       <div><div style="font-size:11px;color:var(--muted)">Supervisor tokens used</div><div style="font-size:15px;font-weight:600">${fmtNum(sav.actual_supervisor_tokens || 0)}</div></div>
       <div><div style="font-size:11px;color:var(--muted)">Would have cost (direct)</div><div style="font-size:15px;font-weight:600;color:var(--danger)">${fmtNum(sav.estimated_direct_tokens || 0)}</div></div>
       <div><div style="font-size:11px;color:var(--muted)">Saved</div><div style="font-size:15px;font-weight:600;color:var(--success)">${fmtNum(sav.tokens_saved || 0)}</div></div>
     </div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Savings rate: <strong style="color:var(--success)">${pct.toFixed(1)}%</strong></div>
-    <div class="savings-bar-wrap"><div class="savings-bar" style="width:${Math.min(pct,100)}%"></div></div>`;
+    <div class="savings-bar-wrap"><div class="savings-bar" style="width:${Math.min(pct,100)}%"></div></div>`
+    }`;
 
   // Sessions table
   const tbody = document.getElementById('sessions-tbody');
