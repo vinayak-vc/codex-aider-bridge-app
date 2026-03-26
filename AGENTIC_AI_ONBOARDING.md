@@ -107,13 +107,49 @@ Aider does NOT plan, does NOT decide what to build, does NOT skip ahead.
 ## 5. HOW TO RUN THE BRIDGE
 
 ```bash
-python main.py \
-  --goal "Build a mobile endless runner game called Color Gate Rush" \
+python main.py "Build a mobile endless runner game called Color Gate Rush" \
   --repo-root "H:/Vinayak_Project/codex-aider-first-unity-game/Color Gate Rush" \
-  --supervisor-command "claude" \
+  --idea-file "H:/Vinayak_Project/.../GAME_IDEA.md" \
+  --supervisor-command "<your-supervisor-command>" \
   --aider-model "ollama/qwen2.5-coder:7b" \
   --task-timeout 300
 ```
+
+### Important: `goal` is a positional argument — no `--goal` flag.
+
+```bash
+python main.py "your goal here" --repo-root "..." ...
+#              ^^^^^^^^^^^^^^^^
+#              positional — comes right after main.py, no -- prefix
+```
+
+### `--supervisor-command` is generic — pass any AI CLI:
+
+| Supervisor | Command to pass |
+|------------|----------------|
+| Claude CLI | `claude` |
+| Codex CLI  | `codex.cmd exec --skip-git-repo-check --color never` |
+| Google Antigravity | `antigravity` (or whatever its CLI command is) |
+| Any other agent | Whatever command runs it in non-interactive mode |
+
+The bridge is not bound to any specific AI. Swap the supervisor freely.
+
+### Use `--idea-file` for full briefs:
+Pass the full `GAME_IDEA.md` or `PRODUCT_BRIEF.md` path via `--idea-file`.
+The positional goal is just a short headline — the idea file carries the full detail.
+
+### All arguments:
+| Argument | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `goal` (positional) | Yes | — | Short headline goal |
+| `--repo-root` | Yes | cwd | Target project folder |
+| `--idea-file` | No | None | Full brief/plan file injected into planning prompt |
+| `--supervisor-command` | No | `codex.cmd exec ...` | Any supervisor AI CLI command |
+| `--aider-model` | No | Aider default | e.g. `ollama/qwen2.5-coder:7b` |
+| `--task-timeout` | No | 300 | Seconds before killing a stuck subprocess |
+| `--plan-file` | No | None | Skip planning — execute a pre-written JSON plan |
+| `--dry-run` | No | False | Generate plan only, don't run Aider |
+| `--max-task-retries` | No | 2 | REWORK cycles per task before giving up |
 
 The bridge will:
 1. Call you (the supervisor) with the goal to generate a JSON plan
@@ -265,10 +301,14 @@ STEP 6 — Create the JSON task plan.
           - Order by dependency (no file referenced before it exists)
 
 STEP 7 — Run the bridge:
-          python main.py --goal "..." --repo-root "..." \
-            --supervisor-command "claude" \
+          python main.py "short goal headline" \
+            --repo-root "..." \
+            --idea-file "path/to/GAME_IDEA.md" \
+            --supervisor-command "<supervisor-cli-command>" \
             --aider-model "ollama/qwen2.5-coder:7b" \
             --task-timeout 300
+          NOTE: goal is positional (no --goal flag). supervisor-command
+          is generic — pass claude, antigravity, codex, or any CLI.
 
 STEP 8 — Review each task diff as the bridge sends it.
           PASS or sub-plan. Never skip.

@@ -5,6 +5,28 @@ to get maximum bridge and Aider usage — minimum supervisor tokens, maximum Aid
 
 ---
 
+## ⚠️ CRITICAL: HOW THE BRIDGE CLI WORKS
+
+```bash
+# CORRECT — goal is a positional argument (no --goal flag)
+python main.py "Build Color Gate Rush mobile game" \
+  --repo-root "H:/path/to/repo" \
+  --idea-file "H:/path/to/GAME_IDEA.md" \
+  --supervisor-command "claude" \
+  --aider-model "ollama/qwen2.5-coder:7b"
+
+# WRONG — --goal does not exist
+python main.py --goal "Build Color Gate Rush mobile game" ...
+```
+
+`--supervisor-command` accepts **any** supervisor AI CLI — `claude`, `antigravity`,
+`codex.cmd exec --skip-git-repo-check --color never`, or any other agent.
+The bridge is not bound to a specific AI.
+
+Use `--idea-file` to pass a full brief/plan file. The positional goal is just a short headline.
+
+---
+
 ## The Core Rule
 
 > **Give paths + goal + "run via bridge" = Supervisor plans, Aider codes, you review diffs.**
@@ -18,13 +40,13 @@ Anything vague = the Supervisor discusses instead of executes. Be directive, not
 Use this template exactly. Fill in your values.
 
 ```
-Project Dir:       <absolute path to the repo>
-Goal File:         <absolute path to GAME_IDEA.md / PRODUCT_BRIEF.md / etc.>
-Code Standards:    <absolute path to CODE_FORMAT_STANDARDS.md>
+Project Dir:        <absolute path to the repo>
+Goal File:          <absolute path to GAME_IDEA.md / PRODUCT_BRIEF.md / etc.>
+Code Standards:     <absolute path to CODE_FORMAT_STANDARDS.md>
 
-Aider model:       ollama/qwen2.5-coder:7b
-Supervisor:        claude
-Bridge run via:    main.py
+Aider model:        ollama/qwen2.5-coder:7b
+Supervisor command: <your supervisor CLI — e.g. claude / antigravity / codex.cmd exec --skip-git-repo-check --color never>
+Bridge run via:     main.py
 
 Read the goal file and the file tree — then create the task plan and run the bridge.
 All code goes through Aider. You do not write any code directly.
@@ -34,7 +56,7 @@ Track token usage throughout.
 ### What happens next (automatically):
 1. Supervisor reads goal file + one file tree command — nothing else
 2. Supervisor creates a detailed atomic JSON task plan
-3. Bridge runs: `python main.py --goal "..." --repo-root "..." ...`
+3. Bridge runs: `python main.py "goal headline" --repo-root "..." --idea-file "..." ...`
 4. Aider executes each task, one at a time
 5. Supervisor reviews each diff — PASS or sub-plan
 6. WORK_LOG.md is updated after every task
@@ -151,12 +173,12 @@ The Supervisor reads `token_log.json` and shows:
 
 ### New project
 ```
-Project Dir:    <path>
-Goal File:      <path>
-Code Standards: <path>
-Aider model:    ollama/qwen2.5-coder:7b
-Supervisor:     claude
-Bridge run via: main.py
+Project Dir:        <path>
+Goal File:          <path>
+Code Standards:     <path>
+Aider model:        ollama/qwen2.5-coder:7b
+Supervisor command: <your supervisor CLI — e.g. claude / antigravity / codex.cmd exec ...>
+Bridge run via:     main.py
 
 Read the goal file and file tree. Create the task plan. Run the bridge.
 All code through Aider. Track token usage.
