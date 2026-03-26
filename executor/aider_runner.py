@@ -115,7 +115,8 @@ class AiderRunner:
             "--no-pretty",
             "--no-stream",
             "--no-auto-commits",
-            "--no-gitignore",  # Fix #3: suppress "add .aiderignore?" interactive prompt
+            "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
+            "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--message",
             task.instruction,
         ])
