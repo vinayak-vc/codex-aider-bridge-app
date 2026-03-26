@@ -486,7 +486,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
         <table class="report-table" id="sessions-table">
           <thead><tr>
             <th>Date</th><th>Goal</th><th>Tasks</th>
-            <th>Supervisor Tokens</th><th>Tokens Saved</th><th>Savings</th>
+            <th>Session Tokens</th><th>Total AI Tokens</th><th>Tokens Saved</th><th>Savings</th>
           </tr></thead>
           <tbody id="sessions-tbody"></tbody>
         </table>
@@ -726,17 +726,20 @@ function renderTokenReport(tok) {
   const last = sessions[0] || {};
   const sav = last.savings || {};
 
-  // Detect interactive-supervisor (auto-approve) mode: all sessions have 0 supervisor tokens
+  // Detect interactive-supervisor (auto-approve) mode: all sessions have 0 subprocess supervisor tokens
   const isAutoApprove = (totals.supervisor_tokens_total || 0) === 0 && (totals.sessions_count || 0) > 0;
   document.getElementById('auto-approve-notice').style.display = isAutoApprove ? '' : 'none';
 
-  // Stat cards — replace misleading 0s with "—" in auto-approve mode
+  const sessionTotal = totals.session_tokens_total || 0;
+  const totalAI = totals.total_ai_tokens_total || (totals.supervisor_tokens_total || 0);
+
+  // Stat cards
   const cards = [
     { label: 'Sessions', value: totals.sessions_count || 0, sub: 'total runs', highlight: false },
     { label: 'Tasks Executed', value: totals.tasks_executed_total || 0, sub: 'all time', highlight: false },
-    { label: 'Supervisor Tokens', value: isAutoApprove ? '—' : fmtNum(totals.supervisor_tokens_total || 0), sub: isAutoApprove ? 'you are the supervisor' : 'used by AI planner', highlight: false },
-    { label: 'Tokens Saved', value: isAutoApprove ? '—' : fmtNum(totals.tokens_saved_total || 0), sub: isAutoApprove ? 'n/a in interactive mode' : 'by using Aider', highlight: !isAutoApprove },
-    { label: 'Avg Savings', value: isAutoApprove ? '—' : (totals.savings_percent_avg || 0).toFixed(1) + '%', sub: isAutoApprove ? 'n/a in interactive mode' : 'vs writing code directly', highlight: !isAutoApprove },
+    { label: 'Session Tokens', value: fmtNum(sessionTotal), sub: 'reading + planning + reviews', highlight: false },
+    { label: 'Total AI Tokens', value: fmtNum(totalAI), sub: 'session + subprocess calls', highlight: false },
+    { label: 'Tokens Saved', value: isAutoApprove ? '—' : fmtNum(totals.tokens_saved_total || 0), sub: isAutoApprove ? 'n/a in interactive mode' : 'vs writing code directly', highlight: !isAutoApprove },
   ];
   document.getElementById('token-stat-cards').innerHTML = cards.map(c => `
     <div class="stat-card${c.highlight ? ' highlight' : ''}">
@@ -753,7 +756,24 @@ function renderTokenReport(tok) {
       <div><div style="font-size:11px;color:var(--muted)">Goal</div><div style="font-size:13px">${esc(last.goal || '—')}</div></div>
       <div><div style="font-size:11px;color:var(--muted)">Tasks</div><div style="font-size:13px">${last.tasks_executed || 0} executed, ${last.tasks_skipped || 0} skipped</div></div>
       <div><div style="font-size:11px;color:var(--muted)">Elapsed</div><div style="font-size:13px">${(last.elapsed_seconds || 0).toFixed(1)}s</div></div>
-      <div><div style="font-size:11px;color:var(--muted)">Supervisor</div><div style="font-size:13px;font-family:var(--mono)">${esc(last.supervisor || '—')}</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Supervisor</div><div style="font-size:13px;font-family:var(--mono)">${esc(last.supervisor_command || '—')}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px;padding:10px;background:var(--card);border-radius:var(--radius)">
+      <div>
+        <div style="font-size:11px;color:var(--muted)">Session Tokens ${(last.session||{}).is_estimate ? '<span style="color:var(--warning);font-size:10px">(est)</span>' : '<span style="color:var(--success);font-size:10px">(exact)</span>'}</div>
+        <div style="font-size:17px;font-weight:700">${fmtNum((last.session||{}).tokens || 0)}</div>
+        <div style="font-size:11px;color:var(--muted)">reading + planning + reviews</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted)">Subprocess Tokens</div>
+        <div style="font-size:17px;font-weight:700">${fmtNum((last.supervisor||{}).total || 0)}</div>
+        <div style="font-size:11px;color:var(--muted)">plan/review CLI calls</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted)">Total AI Tokens</div>
+        <div style="font-size:17px;font-weight:700;color:var(--primary)">${fmtNum((last.session||{}).total_ai_tokens || (last.supervisor||{}).total || 0)}</div>
+        <div style="font-size:11px;color:var(--muted)">charged to your account</div>
+      </div>
     </div>
     ${isAutoApprove ? `
     <div style="padding:8px 10px;background:rgba(88,166,255,.07);border-radius:var(--radius);font-size:12px;color:var(--muted)">
@@ -773,11 +793,14 @@ function renderTokenReport(tok) {
   tbody.innerHTML = sessions.map(s => {
     const sv = s.savings || {};
     const p = sv.savings_percent || 0;
+    const sess = s.session || {};
+    const estMark = sess.is_estimate ? ' <span style="color:var(--warning);font-size:10px">est</span>' : '';
     return `<tr>
       <td style="white-space:nowrap">${esc(s.date || '—')}</td>
       <td>${esc((s.goal || '').slice(0, 60))}${(s.goal || '').length > 60 ? '…' : ''}</td>
       <td>${s.tasks_executed || 0}</td>
-      <td>${fmtNum(sv.actual_supervisor_tokens || 0)}</td>
+      <td>${fmtNum(sess.tokens || 0)}${estMark}</td>
+      <td style="color:var(--primary);font-weight:600">${fmtNum(sess.total_ai_tokens || (s.supervisor||{}).total || 0)}</td>
       <td style="color:var(--success)">${fmtNum(sv.tokens_saved || 0)}</td>
       <td><span style="color:var(--success);font-weight:600">${p.toFixed(1)}%</span></td>
     </tr>`;

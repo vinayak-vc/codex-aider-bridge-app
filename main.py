@@ -141,6 +141,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--session-tokens",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Tokens spent by the AI supervisor in this interactive session "
+            "(reading files, generating the plan, reviewing diffs, conversation). "
+            "Pass the exact value if your AI client shows token usage (e.g. Claude Code "
+            "token counter, /cost command). If omitted the bridge estimates from file sizes."
+        ),
+    )
+    parser.add_argument(
         "--auto-split-threshold",
         type=int,
         default=0,
@@ -585,6 +597,61 @@ def _resolve_auto_split_threshold(
     return 0
 
 
+def estimate_session_tokens(
+    idea_file: Optional[Path],
+    plan_file: Optional[Path],
+    repo_root: Path,
+    tasks: list[Task],
+) -> int:
+    """Estimate tokens the AI supervisor spent in its interactive session.
+
+    Covers the work every AI does before and during a bridge run:
+      - Reading AGENTIC_AI_ONBOARDING.md (from the bridge directory)
+      - Reading WORK_LOG.md (from the target repo, if present)
+      - Reading bridge_progress/project_knowledge.json (if present)
+      - Reading the idea / brief file (if provided)
+      - Generating the task plan JSON (output tokens — from plan file or task instructions)
+      - Conversation overhead (~500 tokens for messages back and forth)
+
+    Uses 1 token ≈ 4 characters (standard approximation, ±15%).
+    """
+    total = 0
+
+    def _file_tokens(path: Path) -> int:
+        try:
+            return path.stat().st_size // 4
+        except OSError:
+            return 0
+
+    # Bridge onboarding doc — always read by any AI supervisor
+    bridge_dir = Path(__file__).resolve().parent
+    onboarding = bridge_dir / "AGENTIC_AI_ONBOARDING.md"
+    total += _file_tokens(onboarding) if onboarding.exists() else 2_000
+
+    # WORK_LOG.md in the target repo
+    work_log = repo_root / "WORK_LOG.md"
+    total += _file_tokens(work_log)
+
+    # Project knowledge cache
+    knowledge = repo_root / "bridge_progress" / "project_knowledge.json"
+    total += _file_tokens(knowledge)
+
+    # Idea / brief file
+    if idea_file and idea_file.exists():
+        total += _file_tokens(idea_file)
+
+    # Plan output — either from the plan file or from task instruction lengths
+    if plan_file and plan_file.exists():
+        total += _file_tokens(plan_file)
+    else:
+        total += sum(len(t.instruction) // 4 for t in tasks)
+
+    # Conversation overhead (user messages, AI replies around the run)
+    total += 500
+
+    return total
+
+
 def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     """Validate environment before spending any tokens on planning or execution.
 
@@ -818,6 +885,25 @@ def main() -> int:
         # (Claude Code / human) can review all changes in one place.
         if _auto_approve and all_diffs:
             _emit_structured({"type": "review_summary", "tasks": all_diffs})
+
+        # ── Session token tracking ────────────────────────────────────────────
+        # If the AI passed --session-tokens N (exact), use it.
+        # Otherwise estimate from file sizes (what the AI likely read/wrote).
+        _explicit_session_tokens = int(args.session_tokens)
+        if _explicit_session_tokens > 0:
+            token_tracker.record_session_tokens(_explicit_session_tokens, is_estimate=False)
+            logger.info("Session tokens (exact, provided by AI): %d", _explicit_session_tokens)
+        else:
+            _estimated = estimate_session_tokens(
+                idea_file, Path(args.plan_file).resolve() if args.plan_file else None,
+                repo_root, tasks,
+            )
+            token_tracker.record_session_tokens(_estimated, is_estimate=True)
+            logger.info(
+                "Session tokens (estimated from file sizes): %d — "
+                "pass --session-tokens N for exact value",
+                _estimated,
+            )
 
         # ── Token tracking: build session report and persist ─────────────────
         token_report = token_tracker.build_session_report(
