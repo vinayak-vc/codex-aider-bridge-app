@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -543,6 +544,47 @@ def record_rollback_point(repo_root: Path, logger: logging.Logger) -> Optional[s
     return None
 
 
+# Model size patterns that indicate a small local model (≤ 14 B parameters).
+# Matched against the --aider-model value (case-insensitive).
+# Examples that match: 7b, 7B, 6.7b, 8b, 13b, 14b, 3b, 1b, 1.5b
+# Examples that do NOT match: 32b, 34b, 70b, 72b, claude, gpt-4, gemini
+_SMALL_MODEL_RE = re.compile(r"\b(1[0-4]|[1-9](\.\d+)?)b\b", re.IGNORECASE)
+_AUTO_SPLIT_DEFAULT_THRESHOLD = 3
+
+
+def _resolve_auto_split_threshold(
+    explicit_threshold: int,
+    aider_model: Optional[str],
+    logger: logging.Logger,
+) -> int:
+    """Return the effective auto-split threshold.
+
+    Rules (in priority order):
+    1. If the user explicitly passed --auto-split-threshold N (N > 0) → use N.
+    2. If --auto-split-threshold was NOT set (== 0) and the model name contains
+       a small-model size marker (≤ 14 B) → auto-enable with threshold 3.
+    3. Otherwise → 0 (disabled).
+
+    This means AIs never need to think about whether to pass the flag —
+    the bridge enables it automatically for small local models.
+    """
+    if explicit_threshold > 0:
+        return explicit_threshold
+
+    if aider_model and _SMALL_MODEL_RE.search(aider_model):
+        logger.info(
+            "Auto-split: detected small model %r — enabling --auto-split-threshold %d automatically. "
+            "Tasks with %d+ files will be split into single-file sub-tasks. "
+            "Pass --auto-split-threshold 0 to disable.",
+            aider_model,
+            _AUTO_SPLIT_DEFAULT_THRESHOLD,
+            _AUTO_SPLIT_DEFAULT_THRESHOLD,
+        )
+        return _AUTO_SPLIT_DEFAULT_THRESHOLD
+
+    return 0
+
+
 def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     """Validate environment before spending any tokens on planning or execution.
 
@@ -604,6 +646,13 @@ def main() -> int:
             "mechanical validation only, no external supervisor AI."
         )
 
+    # Resolve auto-split threshold: explicit flag takes priority; falls back to
+    # model-name detection so small models (≤14B) get it automatically.
+    _aider_model = args.aider_model or None
+    _auto_split = _resolve_auto_split_threshold(
+        int(args.auto_split_threshold), _aider_model, logger
+    )
+
     config = BridgeConfig(
         goal=args.goal,
         repo_root=repo_root,
@@ -613,14 +662,14 @@ def main() -> int:
         validation_command=args.validation_command,
         supervisor_command=_supervisor_cmd or "claude",
         aider_command=args.aider_command,
-        aider_model=args.aider_model or None,
+        aider_model=_aider_model,
         idea_file=idea_file,
         idea_text=idea_text,
         plan_output_file=plan_output_file,
         task_timeout_seconds=int(args.task_timeout),
         aider_no_map=bool(args.aider_no_map),
         auto_approve=_auto_approve,
-        auto_split_threshold=int(args.auto_split_threshold),
+        auto_split_threshold=_auto_split,
     )
 
     run_preflight_checks(config, logger)
