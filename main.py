@@ -140,6 +140,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--auto-split-threshold",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Automatically split any task targeting N or more files into individual "
+            "single-file sub-tasks before Aider runs them. 0 = disabled (default). "
+            "Recommended: 3 when using small local models (e.g. ollama/qwen2.5-coder:7b) "
+            "that struggle to edit multiple files in a single pass without losing context."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -151,6 +163,65 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def load_plan_from_file(plan_file: Path, parser: TaskParser) -> list[Task]:
     raw = plan_file.read_text(encoding="utf-8")
     return parser.parse(raw)
+
+
+def auto_split_tasks(
+    tasks: list[Task],
+    threshold: int,
+    logger: logging.Logger,
+) -> list[Task]:
+    """Split tasks that target >= threshold files into individual single-file sub-tasks.
+
+    Each sub-task keeps the full original instruction (so Aider retains cross-file
+    context) plus a one-line focus directive at the top:
+
+        Focus ONLY on Assets/Scripts/Core/PlayerController.cs.
+        Do NOT create or modify any other file.
+
+        [original instruction follows]
+
+    This prevents small models (7B/13B) from editing the wrong file or producing
+    partial implementations across multiple files in a single Aider run.
+
+    Sub-task ID scheme: original_id * 1000 + 1-based index.
+    Example: task 5 with 3 files → sub-tasks 5001, 5002, 5003.
+
+    Tasks with fewer than threshold files are passed through unchanged.
+    context_files are preserved on every sub-task so read-only references
+    remain available.
+    """
+    if threshold <= 0:
+        return tasks
+
+    result: list[Task] = []
+    for task in tasks:
+        if len(task.files) < threshold:
+            result.append(task)
+            continue
+
+        logger.info(
+            "Auto-split: task %s has %d file(s) (threshold=%d) → %d single-file sub-tasks",
+            task.id,
+            len(task.files),
+            threshold,
+            len(task.files),
+        )
+        for index, file_path in enumerate(task.files, start=1):
+            focus_prefix = (
+                f"Focus ONLY on {file_path}.\n"
+                f"Do NOT create or modify any other file.\n\n"
+            )
+            result.append(
+                Task(
+                    id=task.id * 1000 + index,
+                    files=[file_path],
+                    instruction=focus_prefix + task.instruction,
+                    type=task.type,
+                    context_files=task.context_files,
+                )
+            )
+
+    return result
 
 
 def obtain_plan(
@@ -549,6 +620,7 @@ def main() -> int:
         task_timeout_seconds=int(args.task_timeout),
         aider_no_map=bool(args.aider_no_map),
         auto_approve=_auto_approve,
+        auto_split_threshold=int(args.auto_split_threshold),
     )
 
     run_preflight_checks(config, logger)
@@ -607,6 +679,20 @@ def main() -> int:
             tasks = obtain_plan(
                 config, supervisor, task_parser, repo_tree, logger, knowledge_context
             )
+
+        # Auto-split multi-file tasks into single-file sub-tasks.
+        # Applied after planning so the split is visible in --confirm-plan preview
+        # and in --plan-output-file (which captures the original supervisor plan).
+        if config.auto_split_threshold > 0:
+            _pre_split_count = len(tasks)
+            tasks = auto_split_tasks(tasks, config.auto_split_threshold, logger)
+            _post_split_count = len(tasks)
+            if _post_split_count != _pre_split_count:
+                logger.info(
+                    "Auto-split complete: %d original task(s) → %d single-file sub-task(s)",
+                    _pre_split_count,
+                    _post_split_count,
+                )
 
         # Feature 6: plan preview + confirmation before any Aider task runs.
         if args.confirm_plan and not args.dry_run:

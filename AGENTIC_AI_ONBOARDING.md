@@ -156,6 +156,7 @@ The positional goal is just a short headline — the idea file carries the full 
 | `--task-timeout` | No | 300 | Seconds before killing a stuck subprocess |
 | `--plan-file` | No | None | Skip planning — execute a pre-written JSON plan |
 | `--confirm-plan` | No | False | Show plan preview and ask y/n before running |
+| `--auto-split-threshold N` | No | 0 (off) | Split tasks with N+ files into single-file sub-tasks (use 3 for small models) |
 | `--dry-run` | No | False | Generate plan only, don't run Aider |
 | `--max-task-retries` | No | 2 | REWORK cycles per task before giving up |
 
@@ -255,6 +256,7 @@ The bridge is **fully implemented**. You do not need to fix, improve, or read it
 | Pre-flight checks (aider, git, disk) | ✅ Working |
 | Subprocess timeouts (supervisor + Aider) | ✅ Working |
 | Silent failure detection (pre/post file hash) | ✅ Working |
+| Auto-split multi-file tasks (--auto-split-threshold) | ✅ Working |
 | Web UI with live task feed | ✅ Working |
 
 ---
