@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import subprocess
@@ -55,6 +56,58 @@ class AiderRunner:
                 [p.name for p in self._standards_files],
             )
 
+    # ── Pre/post hash helpers (YourStore suggestion 2) ───────────────────────
+
+    @staticmethod
+    def _hash_file(path: Path) -> Optional[str]:
+        """Return the SHA-256 hex digest of a file, or None if it does not exist."""
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _snapshot_hashes(self, file_paths: list[Path]) -> dict[str, Optional[str]]:
+        """Record the SHA-256 of every target file before Aider runs."""
+        return {str(p): self._hash_file(p) for p in file_paths}
+
+    def _check_for_silent_failure(
+        self,
+        task_id: int,
+        task_type: str,
+        file_paths: list[Path],
+        before: dict[str, Optional[str]],
+    ) -> Optional[str]:
+        """Return an error message if Aider reported success but changed nothing.
+
+        Only checks create/modify tasks — validate/delete tasks may legitimately
+        leave file content unchanged.
+        """
+        if task_type not in {"create", "modify"}:
+            return None
+
+        unchanged: list[str] = []
+        for path in file_paths:
+            key = str(path)
+            after = self._hash_file(path)
+            pre = before.get(key)
+            if pre == after:
+                # File did not exist before and still does not → expected for
+                # tasks that Aider handles via a different mechanism; skip.
+                if pre is None and not path.exists():
+                    continue
+                unchanged.append(path.name)
+
+        if unchanged:
+            self._logger.warning(
+                "Task %s: Aider exited 0 but these file(s) are unchanged: %s",
+                task_id, ", ".join(unchanged),
+            )
+            return (
+                f"Aider reported success but did not modify: {', '.join(unchanged)}. "
+                "Implement the task completely — do not skip or stub."
+            )
+        return None
+
     def run(
         self,
         task: Task,
@@ -72,6 +125,9 @@ class AiderRunner:
                 stderr=str(ex),
                 command=[self._command],
             )
+
+        # Snapshot file hashes before Aider runs so we can detect silent failures.
+        pre_hashes = self._snapshot_hashes(file_paths)
 
         self._logger.debug("Running Aider: %s", arguments)
 
@@ -111,6 +167,22 @@ class AiderRunner:
                 stdout="",
                 stderr=str(ex),
                 command=arguments,
+            )
+
+        # YourStore suggestion 2: detect silent failure — Aider exits 0 but
+        # never actually writes the target files.
+        silent_failure_msg = self._check_for_silent_failure(
+            task.id, task.type, file_paths, pre_hashes
+        )
+        if silent_failure_msg and result.returncode == 0:
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=result.returncode,
+                stdout=result.stdout,
+                stderr=silent_failure_msg,
+                command=arguments,
+                duration_seconds=round(time.monotonic() - _start, 2),
             )
 
         return ExecutionResult(

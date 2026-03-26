@@ -254,6 +254,7 @@ The bridge is **fully implemented**. You do not need to fix, improve, or read it
 | Security: path traversal prevention | ✅ Working |
 | Pre-flight checks (aider, git, disk) | ✅ Working |
 | Subprocess timeouts (supervisor + Aider) | ✅ Working |
+| Silent failure detection (pre/post file hash) | ✅ Working |
 | Web UI with live task feed | ✅ Working |
 
 ---
@@ -375,7 +376,7 @@ YOU read: goal file + file tree only
   ↓
 YOU output: JSON task plan
   ↓
-python main.py --goal "..." --repo-root "..." ...
+python main.py "goal headline here" --repo-root "..." ...
   ↓
 BRIDGE → AIDER (task 1)
   ↓
