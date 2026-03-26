@@ -209,3 +209,6 @@ __marimo__/
 
 # Per-project bridge progress files
 bridge_progress/
+
+# AI-generated task plan JSON files (stored per-project, not committed)
+taskJsons/

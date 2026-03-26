@@ -168,7 +168,35 @@ The bridge will:
 
 ---
 
-## 6. TASK PLAN FORMAT (JSON)
+## 6. WHERE TO SAVE TASK JSON FILES
+
+When you generate a task plan JSON, **always save it inside a `taskJsons/` folder in the target project root**.
+
+```
+<repo_root>/
+└── taskJsons/
+    ├── plan_001_game_core.json
+    ├── plan_002_ui.json
+    └── plan_003_audio.json
+```
+
+### Rules:
+- Create the `taskJsons/` folder if it does not exist.
+- Name files descriptively: `plan_001_<feature>.json`
+- This folder is in `.gitignore` — it will never be committed.
+- You can keep as many plan files as you want here. They accumulate over time as a record of what was planned.
+- Pass the file to the bridge with `--plan-file`:
+
+```bash
+python main.py "Add player controller" \
+  --repo-root "H:/path/to/project" \
+  --plan-file "H:/path/to/project/taskJsons/plan_001_player_controller.json" \
+  --aider-model "ollama/qwen2.5-coder:7b"
+```
+
+---
+
+## 8. TASK PLAN FORMAT (JSON)
 
 When the bridge calls you to generate a plan, output this exact format:
 
@@ -205,7 +233,7 @@ When the bridge calls you to generate a plan, output this exact format:
 
 ---
 
-## 7. REVIEW RESPONSE FORMAT
+## 9. REVIEW RESPONSE FORMAT
 
 After each task, the bridge sends you the git diff. You respond with exactly one of:
 
@@ -236,7 +264,7 @@ If creating a sub-plan for a failed task:
 
 ---
 
-## 8. WHAT IS ALREADY BUILT IN THE BRIDGE
+## 10. WHAT IS ALREADY BUILT IN THE BRIDGE
 
 The bridge is **fully implemented**. You do not need to fix, improve, or read its code.
 
@@ -261,7 +289,7 @@ The bridge is **fully implemented**. You do not need to fix, improve, or read it
 
 ---
 
-## 9. WORK LOG — CURRENT STATE
+## 11. WORK LOG — CURRENT STATE
 
 All work is tracked in `WORK_LOG.md`. Update it after every task.
 
@@ -280,7 +308,7 @@ All work is tracked in `WORK_LOG.md`. Update it after every task.
 
 ---
 
-## 10. EXACT STEPS WHEN YOU OPEN THIS PROJECT
+## 12. EXACT STEPS WHEN YOU OPEN THIS PROJECT
 
 Follow this checklist in **strict order**. Do not skip steps. Do not add extra reads.
 
@@ -349,7 +377,7 @@ STEP 11 — After the run completes, the bridge auto-updates
 
 ---
 
-## 11. GROUND RULES (NEVER BREAK THESE)
+## 13. GROUND RULES (NEVER BREAK THESE)
 
 1. **You do not write code** — ever. Your output is plans and reviews only.
 2. **You do not read bridge source code** — it is already built and working.
@@ -363,7 +391,7 @@ STEP 11 — After the run completes, the bridge auto-updates
 
 ---
 
-## 12. CURRENT ACTIVE PROJECTS
+## 14. CURRENT ACTIVE PROJECTS
 
 | Project | Target Folder | Goal File | Status |
 |---|---|---|---|
@@ -371,7 +399,7 @@ STEP 11 — After the run completes, the bridge auto-updates
 
 ---
 
-## 13. QUICK REFERENCE CARD
+## 15. QUICK REFERENCE CARD
 
 ```
 YOU read: goal file + file tree only

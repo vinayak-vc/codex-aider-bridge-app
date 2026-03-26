@@ -367,3 +367,61 @@ def api_get_tokens_current():
     if sessions:
         return jsonify({"source": "persisted", "session": sessions[0], "totals": log.get("totals", {})})
     return jsonify({"source": "none", "session": None, "totals": log.get("totals", {})})
+
+
+# ── Project-scoped reports (reads from <repo_root>/bridge_progress/) ─────────
+
+def _project_progress_dir(request_args) -> Optional[Path]:
+    """Return the bridge_progress/ path for the given repo_root query param."""
+    repo_root = request_args.get("repo_root", "").strip()
+    if not repo_root:
+        # Fall back to the saved settings repo_root
+        repo_root = state_store.load_settings().get("repo_root", "").strip()
+    if not repo_root:
+        return None
+    return Path(repo_root) / "bridge_progress"
+
+
+@app.route("/api/reports/tokens")
+def api_reports_tokens():
+    """Token log for a specific project (reads bridge_progress/token_log.json)."""
+    progress_dir = _project_progress_dir(request.args)
+    if progress_dir is None:
+        return jsonify({"error": "repo_root not set"}), 400
+    token_file = progress_dir / "token_log.json"
+    if not token_file.exists():
+        return jsonify({"sessions": [], "totals": {}})
+    try:
+        return jsonify(json.loads(token_file.read_text(encoding="utf-8")))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/reports/knowledge")
+def api_reports_knowledge():
+    """Project knowledge cache (reads bridge_progress/project_knowledge.json)."""
+    progress_dir = _project_progress_dir(request.args)
+    if progress_dir is None:
+        return jsonify({"error": "repo_root not set"}), 400
+    knowledge_file = progress_dir / "project_knowledge.json"
+    if not knowledge_file.exists():
+        return jsonify({})
+    try:
+        return jsonify(json.loads(knowledge_file.read_text(encoding="utf-8")))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/reports/last_run")
+def api_reports_last_run():
+    """Last run summary (reads bridge_progress/last_run.json)."""
+    progress_dir = _project_progress_dir(request.args)
+    if progress_dir is None:
+        return jsonify({"error": "repo_root not set"}), 400
+    last_run_file = progress_dir / "last_run.json"
+    if not last_run_file.exists():
+        return jsonify({})
+    try:
+        return jsonify(json.loads(last_run_file.read_text(encoding="utf-8")))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500

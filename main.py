@@ -615,6 +615,19 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
             f"less than 50 MB free ({free_bytes // (1024 * 1024)} MB available)."
         )
 
+    # Ensure taskJsons/ is in the target repo's .gitignore so AI-generated plan
+    # files are never accidentally committed.
+    _gitignore_path = config.repo_root / ".gitignore"
+    _gitignore_entry = "taskJsons/"
+    try:
+        existing = _gitignore_path.read_text(encoding="utf-8") if _gitignore_path.exists() else ""
+        if _gitignore_entry not in existing.splitlines():
+            with _gitignore_path.open("a", encoding="utf-8") as _gf:
+                _gf.write(f"\n# AI-generated task plan JSON files\n{_gitignore_entry}\n")
+            logger.info("Added %r to %s", _gitignore_entry, _gitignore_path)
+    except OSError:
+        pass  # Non-fatal — just log nothing
+
     logger.info("Pre-flight checks passed.")
 
 

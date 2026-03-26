@@ -123,6 +123,21 @@ select option{background:var(--card)}
 .advanced-toggle{background:none;border:none;color:var(--primary);font-size:13px;cursor:pointer;padding:4px 0;display:flex;align-items:center;gap:4px;margin-bottom:8px}
 .advanced-section{display:none}
 .advanced-section.open{display:block}
+/* ── Report tables ──────────────────────────────────────────────────────── */
+.report-table{width:100%;border-collapse:collapse;font-size:13px}
+.report-table th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.report-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;max-width:320px;word-break:break-word}
+.report-table tr:last-child td{border-bottom:none}
+.report-table tr:hover td{background:var(--card)}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.stat-card .stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.stat-card .stat-value{font-size:22px;font-weight:700;color:var(--text)}
+.stat-card .stat-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.stat-card.highlight .stat-value{color:var(--success)}
+.knowledge-badge{padding:3px 10px;background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.3);border-radius:20px;font-size:12px;color:var(--success)}
+.meta-chip{padding:3px 10px;background:var(--card);border:1px solid var(--border);border-radius:4px;font-size:12px;color:var(--muted)}
+.savings-bar-wrap{height:6px;background:var(--card);border-radius:3px;overflow:hidden;margin-top:4px}
+.savings-bar{height:100%;background:var(--success);border-radius:3px;transition:width .4s}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .toggle-row{display:flex;align-items:center;gap:8px;padding:6px 0}
 .toggle-label{flex:1;font-size:13px;color:var(--text)}
@@ -251,6 +266,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <button class="nav-tab" data-tab="history" onclick="switchTab('history')">
       📋 History
       <span class="tab-badge" id="history-badge" style="display:none"></span>
+    </button>
+    <button class="nav-tab" data-tab="reports" onclick="switchTab('reports')">
+      📊 Reports
     </button>
   </div>
   <div class="nav-right">
@@ -429,6 +447,103 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 </div>
 
+<!-- ══════════════════════ REPORTS TAB ════════════════════════════════════ -->
+<div class="content tab-panel" id="tab-reports">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <h2>📊 Reports</h2>
+    <button class="btn btn-secondary btn-sm" onclick="loadReports()">↺ Refresh</button>
+  </div>
+  <p class="section-desc">Token usage, project knowledge and run data — all read from <code>bridge_progress/</code> in the active project.</p>
+
+  <!-- repo root notice -->
+  <div id="reports-no-repo" class="card" style="display:none">
+    <p style="color:var(--warning)">⚠ No project folder selected. Go to the <strong>Run</strong> tab and set <strong>Repo Root</strong> first.</p>
+  </div>
+
+  <!-- ── Token summary cards ── -->
+  <div id="reports-token-summary" style="display:none">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px" id="token-stat-cards"></div>
+
+    <!-- Last session detail -->
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <strong>Last Session</strong>
+        <span id="last-session-date" style="color:var(--muted);font-size:12px"></span>
+      </div>
+      <div id="last-session-detail"></div>
+    </div>
+
+    <!-- Sessions table -->
+    <div class="card">
+      <strong style="display:block;margin-bottom:10px">All Sessions — This Project</strong>
+      <div style="overflow-x:auto">
+        <table class="report-table" id="sessions-table">
+          <thead><tr>
+            <th>Date</th><th>Goal</th><th>Tasks</th>
+            <th>Supervisor Tokens</th><th>Tokens Saved</th><th>Savings</th>
+          </tr></thead>
+          <tbody id="sessions-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Project knowledge ── -->
+  <div id="reports-knowledge" style="display:none;margin-top:16px">
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <strong>🗂 Project Knowledge Cache</strong>
+        <span id="knowledge-updated" style="color:var(--muted);font-size:12px"></span>
+      </div>
+
+      <!-- project meta row -->
+      <div id="knowledge-meta" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px"></div>
+
+      <!-- features done -->
+      <div id="knowledge-features-section" style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Features Done</div>
+        <div id="knowledge-features" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+
+      <!-- patterns -->
+      <div id="knowledge-patterns-section" style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Code Patterns</div>
+        <ul id="knowledge-patterns" style="padding-left:16px;font-size:13px;color:var(--text)"></ul>
+      </div>
+
+      <!-- suggested next -->
+      <div id="knowledge-next-section">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Suggested Next Steps</div>
+        <ul id="knowledge-next" style="padding-left:16px;font-size:13px;color:var(--primary)"></ul>
+      </div>
+    </div>
+
+    <!-- file registry -->
+    <div class="card">
+      <strong style="display:block;margin-bottom:10px">📁 File Registry (<span id="file-count">0</span> files)</strong>
+      <div style="overflow-x:auto">
+        <table class="report-table" id="files-table">
+          <thead><tr><th>File</th><th>Role</th><th>Type</th><th>Last Modified</th></tr></thead>
+          <tbody id="files-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Last run summary ── -->
+  <div id="reports-last-run" style="display:none;margin-top:16px">
+    <div class="card">
+      <strong style="display:block;margin-bottom:10px">🏁 Last Run Summary</strong>
+      <div id="last-run-detail"></div>
+    </div>
+  </div>
+
+  <div id="reports-empty" class="card" style="display:none;margin-top:16px;text-align:center;padding:32px">
+    <div style="font-size:32px;margin-bottom:8px">📂</div>
+    <p style="color:var(--muted)">No data yet for this project. Run the bridge once to generate reports.</p>
+  </div>
+</div>
+
 <!-- ── Log modal ──────────────────────────────────────────────────────────── -->
 <div class="modal-overlay" id="log-modal" onclick="closeModal(event)">
   <div class="modal">
@@ -489,6 +604,7 @@ function switchTab(name) {
   document.getElementById('tab-' + name).classList.add('active');
   document.querySelector(`[data-tab="${name}"]`).classList.add('active');
   if (name === 'history') loadHistory();
+  if (name === 'reports') loadReports();
 }
 
 // ── Settings persistence ──────────────────────────────────────────────────
@@ -541,6 +657,192 @@ function setSupervisor(name, customCmd) {
   if (name === 'custom' && customCmd) {
     document.getElementById('f-supervisor-command').value = customCmd;
   }
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────
+async function loadReports() {
+  const settings = gatherSettings();
+  const repoRoot = settings.repo_root || '';
+  if (!repoRoot) {
+    document.getElementById('reports-no-repo').style.display = '';
+    document.getElementById('reports-token-summary').style.display = 'none';
+    document.getElementById('reports-knowledge').style.display = 'none';
+    document.getElementById('reports-last-run').style.display = 'none';
+    document.getElementById('reports-empty').style.display = 'none';
+    return;
+  }
+  document.getElementById('reports-no-repo').style.display = 'none';
+
+  let hasAny = false;
+
+  // Token log
+  try {
+    const tok = await apiFetch('/api/reports/tokens?repo_root=' + encodeURIComponent(repoRoot));
+    if (tok && (tok.sessions || []).length > 0) {
+      hasAny = true;
+      renderTokenReport(tok);
+      document.getElementById('reports-token-summary').style.display = '';
+    } else {
+      document.getElementById('reports-token-summary').style.display = 'none';
+    }
+  } catch(_) { document.getElementById('reports-token-summary').style.display = 'none'; }
+
+  // Project knowledge
+  try {
+    const kn = await apiFetch('/api/reports/knowledge?repo_root=' + encodeURIComponent(repoRoot));
+    if (kn && kn.project) {
+      hasAny = true;
+      renderKnowledge(kn);
+      document.getElementById('reports-knowledge').style.display = '';
+    } else {
+      document.getElementById('reports-knowledge').style.display = 'none';
+    }
+  } catch(_) { document.getElementById('reports-knowledge').style.display = 'none'; }
+
+  // Last run
+  try {
+    const lr = await apiFetch('/api/reports/last_run?repo_root=' + encodeURIComponent(repoRoot));
+    if (lr && lr.status) {
+      hasAny = true;
+      renderLastRun(lr);
+      document.getElementById('reports-last-run').style.display = '';
+    } else {
+      document.getElementById('reports-last-run').style.display = 'none';
+    }
+  } catch(_) { document.getElementById('reports-last-run').style.display = 'none'; }
+
+  document.getElementById('reports-empty').style.display = hasAny ? 'none' : '';
+}
+
+function renderTokenReport(tok) {
+  const totals = tok.totals || {};
+  const sessions = tok.sessions || [];
+  const last = sessions[0] || {};
+  const sav = last.savings || {};
+
+  // Stat cards
+  const cards = [
+    { label: 'Sessions', value: totals.sessions_count || 0, sub: 'total runs', highlight: false },
+    { label: 'Tasks Executed', value: totals.tasks_executed_total || 0, sub: 'all time', highlight: false },
+    { label: 'Supervisor Tokens', value: fmtNum(totals.supervisor_tokens_total || 0), sub: 'used by AI planner', highlight: false },
+    { label: 'Tokens Saved', value: fmtNum(totals.tokens_saved_total || 0), sub: 'by using Aider', highlight: true },
+    { label: 'Avg Savings', value: (totals.savings_percent_avg || 0).toFixed(1) + '%', sub: 'vs writing code directly', highlight: true },
+  ];
+  document.getElementById('token-stat-cards').innerHTML = cards.map(c => `
+    <div class="stat-card${c.highlight ? ' highlight' : ''}">
+      <div class="stat-label">${c.label}</div>
+      <div class="stat-value">${c.value}</div>
+      <div class="stat-sub">${c.sub}</div>
+    </div>`).join('');
+
+  // Last session
+  document.getElementById('last-session-date').textContent = last.date || '';
+  const pct = sav.savings_percent || 0;
+  document.getElementById('last-session-detail').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:10px">
+      <div><div style="font-size:11px;color:var(--muted)">Goal</div><div style="font-size:13px">${esc(last.goal || '—')}</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Tasks</div><div style="font-size:13px">${last.tasks_executed || 0} executed, ${last.tasks_skipped || 0} skipped</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Elapsed</div><div style="font-size:13px">${(last.elapsed_seconds || 0).toFixed(1)}s</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Supervisor</div><div style="font-size:13px;font-family:var(--mono)">${esc(last.supervisor || '—')}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:8px">
+      <div><div style="font-size:11px;color:var(--muted)">Supervisor tokens used</div><div style="font-size:15px;font-weight:600">${fmtNum(sav.actual_supervisor_tokens || 0)}</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Would have cost (direct)</div><div style="font-size:15px;font-weight:600;color:var(--danger)">${fmtNum(sav.estimated_direct_tokens || 0)}</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Saved</div><div style="font-size:15px;font-weight:600;color:var(--success)">${fmtNum(sav.tokens_saved || 0)}</div></div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Savings rate: <strong style="color:var(--success)">${pct.toFixed(1)}%</strong></div>
+    <div class="savings-bar-wrap"><div class="savings-bar" style="width:${Math.min(pct,100)}%"></div></div>`;
+
+  // Sessions table
+  const tbody = document.getElementById('sessions-tbody');
+  tbody.innerHTML = sessions.map(s => {
+    const sv = s.savings || {};
+    const p = sv.savings_percent || 0;
+    return `<tr>
+      <td style="white-space:nowrap">${esc(s.date || '—')}</td>
+      <td>${esc((s.goal || '').slice(0, 60))}${(s.goal || '').length > 60 ? '…' : ''}</td>
+      <td>${s.tasks_executed || 0}</td>
+      <td>${fmtNum(sv.actual_supervisor_tokens || 0)}</td>
+      <td style="color:var(--success)">${fmtNum(sv.tokens_saved || 0)}</td>
+      <td><span style="color:var(--success);font-weight:600">${p.toFixed(1)}%</span></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:16px">No sessions yet</td></tr>';
+}
+
+function renderKnowledge(kn) {
+  const proj = kn.project || {};
+  const files = kn.files || {};
+  const patterns = kn.patterns || [];
+  const done = kn.features_done || [];
+  const next = kn.suggested_next || [];
+
+  document.getElementById('knowledge-updated').textContent =
+    proj.last_updated ? 'Last updated: ' + proj.last_updated : '';
+
+  // Meta chips
+  const chips = [
+    proj.name && `<span class="meta-chip">📁 ${esc(proj.name)}</span>`,
+    proj.type && `<span class="meta-chip">🔧 ${esc(proj.type)}</span>`,
+    proj.language && `<span class="meta-chip">💬 ${esc(proj.language)}</span>`,
+  ].filter(Boolean);
+  document.getElementById('knowledge-meta').innerHTML = chips.join('') +
+    (proj.summary ? `<span style="font-size:13px;color:var(--muted);align-self:center;margin-left:4px">${esc(proj.summary.slice(0,120))}</span>` : '');
+
+  // Features done
+  const featEl = document.getElementById('knowledge-features');
+  featEl.innerHTML = done.length
+    ? done.map(f => `<span class="knowledge-badge">${esc(f)}</span>`).join('')
+    : '<span style="color:var(--muted);font-size:13px">None yet</span>';
+  document.getElementById('knowledge-features-section').style.display = done.length ? '' : 'none';
+
+  // Patterns
+  const patEl = document.getElementById('knowledge-patterns');
+  patEl.innerHTML = patterns.map(p => `<li>${esc(p)}</li>`).join('');
+  document.getElementById('knowledge-patterns-section').style.display = patterns.length ? '' : 'none';
+
+  // Suggested next
+  const nextEl = document.getElementById('knowledge-next');
+  nextEl.innerHTML = next.map(n => `<li>${esc(n)}</li>`).join('');
+  document.getElementById('knowledge-next-section').style.display = next.length ? '' : 'none';
+
+  // File registry
+  const fileKeys = Object.keys(files);
+  document.getElementById('file-count').textContent = fileKeys.length;
+  document.getElementById('files-tbody').innerHTML = fileKeys.length
+    ? fileKeys.sort().map(fp => {
+        const m = files[fp];
+        return `<tr>
+          <td style="font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap">${esc(fp)}</td>
+          <td style="font-size:12px">${esc(m.role || '—')}</td>
+          <td><span style="padding:2px 7px;background:var(--card);border:1px solid var(--border);border-radius:4px;font-size:11px">${esc(m.task_type || '—')}</span></td>
+          <td style="white-space:nowrap;font-size:12px;color:var(--muted)">${esc(m.last_modified || '—')}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4" style="color:var(--muted);text-align:center;padding:16px">No files registered yet</td></tr>';
+}
+
+function renderLastRun(lr) {
+  const statusColor = lr.status === 'success' ? 'var(--success)' : 'var(--danger)';
+  const statusIcon = lr.status === 'success' ? '✅' : '❌';
+  document.getElementById('last-run-detail').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="font-size:18px">${statusIcon}</span>
+      <span style="font-weight:600;color:${statusColor};text-transform:capitalize">${esc(lr.status)}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
+      <div><div style="font-size:11px;color:var(--muted)">Tasks</div><div>${lr.tasks || 0} total</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Executed</div><div>${lr.executed || 0}</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Skipped</div><div>${lr.skipped || 0}</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">Elapsed</div><div>${(lr.elapsed_seconds || 0).toFixed(1)}s</div></div>
+    </div>
+    ${lr.error ? `<div style="margin-top:10px;padding:8px 10px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--radius);font-size:12px;color:var(--danger)">${esc(lr.error)}</div>` : ''}`;
+}
+
+function fmtNum(n) {
+  return Number(n).toLocaleString();
+}
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // ── Advanced toggle ───────────────────────────────────────────────────────
