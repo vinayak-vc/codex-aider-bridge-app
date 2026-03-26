@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -26,12 +27,14 @@ class AiderRunner:
         logger: logging.Logger,
         model: Optional[str] = None,
         timeout: int = 300,
+        no_map: bool = False,
     ) -> None:
         self._repo_root = repo_root
         self._command = command
         self._logger = logger
         self._model = model
         self._timeout = timeout
+        self._no_map = no_map
 
     def run(self, task: Task, file_paths: list[Path]) -> ExecutionResult:
         try:
@@ -48,6 +51,10 @@ class AiderRunner:
 
         self._logger.debug("Running Aider: %s", arguments)
 
+        # Fix #2: force UTF-8 in the Aider subprocess so rich/charmap
+        # errors don't cause a silent crash on Windows consoles.
+        _subprocess_env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
         _start = time.monotonic()
         try:
             result = subprocess.run(
@@ -56,8 +63,10 @@ class AiderRunner:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
                 check=False,
                 timeout=self._timeout,
+                env=_subprocess_env,
             )
         except subprocess.TimeoutExpired as ex:
             if ex.process:
@@ -106,9 +115,15 @@ class AiderRunner:
             "--no-pretty",
             "--no-stream",
             "--no-auto-commits",
+            "--no-gitignore",  # Fix #3: suppress "add .aiderignore?" interactive prompt
             "--message",
             task.instruction,
         ])
+
+        # Fix #1: disable repo-map when the project has large non-code directories
+        # (e.g. Unity Library/, node_modules/) to prevent Aider from hanging on scan.
+        if self._no_map:
+            arguments.extend(["--map-tokens", "0"])
 
         for file_path in file_paths:
             arguments.extend(["--file", str(file_path)])

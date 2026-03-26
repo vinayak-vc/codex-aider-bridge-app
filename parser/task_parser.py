@@ -87,11 +87,24 @@ class TaskParser:
         instruction: Any = item.get("instruction")
         task_type: Any = item.get("type")
 
+        # Fix #5: coerce string IDs like "1" or "task-1" to int where possible.
         if not isinstance(task_id, int):
-            raise PlanParseError("Task 'id' must be an integer.")
-        if not isinstance(files, list) or not files:
-            raise PlanParseError(f"Task {task_id} must include a non-empty 'files' array.")
-        if not all(isinstance(fp, str) and fp.strip() for fp in files):
+            if isinstance(task_id, str):
+                # Strip common prefixes: "task-3" → 3, "step_2" → 2, "3" → 3
+                digits = "".join(c for c in task_id if c.isdigit())
+                if digits:
+                    task_id = int(digits)
+                else:
+                    raise PlanParseError(
+                        f"Task 'id' cannot be coerced to an integer: {task_id!r}"
+                    )
+            else:
+                raise PlanParseError("Task 'id' must be an integer.")
+
+        # Fix #6: allow empty files array — Aider will use repo-map to pick files.
+        if not isinstance(files, list):
+            raise PlanParseError(f"Task {task_id} 'files' must be an array.")
+        if files and not all(isinstance(fp, str) and fp.strip() for fp in files):
             raise PlanParseError(f"Task {task_id} contains an invalid file path.")
         if not isinstance(instruction, str) or not instruction.strip():
             raise PlanParseError(f"Task {task_id} must include a non-empty 'instruction'.")

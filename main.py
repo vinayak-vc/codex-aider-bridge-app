@@ -115,6 +115,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 300.",
     )
     parser.add_argument(
+        "--aider-no-map",
+        action="store_true",
+        help=(
+            "Pass --map-tokens 0 to Aider, disabling repo-map scanning. "
+            "Use for projects with large non-code directories (Unity Library/, node_modules/) "
+            "that cause Aider to hang during its initial scan."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -225,6 +234,29 @@ def execute_task_with_review(
                 current_task.id,
                 execution_result.exit_code,
             )
+
+        # Fix #4: catch 0-byte output files — Aider may exit 0 but leave files
+        # empty if it was killed mid-write (timeout) or hit an encoding crash.
+        if current_task.type in {"create", "modify"}:
+            empty_files = [
+                fp for fp in current_task.files
+                if (config.repo_root / fp).exists()
+                and (config.repo_root / fp).stat().st_size == 0
+            ]
+            if empty_files:
+                logger.warning(
+                    "Task %s: Aider wrote 0-byte file(s): %s — treating as failure",
+                    current_task.id,
+                    ", ".join(empty_files),
+                )
+                if attempt >= config.max_task_retries:
+                    raise RuntimeError(
+                        f"Task {current_task.id} produced empty file(s) after "
+                        f"{attempt + 1} attempt(s): {', '.join(empty_files)}"
+                    )
+                wait_seconds = min(2 ** attempt, 30)
+                time.sleep(wait_seconds)
+                continue
 
         # ── Step 2: Collect diff ─────────────────────────────────────────────
         diff = diff_collector.collect()
@@ -449,6 +481,7 @@ def main() -> int:
         idea_text=idea_text,
         plan_output_file=plan_output_file,
         task_timeout_seconds=int(args.task_timeout),
+        aider_no_map=bool(args.aider_no_map),
     )
 
     run_preflight_checks(config, logger)
@@ -467,7 +500,14 @@ def main() -> int:
         timeout=config.task_timeout_seconds,
         token_tracker=token_tracker,
     )
-    runner = AiderRunner(repo_root, config.aider_command, logger, config.aider_model, timeout=config.task_timeout_seconds)
+    runner = AiderRunner(
+        repo_root,
+        config.aider_command,
+        logger,
+        config.aider_model,
+        timeout=config.task_timeout_seconds,
+        no_map=config.aider_no_map,
+    )
     diff_collector = DiffCollector(repo_root)
     validator = MechanicalValidator(repo_root, config.validation_command, logger)
 
