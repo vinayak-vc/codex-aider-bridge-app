@@ -123,6 +123,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help=(
+            "Skip supervisor review after each task. "
+            "Mechanical validation (syntax, file existence) still runs. "
+            "Automatically enabled when BRIDGE_SUPERVISOR_COMMAND is not set. "
+            "Use this when running the bridge from an interactive AI session "
+            "(e.g. Claude Code) that reviews diffs directly."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -210,23 +221,25 @@ def show_plan_preview(tasks: list[Task], logger: logging.Logger) -> bool:
 def execute_task_with_review(
     task: Task,
     config: BridgeConfig,
-    supervisor: SupervisorAgent,
+    supervisor: Optional[SupervisorAgent],
     selector: FileSelector,
     runner: AiderRunner,
     diff_collector: DiffCollector,
     validator: MechanicalValidator,
     logger: logging.Logger,
     aider_context: Optional[AiderContext] = None,
-) -> None:
-    """Run one task through the full Aider → diff → mechanical check → supervisor review loop.
+) -> str:
+    """Run one task through the Aider → diff → mechanical check loop.
 
-    Flow per attempt:
-      1. Aider executes the current instruction against the task files.
-      2. DiffCollector captures what changed in the repo.
-      3. MechanicalValidator runs fast token-free checks (file existence, Python syntax, CI gate).
-         Mechanical failures reuse the same instruction without spending supervisor tokens.
-      4. SupervisorAgent reviews the diff and returns PASS or REWORK.
-         REWORK provides a new instruction for the next attempt.
+    In auto-approve mode (supervisor is None or config.auto_approve):
+      1. Aider executes the instruction.
+      2. DiffCollector captures what changed.
+      3. MechanicalValidator runs syntax/existence checks. On failure: retry.
+      4. Mechanical pass → task approved automatically. Diff returned to caller.
+
+    In supervised mode (supervisor provided and not auto_approve):
+      Steps 1-3 as above, then:
+      4. SupervisorAgent reviews the diff → PASS or REWORK with new instruction.
     """
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
@@ -293,7 +306,7 @@ def execute_task_with_review(
         diff = diff_collector.collect()
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
 
-        # ── Step 3: Mechanical pre-checks (no supervisor tokens spent) ────────
+        # ── Step 3: Mechanical checks (syntax, existence, CI gate) ───────────
         validation_result = validator.validate(current_task, selected_files.all_paths)
         if not validation_result.succeeded:
             logger.warning(
@@ -307,43 +320,57 @@ def execute_task_with_review(
                     f"{attempt + 1} attempt(s): {validation_result.message}"
                 )
 
-            # ── Sub-plan: ask supervisor for atomic corrective micro-tasks ──
-            try:
-                sub_tasks = supervisor.generate_subplan(current_task, validation_result.message)
-                logger.info(
-                    "Task %s: supervisor generated %d sub-task(s) to fix: %s",
-                    current_task.id, len(sub_tasks), validation_result.message,
-                )
-                for sub_task in sub_tasks:
-                    sub_files = selector.select(sub_task.files)
-                    # Convert SubTask to a Task-compatible object for the runner
-                    runner_task = Task(
-                        id=sub_task.id,
-                        files=sub_task.files,
-                        instruction=sub_task.instruction,
-                        type=sub_task.type,
+            # In supervised mode: ask supervisor for corrective sub-tasks.
+            # In auto-approve mode: just retry the original instruction.
+            if supervisor is not None and not config.auto_approve:
+                try:
+                    sub_tasks = supervisor.generate_subplan(
+                        current_task, validation_result.message
                     )
-                    sub_result = runner.run(runner_task, sub_files.all_paths, aider_context)
                     logger.info(
-                        "Task %s — sub-task %s.%s: exit code %s",
-                        current_task.id, sub_task.parent_id, sub_task.step,
-                        sub_result.exit_code,
+                        "Task %s: supervisor generated %d sub-task(s) to fix: %s",
+                        current_task.id, len(sub_tasks), validation_result.message,
                     )
-            except SupervisorError as sub_ex:
-                logger.warning(
-                    "Task %s: sub-plan generation failed (%s) — retrying original instruction",
-                    current_task.id, sub_ex,
-                )
+                    for sub_task in sub_tasks:
+                        sub_files = selector.select(sub_task.files)
+                        runner_task = Task(
+                            id=sub_task.id,
+                            files=sub_task.files,
+                            instruction=sub_task.instruction,
+                            type=sub_task.type,
+                        )
+                        sub_result = runner.run(runner_task, sub_files.all_paths, aider_context)
+                        logger.info(
+                            "Task %s — sub-task %s.%s: exit code %s",
+                            current_task.id, sub_task.parent_id, sub_task.step,
+                            sub_result.exit_code,
+                        )
+                except SupervisorError as sub_ex:
+                    logger.warning(
+                        "Task %s: sub-plan generation failed (%s) — retrying original",
+                        current_task.id, sub_ex,
+                    )
 
             wait_seconds = min(2 ** attempt, 30)
             logger.debug(
-                "Task %s: backing off %ss before retry attempt %s",
+                "Task %s: backing off %ss before retry %s",
                 current_task.id, wait_seconds, attempt + 2,
             )
             time.sleep(wait_seconds)
             continue
 
-        # ── Step 4: Supervisor review ─────────────────────────────────────────
+        # ── Step 4: Review ────────────────────────────────────────────────────
+        if config.auto_approve or supervisor is None:
+            # Auto-approve mode: mechanical pass = done. No external AI call.
+            logger.info("Task %s: mechanical checks passed — auto-approved", current_task.id)
+            _emit_structured({
+                "type": "task_complete",
+                "task_id": current_task.id,
+                "diff": diff[:1500],
+            })
+            return diff
+
+        # Supervised mode: send diff to supervisor for PASS / REWORK decision.
         task_report = TaskReport(
             task=current_task,
             execution_result=execution_result,
@@ -358,27 +385,17 @@ def execute_task_with_review(
                 "task_id": current_task.id,
                 "diff": diff[:1500],
             })
-            return
+            return diff
 
-        # REWORK — supervisor provides a corrected instruction
         logger.warning(
             "Task %s: supervisor requested rework (attempt %s): %s",
-            current_task.id,
-            attempt + 1,
-            review.new_instruction,
+            current_task.id, attempt + 1, review.new_instruction,
         )
-
         if attempt >= config.max_task_retries:
             raise RuntimeError(
-                f"Task {current_task.id} exhausted rework retries "
-                f"after supervisor feedback."
+                f"Task {current_task.id} exhausted rework retries after supervisor feedback."
             )
-
         wait_seconds = min(2 ** attempt, 30)
-        logger.debug(
-            "Task %s: backing off %ss before rework attempt %s",
-            current_task.id, wait_seconds, attempt + 2,
-        )
         time.sleep(wait_seconds)
         current_instruction = review.new_instruction  # type: ignore[assignment]
 
@@ -498,6 +515,17 @@ def main() -> int:
     if idea_file:
         logger.info("Loaded idea file: %s", idea_file)
 
+    # Auto-approve when no external supervisor is configured.
+    # This is the default mode when running the bridge from an interactive
+    # AI session (Claude Code / Codex / etc.) that reviews diffs directly.
+    _supervisor_cmd = os.getenv("BRIDGE_SUPERVISOR_COMMAND", "")
+    _auto_approve = bool(args.auto_approve) or (not _supervisor_cmd and bool(args.plan_file))
+    if _auto_approve:
+        logger.info(
+            "Bridge running in AUTO-APPROVE mode — "
+            "mechanical validation only, no external supervisor AI."
+        )
+
     config = BridgeConfig(
         goal=args.goal,
         repo_root=repo_root,
@@ -505,7 +533,7 @@ def main() -> int:
         max_plan_attempts=int(args.max_plan_attempts),
         max_task_retries=int(args.max_task_retries),
         validation_command=args.validation_command,
-        supervisor_command=os.getenv("BRIDGE_SUPERVISOR_COMMAND", "claude"),
+        supervisor_command=_supervisor_cmd or "claude",
         aider_command=args.aider_command,
         aider_model=args.aider_model or None,
         idea_file=idea_file,
@@ -513,6 +541,7 @@ def main() -> int:
         plan_output_file=plan_output_file,
         task_timeout_seconds=int(args.task_timeout),
         aider_no_map=bool(args.aider_no_map),
+        auto_approve=_auto_approve,
     )
 
     run_preflight_checks(config, logger)
@@ -520,17 +549,21 @@ def main() -> int:
     run_start = time.monotonic()
 
     token_tracker = TokenTracker()
-
     repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
-    supervisor = SupervisorAgent(
-        repo_root,
-        config.supervisor_command,
-        logger,
-        timeout=config.task_timeout_seconds,
-        token_tracker=token_tracker,
-    )
+
+    # Only create supervisor agent when needed (not in auto-approve mode).
+    supervisor: Optional[SupervisorAgent] = None
+    if not _auto_approve:
+        supervisor = SupervisorAgent(
+            repo_root,
+            config.supervisor_command,
+            logger,
+            timeout=config.task_timeout_seconds,
+            token_tracker=token_tracker,
+        )
+
     runner = AiderRunner(
         repo_root,
         config.aider_command,
@@ -547,6 +580,11 @@ def main() -> int:
             tasks: list[Task] = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
             logger.info("Loaded %s task(s) from plan file", len(tasks))
         else:
+            if supervisor is None:
+                raise RuntimeError(
+                    "No plan file provided and no supervisor configured. "
+                    "Either pass --plan-file or set BRIDGE_SUPERVISOR_COMMAND."
+                )
             tasks = obtain_plan(config, supervisor, task_parser, repo_tree, logger)
 
         # Feature 6: plan preview + confirmation before any Aider task runs.
@@ -556,6 +594,7 @@ def main() -> int:
 
         completed_ids = load_checkpoint(repo_root)
         completed_summaries: list[str] = []
+        all_diffs: list[dict] = []  # collected for final review summary
         skipped = 0
 
         for task_index, task in enumerate(tasks):
@@ -570,7 +609,6 @@ def main() -> int:
                 skipped += 1
                 continue
 
-            # Feature 1: build per-task AiderContext so Aider sees the full picture.
             aider_context = AiderContext(
                 goal=config.goal,
                 task_number=task_index + 1,
@@ -578,21 +616,28 @@ def main() -> int:
                 completed_summaries=list(completed_summaries),
             )
 
-            execute_task_with_review(
+            task_diff = execute_task_with_review(
                 task, config, supervisor, selector,
                 runner, diff_collector, validator, logger,
                 aider_context=aider_context,
             )
             completed_ids.add(task.id)
             save_checkpoint(repo_root, completed_ids)
-            completed_summaries.append(
+            task_summary = (
                 f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
                 + (" ..." if len(task.files) > 2 else "")
             )
+            completed_summaries.append(task_summary)
+            all_diffs.append({"task_id": task.id, "summary": task_summary, "diff": task_diff or ""})
 
         clear_checkpoint(repo_root)
         elapsed = round(time.monotonic() - run_start, 1)
         executed = len(tasks) - skipped
+
+        # In auto-approve mode: print a diff review summary so the AI session
+        # (Claude Code / human) can review all changes in one place.
+        if _auto_approve and all_diffs:
+            _emit_structured({"type": "review_summary", "tasks": all_diffs})
 
         # ── Token tracking: build session report and persist ─────────────────
         token_report = token_tracker.build_session_report(

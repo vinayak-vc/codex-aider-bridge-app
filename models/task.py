@@ -123,3 +123,4 @@ class BridgeConfig:
     plan_output_file: Optional[Path]
     task_timeout_seconds: int = 300
     aider_no_map: bool = False
+    auto_approve: bool = False  # skip supervisor review; use mechanical validation only
