@@ -16,11 +16,13 @@ from .bridge_runner import get_run
 
 # When bundled by PyInstaller, Flask cannot locate templates via __file__.
 # Point it explicitly at the extracted bundle path.
+# NOTE: passing template_folder=None disables the loader entirely; use the
+# string "templates" (Flask's default) when running from source.
 _frozen = getattr(sys, "frozen", False)
 _template_folder = (
     str(Path(sys._MEIPASS) / "ui" / "templates")  # type: ignore[attr-defined]
     if _frozen
-    else None  # Flask default: templates/ next to this file
+    else "templates"  # relative to this file's directory (ui/templates/)
 )
 
 app = Flask(__name__, template_folder=_template_folder)
