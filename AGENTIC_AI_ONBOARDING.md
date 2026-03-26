@@ -110,7 +110,6 @@ Aider does NOT plan, does NOT decide what to build, does NOT skip ahead.
 python main.py "Build a mobile endless runner game called Color Gate Rush" \
   --repo-root "H:/Vinayak_Project/codex-aider-first-unity-game/Color Gate Rush" \
   --idea-file "H:/Vinayak_Project/.../GAME_IDEA.md" \
-  --supervisor-command "<your-supervisor-command>" \
   --aider-model "ollama/qwen2.5-coder:7b" \
   --task-timeout 300
 ```
@@ -123,16 +122,24 @@ python main.py "your goal here" --repo-root "..." ...
 #              positional — comes right after main.py, no -- prefix
 ```
 
-### `--supervisor-command` is generic — pass any AI CLI:
+### Supervisor command is configured via environment variable — not CLI.
 
-| Supervisor | Command to pass |
-|------------|----------------|
+The supervisor AI is set **once** by the human in the system environment.
+You (the AI) never need to know or pass your own CLI name.
+
+```bash
+# Set once in your shell profile / .env file:
+set BRIDGE_SUPERVISOR_COMMAND=claude          # Windows
+export BRIDGE_SUPERVISOR_COMMAND=claude       # Linux/Mac
+```
+
+| Supervisor | Env var value |
+|------------|--------------|
 | Claude CLI | `claude` |
 | Codex CLI  | `codex.cmd exec --skip-git-repo-check --color never` |
-| Google Antigravity | `antigravity` (or whatever its CLI command is) |
-| Any other agent | Whatever command runs it in non-interactive mode |
+| Any other  | Whatever CLI command runs it non-interactively |
 
-The bridge is not bound to any specific AI. Swap the supervisor freely.
+Default if unset: `claude`
 
 ### Use `--idea-file` for full briefs:
 Pass the full `GAME_IDEA.md` or `PRODUCT_BRIEF.md` path via `--idea-file`.
@@ -144,10 +151,11 @@ The positional goal is just a short headline — the idea file carries the full 
 | `goal` (positional) | Yes | — | Short headline goal |
 | `--repo-root` | Yes | cwd | Target project folder |
 | `--idea-file` | No | None | Full brief/plan file injected into planning prompt |
-| `--supervisor-command` | No | `codex.cmd exec ...` | Any supervisor AI CLI command |
 | `--aider-model` | No | Aider default | e.g. `ollama/qwen2.5-coder:7b` |
+| `--aider-no-map` | No | False | Disable Aider repo-map (use for Unity/large projects) |
 | `--task-timeout` | No | 300 | Seconds before killing a stuck subprocess |
 | `--plan-file` | No | None | Skip planning — execute a pre-written JSON plan |
+| `--confirm-plan` | No | False | Show plan preview and ask y/n before running |
 | `--dry-run` | No | False | Generate plan only, don't run Aider |
 | `--max-task-retries` | No | 2 | REWORK cycles per task before giving up |
 
@@ -304,11 +312,10 @@ STEP 7 — Run the bridge:
           python main.py "short goal headline" \
             --repo-root "..." \
             --idea-file "path/to/GAME_IDEA.md" \
-            --supervisor-command "<supervisor-cli-command>" \
             --aider-model "ollama/qwen2.5-coder:7b" \
             --task-timeout 300
-          NOTE: goal is positional (no --goal flag). supervisor-command
-          is generic — pass claude, antigravity, codex, or any CLI.
+          NOTE: goal is positional (no --goal flag).
+          Supervisor AI is set via BRIDGE_SUPERVISOR_COMMAND env var — not CLI.
 
 STEP 8 — Review each task diff as the bridge sends it.
           PASS or sub-plan. Never skip.

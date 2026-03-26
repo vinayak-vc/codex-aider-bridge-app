@@ -81,19 +81,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=os.getenv("BRIDGE_DEFAULT_VALIDATION"),
         help="Optional CI gate command run after each task (e.g. 'python -m pytest').",
     )
-    parser.add_argument(
-        "--supervisor-command",
-        default=os.getenv(
-            "BRIDGE_SUPERVISOR_COMMAND",
-            "codex.cmd exec --skip-git-repo-check --color never",
-        ),
-        help=(
-            "Command used to invoke the supervisor agent "
-            "(Codex, Claude CLI, or any coding agent). "
-            "Supports {prompt} and {output_file} placeholders. "
-            "Set to 'interactive' to provide supervisor inputs manually."
-        ),
-    )
+    # --supervisor-command is intentionally NOT a CLI argument.
+    # Set BRIDGE_SUPERVISOR_COMMAND in your environment once (e.g. in .env or
+    # system env) so any AI can run the bridge without knowing its own CLI name.
+    # Default: "claude" (Claude CLI).
     parser.add_argument(
         "--aider-command",
         default=os.getenv("BRIDGE_AIDER_COMMAND", "aider"),
@@ -514,7 +505,7 @@ def main() -> int:
         max_plan_attempts=int(args.max_plan_attempts),
         max_task_retries=int(args.max_task_retries),
         validation_command=args.validation_command,
-        supervisor_command=args.supervisor_command,
+        supervisor_command=os.getenv("BRIDGE_SUPERVISOR_COMMAND", "claude"),
         aider_command=args.aider_command,
         aider_model=args.aider_model or None,
         idea_file=idea_file,
