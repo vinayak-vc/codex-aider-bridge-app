@@ -288,7 +288,7 @@ class SupervisorAgent:
                 schema_file.write_text(output_schema, encoding="utf-8")
 
             try:
-                arguments = self._build_command(prompt, output_file, schema_file)
+                arguments, stdin_prompt = self._build_command(prompt, output_file, schema_file)
             except (FileNotFoundError, ValueError) as ex:
                 raise SupervisorError(
                     f"Cannot resolve supervisor command '{self._command}': {ex}"
@@ -299,6 +299,7 @@ class SupervisorAgent:
             try:
                 result = subprocess.run(
                     arguments,
+                    input=stdin_prompt,
                     cwd=self._repo_root,
                     capture_output=True,
                     text=True,
@@ -340,7 +341,14 @@ class SupervisorAgent:
         prompt: str,
         output_file: Path,
         schema_file: Optional[Path],
-    ) -> list[str]:
+    ) -> tuple[list[str], Optional[str]]:
+        """Build the supervisor subprocess arguments and determine prompt delivery mode.
+
+        Returns a (arguments, stdin_prompt) tuple:
+          - exec-style commands (Codex): prompt appended as final argument, stdin=None.
+          - non-exec commands (Claude CLI, etc.): prompt delivered via stdin to avoid
+            Windows .cmd argument mangling of multi-line strings.
+        """
         command_text = self._command
 
         # Substitute {output_file} inline — it is a safe file path we control.
@@ -348,25 +356,27 @@ class SupervisorAgent:
             command_text = command_text.replace("{output_file}", str(output_file))
 
         # Strip any {prompt} placeholder from the template — the prompt is
-        # ALWAYS passed as a separate final argument (never inlined into the
-        # command string) to prevent shell-metacharacter injection.
+        # delivered separately (as arg or stdin) to prevent injection.
         command_text = command_text.replace("{prompt}", "").strip()
 
         arguments, _ = resolve_command_arguments(command_text, self._repo_root)
 
-        # Auto-append -o <output_file> for codex exec style commands
-        if "{output_file}" not in self._command and "exec" in arguments and "-o" not in arguments:
-            arguments.extend(["-o", str(output_file)])
+        # Exec-style commands (Codex): append output file, schema, and prompt as args.
+        is_exec_style = "exec" in arguments
+        if is_exec_style:
+            if "{output_file}" not in self._command and "-o" not in arguments:
+                arguments.extend(["-o", str(output_file)])
+            if schema_file is not None and "--output-schema" not in arguments:
+                arguments.extend(["--output-schema", str(schema_file)])
+            # Prompt as final positional argument (Codex exec expects this).
+            arguments.append(prompt)
+            return arguments, None
 
-        # Auto-append --output-schema for codex exec style commands
-        if schema_file is not None and "--output-schema" not in arguments and "exec" in arguments:
-            arguments.extend(["--output-schema", str(schema_file)])
-
-        # Prompt is always the final argument — a separate list element,
-        # never embedded in the command string that gets shell-parsed.
-        arguments.append(prompt)
-
-        return arguments
+        # Non-exec commands (Claude CLI, etc.): pass prompt via stdin.
+        # On Windows, .cmd files mangle multi-line strings passed as CLI
+        # arguments — newlines are dropped, producing a truncated prompt.
+        # Piping via stdin bypasses this limitation entirely.
+        return arguments, prompt
 
     # ------------------------------------------------------------------
     # JSON schema for plan output
