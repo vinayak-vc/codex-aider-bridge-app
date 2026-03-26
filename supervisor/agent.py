@@ -57,9 +57,17 @@ class SupervisorAgent:
         idea_text: Optional[str] = None,
         feedback: Optional[str] = None,
         knowledge_context: Optional[str] = None,
+        workflow_profile: str = "standard",
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
-        prompt = self._build_plan_prompt(goal, repo_tree, idea_text, feedback, knowledge_context)
+        prompt = self._build_plan_prompt(
+            goal,
+            repo_tree,
+            idea_text,
+            feedback,
+            knowledge_context,
+            workflow_profile,
+        )
         self._logger.debug(
             "Plan prompt (%d chars): %.500s%s",
             len(prompt),
@@ -115,6 +123,7 @@ class SupervisorAgent:
         idea_text: Optional[str],
         feedback: Optional[str],
         knowledge_context: Optional[str] = None,
+        workflow_profile: str = "standard",
     ) -> str:
         idea_block = ""
         if idea_text:
@@ -135,6 +144,19 @@ class SupervisorAgent:
                 f"{feedback}\n"
             )
 
+        profile_block = ""
+        if workflow_profile == "micro":
+            profile_block = (
+                "\nMICRO-TASK PROFILE (STRICT):\n"
+                "- One file per task. Do not produce multi-file tasks.\n"
+                "- One concern per task.\n"
+                "- Prefer create/modify/delete tasks over broad validate tasks.\n"
+                "- Every create task must include must_exist.\n"
+                "- Every delete task must include must_not_exist.\n"
+                "- Every modify task should include at least one assertion when the output is observable.\n"
+                "- Assume a small local coding model is implementing the task, so keep instructions surgical.\n"
+            )
+
         return (
             "You are a Tech Supervisor. Your only job is to decompose a development goal into\n"
             "an atomic sequential plan for a developer tool called Aider.\n\n"
@@ -143,12 +165,14 @@ class SupervisorAgent:
             "- Each task targets exactly one concern and one or more specific files.\n"
             "- Use only relative file paths that are visible in the repo structure below.\n"
             "  If a file does not yet exist, use the path it should be created at.\n"
-            "- Task type must be one of: create, modify, validate\n"
+            "- Task type must be one of: create, modify, delete, validate\n"
             "- Tasks execute sequentially. Later tasks may depend on earlier ones.\n"
             "- Instructions must be concrete but code-free: say WHAT to build, never HOW.\n"
+            "- Use must_exist / must_not_exist when the task has a clear post-condition.\n"
             "- Do not ask questions. Do not explain. Return the plan only.\n"
             "- Use the FILE REGISTRY below to reference existing file roles correctly.\n"
             "  Do not duplicate work that is already marked as done.\n\n"
+            f"{profile_block}"
             f"Repo structure:\n{repo_tree}\n"
             f"{knowledge_block}"
             f"{idea_block}"
@@ -205,6 +229,7 @@ class SupervisorAgent:
                 verdict="PASS",
                 new_instruction=None,
                 message="Supervisor approved.",
+                sub_tasks=[],
             )
 
         if upper.startswith("REWORK:"):
@@ -218,6 +243,7 @@ class SupervisorAgent:
                 verdict="REWORK",
                 new_instruction=new_instruction,
                 message="Supervisor requested rework.",
+                sub_tasks=[],
             )
 
         raise SupervisorError(
@@ -260,7 +286,7 @@ class SupervisorAgent:
                 step=i + 1,
                 instruction=instruction,
                 files=files if isinstance(files, list) else parent.files,
-                type=task_type if task_type in {"create", "modify", "validate"} else "modify",
+                type=task_type if task_type in {"create", "modify", "delete", "validate"} else "modify",
             ))
 
         if not sub_tasks:
@@ -415,7 +441,9 @@ class SupervisorAgent:
             '            "items": { "type": "string", "minLength": 1 }\n'
             "          },\n"
             '          "instruction": { "type": "string", "minLength": 1 },\n'
-            '          "type": { "type": "string", "enum": ["create", "modify", "validate"] }\n'
+            '          "type": { "type": "string", "enum": ["create", "modify", "delete", "validate"] },\n'
+            '          "must_exist": { "type": "array", "items": { "type": "string" } },\n'
+            '          "must_not_exist": { "type": "array", "items": { "type": "string" } }\n'
             "        }\n"
             "      }\n"
             "    }\n"

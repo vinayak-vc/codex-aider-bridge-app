@@ -72,8 +72,12 @@ class BridgeRun:
             cmd.extend(["--idea-file", settings["idea_file"].strip()])
         if settings.get("aider_model", "").strip():
             cmd.extend(["--aider-model", settings["aider_model"].strip()])
-        if settings.get("supervisor_command", "").strip():
+        if settings.get("manual_supervisor"):
+            cmd.append("--manual-supervisor")
+        elif settings.get("supervisor_command", "").strip():
             cmd.extend(["--supervisor-command", settings["supervisor_command"].strip()])
+        if settings.get("manual_review_poll_seconds"):
+            cmd.extend(["--manual-review-poll-seconds", str(int(settings["manual_review_poll_seconds"]))])
         if settings.get("validation_command", "").strip():
             cmd.extend(["--validation-command", settings["validation_command"].strip()])
         if settings.get("max_plan_attempts"):
@@ -199,6 +203,17 @@ class BridgeRun:
                     report = event.get("report", {})
                     self.token_data = {"source": "live", "session": report}
                     self._emit("token_report", {"report": report})
+                elif event_type == "review_required":
+                    self.status = "waiting_review"
+                    self._emit(
+                        "review_required",
+                        {
+                            "task_id": event.get("task_id", 0),
+                            "request_file": event.get("request_file", ""),
+                            "validation_message": event.get("validation_message", ""),
+                            "mode": event.get("mode", "manual"),
+                        },
+                    )
             except Exception:
                 pass
             return

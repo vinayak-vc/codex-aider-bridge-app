@@ -26,6 +26,13 @@ That's it. **Three reads maximum. Then ask the user. Then plan. Then run the bri
 
 This is the **Codex-Aider Bridge** — a middleware application that connects you (an Agentic AI) with **Aider** (a local LLM code executor).
 
+The recommended mode is now:
+- You create the task JSON plan yourself
+- The bridge runs Aider
+- The bridge writes review request JSON files
+- You review each task and write a decision JSON
+- The bridge resumes
+
 You are the **Technical Supervisor**. You plan and review.
 Aider is the **Developer**. It writes all the code.
 The bridge is the **Middleware**. It orchestrates everything automatically.
@@ -34,17 +41,17 @@ The bridge is the **Middleware**. It orchestrates everything automatically.
 USER
   ↓ gives goal / idea
 AGENTIC AI (You) ← Technical Supervisor — plans, reviews, decides
-  ↓ sends JSON task plan
-BRIDGE (already built, runs itself)
-  ↓ sends one task at a time
+  ↓ writes JSON task plan
+BRIDGE
+  ↓ sends one task at a time to Aider
 AIDER ← Developer — writes code, modifies files
   ↓ reports result + git diff
 BRIDGE
-  ↓ sends diff back
-AGENTIC AI (You) ← reviews, approves or flags
+  ↓ writes review request JSON
+AGENTIC AI (You) ← reviews, approves or flags via decision JSON
 ```
 
-**You never touch the bridge internals. You feed it a plan and review results.**
+**You never touch the target project code directly. You feed the bridge a plan and review results.**
 
 ---
 
@@ -56,9 +63,10 @@ You are the **Technical Supervisor**. You do NOT write code. You do NOT edit fil
 - Read the goal/idea/brief given by the user
 - Get a quick file tree of the target project (one `find` command)
 - Create a **sequential JSON task plan** (detailed, ordered, no skipped dependencies)
-- Run the bridge with that plan
-- Review what Aider implemented after **every single task** (via git diff)
-- Decide: `PASS` (move on) or `FAIL` (create a corrective sub-plan)
+- Save the plan in the target project under `taskJsons/`
+- Run the bridge with that plan in manual-supervisor mode
+- Review what Aider implemented after **every single task** (via request JSON + git diff)
+- Decide: `PASS`, `REWORK`, or `SUBPLAN`
 - Update `WORK_LOG.md` after every action
 
 ### You NEVER:
@@ -91,11 +99,13 @@ Aider does NOT plan, does NOT decide what to build, does NOT skip ahead.
         ↓
 [YOU create sequential JSON task plan]
         ↓
-[YOU run the bridge: python main.py --goal "..." --repo-root "..." ...]
+[YOU save it to <repo_root>/taskJsons/]
         ↓
-[BRIDGE → Task 1 → Aider → diff → back to you]
+[YOU run the bridge in manual-supervisor mode]
         ↓
-[YOU review diff → PASS or sub-plan]
+[BRIDGE → Task 1 → Aider → diff + request JSON]
+        ↓
+[YOU review request JSON → write PASS / REWORK / SUBPLAN decision JSON]
         ↓
 [Repeat until all tasks complete]
         ↓
@@ -122,24 +132,22 @@ python main.py "your goal here" --repo-root "..." ...
 #              positional — comes right after main.py, no -- prefix
 ```
 
-### Supervisor command is configured via environment variable — not CLI.
+### Recommended mode: manual supervisor, not external supervisor CLI.
 
-The supervisor AI is set **once** by the human in the system environment.
-You (the AI) never need to know or pass your own CLI name.
+You do **not** need to pass your own CLI command in the recommended workflow.
+
+Run the bridge like this:
 
 ```bash
-# Set once in your shell profile / .env file:
-set BRIDGE_SUPERVISOR_COMMAND=claude          # Windows
-export BRIDGE_SUPERVISOR_COMMAND=claude       # Linux/Mac
+python main.py "your goal here" \
+  --repo-root "D:/path/to/project" \
+  --plan-file "D:/path/to/project/taskJsons/plan_001_feature.json" \
+  --workflow-profile micro \
+  --manual-supervisor \
+  --aider-model "ollama/qwen2.5-coder:14b"
 ```
 
-| Supervisor | Env var value |
-|------------|--------------|
-| Claude CLI | `claude` |
-| Codex CLI  | `codex.cmd exec --skip-git-repo-check --color never` |
-| Any other  | Whatever CLI command runs it non-interactively |
-
-Default if unset: `claude`
+Only use `BRIDGE_SUPERVISOR_COMMAND` if you intentionally want an external supervisor subprocess.
 
 ### Use `--idea-file` for full briefs:
 Pass the full `GAME_IDEA.md` or `PRODUCT_BRIEF.md` path via `--idea-file`.
@@ -155,16 +163,19 @@ The positional goal is just a short headline — the idea file carries the full 
 | `--aider-no-map` | No | False | Disable Aider repo-map (use for Unity/large projects) |
 | `--task-timeout` | No | 300 | Seconds before killing a stuck subprocess |
 | `--plan-file` | No | None | Skip planning — execute a pre-written JSON plan |
+| `--manual-supervisor` | No | False | Wait for local decision JSON files instead of calling another AI CLI |
+| `--workflow-profile micro` | No | standard | Enforce one-file atomic tasks with assertions |
 | `--confirm-plan` | No | False | Show plan preview and ask y/n before running |
 | `--auto-split-threshold N` | No | 0 (off) | Split tasks with N+ files into single-file sub-tasks (use 3 for small models) |
 | `--dry-run` | No | False | Generate plan only, don't run Aider |
 | `--max-task-retries` | No | 2 | REWORK cycles per task before giving up |
 
 The bridge will:
-1. Call you (the supervisor) with the goal to generate a JSON plan
+1. Load your JSON plan
 2. Execute each task via Aider
-3. Send each diff back to you for review
-4. Handle retries, sub-plans, checkpointing, and logging automatically
+3. Write a review request JSON after each task
+4. Wait for your decision JSON
+5. Handle retries, sub-plans, checkpointing, and logging automatically
 
 ---
 
@@ -225,9 +236,12 @@ When the bridge calls you to generate a plan, output this exact format:
 
 ### Rules for tasks:
 - `id`: unique string, sequential (task_001, task_002, etc.)
-- `type`: one of `create`, `modify`, `delete`, `test`
+- `type`: one of `create`, `modify`, `delete`, `validate`
 - `instruction`: SPECIFIC and ATOMIC. One clear thing. Include field names, method names, exact behaviour. Include code style rules from CODE_FORMAT_STANDARDS.md inline in the instruction.
 - `files[]`: only the files Aider should touch for this task
+- In recommended `micro` mode: exactly one file per task
+- Add `must_exist` for create tasks
+- Add `must_not_exist` for delete tasks
 - Tasks must be in dependency order — never reference a file before it's created
 - One concern per task — do not bundle multiple unrelated changes
 
@@ -235,28 +249,33 @@ When the bridge calls you to generate a plan, output this exact format:
 
 ## 9. REVIEW RESPONSE FORMAT
 
-After each task, the bridge sends you the git diff. You respond with exactly one of:
+After each task, the bridge writes a request JSON. You respond by writing a decision JSON with exactly one of:
 
+```json
+{ "task_id": 7, "decision": "pass" }
 ```
-PASS
-```
+
 or
-```
-REWORK: <specific new instruction for Aider — be explicit, name the file, method, and exact change needed>
+
+```json
+{
+  "task_id": 7,
+  "decision": "rework",
+  "instruction": "In main.py, fix the CLI parsing so --help works without requiring the optional runtime inputs."
+}
 ```
 
 If creating a sub-plan for a failed task:
 
 ```json
 {
-  "subplan_for": "task_003",
-  "reason": "Aider created the script but missing the namespace declaration and the Rigidbody2D component reference is unassigned",
-  "tasks": [
+  "task_id": 7,
+  "decision": "subplan",
+  "sub_tasks": [
     {
-      "id": "task_003_fix_01",
       "type": "modify",
-      "instruction": "In Assets/Scripts/Core/PlayerController.cs: add 'using UnityEngine;' at the top. Declare 'private Rigidbody2D _rigidbody;' as a class field. In Awake(), assign _rigidbody = GetComponent<Rigidbody2D>();",
-      "files": ["Assets/Scripts/Core/PlayerController.cs"]
+      "instruction": "In main.py, repair the syntax error near the top of the file.",
+      "files": ["main.py"]
     }
   ]
 }
@@ -359,14 +378,14 @@ STEP 7 — Create the JSON task plan.
 STEP 8 — Run the bridge:
           python main.py "short goal headline" \
             --repo-root "..." \
-            --idea-file "path/to/GAME_IDEA.md" \
-            --aider-model "ollama/qwen2.5-coder:7b" \
+            --plan-file "<repo_root>/taskJsons/plan_001_feature.json" \
+            --workflow-profile micro \
+            --manual-supervisor \
+            --aider-model "ollama/qwen2.5-coder:14b" \
             --task-timeout 300
-          NOTE: goal is positional (no --goal flag).
-          Supervisor AI is set via BRIDGE_SUPERVISOR_COMMAND env var — not CLI.
 
-STEP 9 — Review each task diff as the bridge sends it.
-          PASS or sub-plan. Never skip.
+STEP 9 — Review each task request JSON as the bridge writes it.
+          Write PASS / REWORK / SUBPLAN decision JSON. Never skip.
 
 STEP 10 — Update WORK_LOG.md after every task.
 

@@ -273,6 +273,54 @@ def api_resume_run():
         return jsonify({"error": str(ex)}), 500
 
 
+def _manual_supervisor_dir() -> Optional[Path]:
+    settings = state_store.load_settings()
+    repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return None
+    return Path(repo_root) / "bridge_progress" / "manual_supervisor"
+
+
+@app.route("/api/run/review/current")
+def api_current_review():
+    manual_dir = _manual_supervisor_dir()
+    if manual_dir is None:
+        return jsonify({"error": "repo_root not set."}), 400
+    requests_dir = manual_dir / "requests"
+    requests_dir.mkdir(parents=True, exist_ok=True)
+    request_files = sorted(requests_dir.glob("task_*_request.json"))
+    if not request_files:
+        return jsonify({"pending": False})
+    latest = request_files[0]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+    return jsonify({"pending": True, "request_file": str(latest), "request": payload})
+
+
+@app.route("/api/run/review/submit", methods=["POST"])
+def api_submit_review():
+    manual_dir = _manual_supervisor_dir()
+    if manual_dir is None:
+        return jsonify({"error": "repo_root not set."}), 400
+
+    payload = request.json or {}
+    task_id = int(payload.get("task_id", 0))
+    if task_id <= 0:
+        return jsonify({"error": "task_id is required."}), 400
+
+    decisions_dir = manual_dir / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    decision_path = decisions_dir / f"task_{task_id:04d}_decision.json"
+    try:
+        decision_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError as ex:
+        return jsonify({"error": str(ex)}), 500
+
+    return jsonify({"ok": True, "decision_file": str(decision_path)})
+
+
 @app.route("/api/run/stream")
 def api_run_stream():
     """SSE endpoint — pushes all bridge events to the browser in real time."""

@@ -23,6 +23,7 @@ from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
 from models.task import SubTask
+from utils.manual_supervisor import ManualSupervisorError, ManualSupervisorSession
 from utils.token_tracker import TokenTracker, save_session_to_log
 from utils.project_knowledge import (
     load_knowledge,
@@ -88,10 +89,38 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=os.getenv("BRIDGE_DEFAULT_VALIDATION"),
         help="Optional CI gate command run after each task (e.g. 'python -m pytest').",
     )
-    # --supervisor-command is intentionally NOT a CLI argument.
-    # Set BRIDGE_SUPERVISOR_COMMAND in your environment once (e.g. in .env or
-    # system env) so any AI can run the bridge without knowing its own CLI name.
-    # Default: "claude" (Claude CLI).
+    parser.add_argument(
+        "--supervisor-command",
+        default=None,
+        help=(
+            "Optional external supervisor command override. Ignored in "
+            "--manual-supervisor mode."
+        ),
+    )
+    parser.add_argument(
+        "--manual-supervisor",
+        action="store_true",
+        help=(
+            "Run in manual supervisor mode. The bridge will never invoke an external "
+            "supervisor CLI. After each task it writes a review request JSON into "
+            "bridge_progress/manual_supervisor/ and waits for a decision JSON."
+        ),
+    )
+    parser.add_argument(
+        "--manual-review-poll-seconds",
+        type=int,
+        default=2,
+        help="Polling interval in seconds while waiting for a manual supervisor decision.",
+    )
+    parser.add_argument(
+        "--workflow-profile",
+        default="standard",
+        choices=["standard", "micro"],
+        help=(
+            "Execution profile. 'micro' enforces one-file atomic tasks, required task assertions, "
+            "and is optimized for local Aider plus manual supervision."
+        ),
+    )
     parser.add_argument(
         "--aider-command",
         default=os.getenv("BRIDGE_AIDER_COMMAND", "aider"),
@@ -231,6 +260,8 @@ def auto_split_tasks(
                     instruction=focus_prefix + task.instruction,
                     type=task.type,
                     context_files=task.context_files,
+                    must_exist=task.must_exist,
+                    must_not_exist=task.must_not_exist,
                 )
             )
 
@@ -256,7 +287,12 @@ def obtain_plan(
         logger.info("Requesting plan — attempt %s of %s", attempt, config.max_plan_attempts)
         try:
             plan_text = supervisor.generate_plan(
-                config.goal, repo_tree, config.idea_text, feedback, knowledge_context
+                config.goal,
+                repo_tree,
+                config.idea_text,
+                feedback,
+                knowledge_context,
+                config.workflow_profile,
             )
             tasks = task_parser.parse(plan_text)
 
@@ -309,10 +345,132 @@ def show_plan_preview(tasks: list[Task], logger: logging.Logger) -> bool:
     return False
 
 
+def _enforce_workflow_profile(tasks: list[Task], config: BridgeConfig) -> None:
+    if config.workflow_profile != "micro":
+        return
+
+    for task in tasks:
+        if len(task.files) != 1:
+            raise RuntimeError(
+                f"Micro-task profile requires exactly one file per task. "
+                f"Task {task.id} targets {len(task.files)} file(s)."
+            )
+
+        if task.type == "create":
+            if not task.must_exist:
+                raise RuntimeError(
+                    f"Micro-task profile requires must_exist for create tasks. Task {task.id} is missing it."
+                )
+            target_file = Path(task.files[0]).as_posix()
+            normalized_must_exist = [Path(file_path).as_posix() for file_path in task.must_exist]
+            if target_file not in normalized_must_exist:
+                raise RuntimeError(
+                    f"Micro-task create task {task.id} must assert its target file in must_exist."
+                )
+
+        if task.type == "delete" and not task.must_not_exist:
+            raise RuntimeError(
+                f"Micro-task profile requires must_not_exist for delete tasks. Task {task.id} is missing it."
+            )
+
+        if task.type == "modify" and not task.must_exist and not task.must_not_exist:
+            raise RuntimeError(
+                f"Micro-task profile requires an observable assertion on modify tasks. "
+                f"Task {task.id} must define must_exist or must_not_exist."
+            )
+
+
+_UNEXPECTED_FILE_IGNORE_PREFIXES: tuple[str, ...] = (
+    ".git/",
+    ".aider.tags.cache.v4/",
+    "__pycache__/",
+    "bridge_progress/",
+    "logs/",
+    "taskJsons/",
+)
+_UNEXPECTED_FILE_IGNORE_NAMES: tuple[str, ...] = (
+    ".aider.chat.history.md",
+    ".aider.input.history",
+)
+
+
+def _snapshot_repo_files(repo_root: Path) -> set[str]:
+    snapshot: set[str] = set()
+    for path in repo_root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative_path = path.relative_to(repo_root).as_posix()
+        if relative_path in _UNEXPECTED_FILE_IGNORE_NAMES:
+            continue
+        if any(relative_path.startswith(prefix) for prefix in _UNEXPECTED_FILE_IGNORE_PREFIXES):
+            continue
+        snapshot.add(relative_path)
+    return snapshot
+
+
+def _find_unexpected_files(
+    before_snapshot: set[str],
+    after_snapshot: set[str],
+    task: Task,
+) -> list[str]:
+    allowed = {Path(file_path).as_posix() for file_path in task.files}
+    allowed.update(Path(file_path).as_posix() for file_path in task.must_exist)
+    unexpected = sorted((after_snapshot - before_snapshot) - allowed)
+    return unexpected
+
+
+def _execute_sub_tasks(
+    sub_tasks: list[SubTask],
+    config: BridgeConfig,
+    selector: FileSelector,
+    runner: AiderRunner,
+    validator: MechanicalValidator,
+    logger: logging.Logger,
+    aider_context: Optional[AiderContext],
+) -> None:
+    for sub_task in sub_tasks:
+        selected_files = selector.select(sub_task.files)
+        logger.info(
+            "Executing corrective sub-task %s.%s — files: %s",
+            sub_task.parent_id,
+            sub_task.step,
+            ", ".join(sub_task.files),
+        )
+        execution_result = runner.run(
+            Task(
+                id=sub_task.id,
+                files=sub_task.files,
+                instruction=sub_task.instruction,
+                type=sub_task.type,
+            ),
+            selected_files.all_paths,
+            aider_context,
+        )
+        if not execution_result.succeeded:
+            raise RuntimeError(
+                f"Corrective sub-task {sub_task.id} failed: "
+                f"{_summarize_process_failure(execution_result.stderr, execution_result.stdout)}"
+            )
+        validation = validator.validate(
+            Task(
+                id=sub_task.id,
+                files=sub_task.files,
+                instruction=sub_task.instruction,
+                type=sub_task.type,
+            ),
+            selected_files.all_paths,
+        )
+        if not validation.succeeded:
+            raise RuntimeError(
+                f"Corrective sub-task {sub_task.id} failed mechanical checks: {validation.message}"
+            )
+
+
 def execute_task_with_review(
     task: Task,
     config: BridgeConfig,
     supervisor: Optional[SupervisorAgent],
+    manual_supervisor: Optional[ManualSupervisorSession],
     selector: FileSelector,
     runner: AiderRunner,
     diff_collector: DiffCollector,
@@ -328,6 +486,12 @@ def execute_task_with_review(
       3. MechanicalValidator runs syntax/existence checks. On failure: retry.
       4. Mechanical pass → task approved automatically. Diff returned to caller.
 
+    In manual-supervisor mode:
+      1. Aider executes the instruction.
+      2. DiffCollector and MechanicalValidator collect execution evidence.
+      3. The bridge writes a review request JSON and waits for a decision file.
+      4. PASS continues, REWORK retries, SUBPLAN executes corrective sub-tasks.
+
     In supervised mode (supervisor provided and not auto_approve):
       Steps 1-3 as above, then:
       4. SupervisorAgent reviews the diff → PASS or REWORK with new instruction.
@@ -336,11 +500,15 @@ def execute_task_with_review(
     current_instruction = task.instruction
 
     for attempt in range(config.max_task_retries + 1):
+        repo_before = _snapshot_repo_files(config.repo_root)
         current_task = Task(
             id=task.id,
             files=task.files,
             instruction=current_instruction,
             type=task.type,
+            context_files=task.context_files,
+            must_exist=task.must_exist,
+            must_not_exist=task.must_not_exist,
         )
 
         logger.info(
@@ -396,9 +564,31 @@ def execute_task_with_review(
         # ── Step 2: Collect diff ─────────────────────────────────────────────
         diff = diff_collector.collect()
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
+        repo_after = _snapshot_repo_files(config.repo_root)
+        unexpected_files = _find_unexpected_files(repo_before, repo_after, current_task)
+        if unexpected_files:
+            logger.warning(
+                "Task %s: unexpected files created outside task scope: %s",
+                current_task.id,
+                ", ".join(unexpected_files),
+            )
 
         # ── Step 3: Mechanical checks (syntax, existence, CI gate) ───────────
         validation_result = validator.validate(current_task, selected_files.all_paths)
+        if validation_result.succeeded and unexpected_files:
+            validation_result = validator.validate(
+                Task(
+                    id=current_task.id,
+                    files=current_task.files,
+                    instruction=current_task.instruction,
+                    type=current_task.type,
+                    context_files=current_task.context_files,
+                    must_exist=current_task.must_exist,
+                    must_not_exist=current_task.must_not_exist + unexpected_files,
+                ),
+                selected_files.all_paths,
+            )
+
         if not validation_result.succeeded:
             logger.warning(
                 "Task %s: mechanical check failed — %s",
@@ -413,6 +603,56 @@ def execute_task_with_review(
 
             # In supervised mode: ask supervisor for corrective sub-tasks.
             # In auto-approve mode: just retry the original instruction.
+            if manual_supervisor is not None:
+                task_report = TaskReport(
+                    task=current_task,
+                    execution_result=execution_result,
+                    diff=diff,
+                )
+                request_path = manual_supervisor.submit_review_request(
+                    task_report,
+                    validation_message=validation_result.message,
+                    unexpected_files=unexpected_files,
+                )
+                _emit_structured(
+                    {
+                        "type": "review_required",
+                        "mode": "manual",
+                        "task_id": current_task.id,
+                        "request_file": str(request_path),
+                        "validation_message": validation_result.message,
+                    }
+                )
+                decision = manual_supervisor.wait_for_decision(current_task.id)
+                if decision.verdict == "PASS":
+                    logger.info(
+                        "Task %s: manual supervisor overrode validation failure and approved",
+                        current_task.id,
+                    )
+                    _emit_structured(
+                        {
+                            "type": "task_complete",
+                            "task_id": current_task.id,
+                            "diff": diff[:1500],
+                        }
+                    )
+                    return diff
+                if decision.verdict == "SUBPLAN":
+                    _execute_sub_tasks(
+                        decision.sub_tasks,
+                        config,
+                        selector,
+                        runner,
+                        validator,
+                        logger,
+                        aider_context,
+                    )
+                elif decision.new_instruction:
+                    current_instruction = decision.new_instruction
+                wait_seconds = min(2 ** attempt, 30)
+                time.sleep(wait_seconds)
+                continue
+
             if supervisor is not None and not config.auto_approve:
                 try:
                     sub_tasks = supervisor.generate_subplan(
@@ -451,6 +691,64 @@ def execute_task_with_review(
             continue
 
         # ── Step 4: Review ────────────────────────────────────────────────────
+        if manual_supervisor is not None:
+            task_report = TaskReport(
+                task=current_task,
+                execution_result=execution_result,
+                diff=diff,
+            )
+            request_path = manual_supervisor.submit_review_request(
+                task_report,
+                validation_message=validation_result.message,
+                unexpected_files=unexpected_files,
+            )
+            _emit_structured(
+                {
+                    "type": "review_required",
+                    "mode": "manual",
+                    "task_id": current_task.id,
+                    "request_file": str(request_path),
+                    "validation_message": validation_result.message,
+                }
+            )
+            review = manual_supervisor.wait_for_decision(current_task.id)
+            if review.verdict == "PASS":
+                logger.info("Task %s: manual supervisor approved", current_task.id)
+                _emit_structured({
+                    "type": "task_complete",
+                    "task_id": current_task.id,
+                    "diff": diff[:1500],
+                })
+                return diff
+            if review.verdict == "SUBPLAN":
+                _execute_sub_tasks(
+                    review.sub_tasks,
+                    config,
+                    selector,
+                    runner,
+                    validator,
+                    logger,
+                    aider_context,
+                )
+                wait_seconds = min(2 ** attempt, 30)
+                time.sleep(wait_seconds)
+                continue
+
+            logger.warning(
+                "Task %s: manual supervisor requested rework (attempt %s): %s",
+                current_task.id,
+                attempt + 1,
+                review.new_instruction,
+            )
+            if attempt >= config.max_task_retries:
+                raise RuntimeError(
+                    f"Task {current_task.id} exhausted rework retries after manual supervisor feedback."
+                )
+            wait_seconds = min(2 ** attempt, 30)
+            time.sleep(wait_seconds)
+            current_instruction = review.new_instruction or current_instruction
+            continue
+
         if config.auto_approve or supervisor is None:
             # Auto-approve mode: mechanical pass = done. No external AI call.
             logger.info("Task %s: mechanical checks passed — auto-approved", current_task.id)
@@ -715,12 +1013,20 @@ def main() -> int:
     if idea_file:
         logger.info("Loaded idea file: %s", idea_file)
 
-    # Auto-approve when no external supervisor is configured.
-    # This is the default mode when running the bridge from an interactive
-    # AI session (Claude Code / Codex / etc.) that reviews diffs directly.
-    _supervisor_cmd = os.getenv("BRIDGE_SUPERVISOR_COMMAND", "")
-    _auto_approve = bool(args.auto_approve) or (not _supervisor_cmd and bool(args.plan_file))
-    if _auto_approve:
+    # Resolve supervisor mode.
+    _supervisor_cmd = args.supervisor_command or os.getenv("BRIDGE_SUPERVISOR_COMMAND", "")
+    _manual_supervisor_enabled = bool(args.manual_supervisor) or args.workflow_profile == "micro"
+    _auto_approve = (
+        not _manual_supervisor_enabled
+        and (bool(args.auto_approve) or (not _supervisor_cmd and bool(args.plan_file)))
+    )
+    _supervisor_mode = "manual" if _manual_supervisor_enabled else ("auto" if _auto_approve else "external")
+    if _manual_supervisor_enabled:
+        logger.info(
+            "Bridge running in MANUAL-SUPERVISOR mode — review requests will be written to "
+            "bridge_progress/manual_supervisor/ and no external AI CLI will be invoked."
+        )
+    elif _auto_approve:
         logger.info(
             "Bridge running in AUTO-APPROVE mode — "
             "mechanical validation only, no external supervisor AI."
@@ -732,6 +1038,12 @@ def main() -> int:
     _auto_split = _resolve_auto_split_threshold(
         int(args.auto_split_threshold), _aider_model, logger
     )
+    if args.workflow_profile == "micro":
+        if _auto_split > 0:
+            logger.info(
+                "Workflow profile 'micro' disables auto-splitting because tasks are expected to be pre-split."
+            )
+        _auto_split = 0
 
     config = BridgeConfig(
         goal=args.goal,
@@ -740,7 +1052,7 @@ def main() -> int:
         max_plan_attempts=int(args.max_plan_attempts),
         max_task_retries=int(args.max_task_retries),
         validation_command=args.validation_command,
-        supervisor_command=_supervisor_cmd or "claude",
+        supervisor_command="manual" if _manual_supervisor_enabled else (_supervisor_cmd or "claude"),
         aider_command=args.aider_command,
         aider_model=_aider_model,
         idea_file=idea_file,
@@ -750,6 +1062,9 @@ def main() -> int:
         aider_no_map=bool(args.aider_no_map),
         auto_approve=_auto_approve,
         auto_split_threshold=_auto_split,
+        supervisor_mode=_supervisor_mode,
+        manual_review_poll_seconds=max(1, int(args.manual_review_poll_seconds)),
+        workflow_profile=str(args.workflow_profile),
     )
 
     run_preflight_checks(config, logger)
@@ -775,7 +1090,14 @@ def main() -> int:
 
     # Only create supervisor agent when needed (not in auto-approve mode).
     supervisor: Optional[SupervisorAgent] = None
-    if not _auto_approve:
+    manual_supervisor: Optional[ManualSupervisorSession] = None
+    if _manual_supervisor_enabled:
+        manual_supervisor = ManualSupervisorSession(
+            repo_root,
+            logger,
+            poll_seconds=config.manual_review_poll_seconds,
+        )
+    elif not _auto_approve:
         supervisor = SupervisorAgent(
             repo_root,
             config.supervisor_command,
@@ -800,6 +1122,11 @@ def main() -> int:
             tasks: list[Task] = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
             logger.info("Loaded %s task(s) from plan file", len(tasks))
         else:
+            if _manual_supervisor_enabled:
+                raise RuntimeError(
+                    "Manual-supervisor mode requires --plan-file. "
+                    "Generate the plan in-session and pass it explicitly."
+                )
             if supervisor is None:
                 raise RuntimeError(
                     "No plan file provided and no supervisor configured. "
@@ -822,6 +1149,8 @@ def main() -> int:
                     _pre_split_count,
                     _post_split_count,
                 )
+
+        _enforce_workflow_profile(tasks, config)
 
         # Feature 6: plan preview + confirmation before any Aider task runs.
         if args.confirm_plan and not args.dry_run:
@@ -853,7 +1182,7 @@ def main() -> int:
             )
 
             task_diff = execute_task_with_review(
-                task, config, supervisor, selector,
+                task, config, supervisor, manual_supervisor, selector,
                 runner, diff_collector, validator, logger,
                 aider_context=aider_context,
             )
