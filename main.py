@@ -546,32 +546,42 @@ def main() -> int:
             tasks_skipped=skipped,
             elapsed_seconds=elapsed,
         )
-        # Write to the bridge root's UI data dir so the web dashboard can read it.
-        # Falls back to repo_root/logs/ if BRIDGE_ROOT cannot be determined.
-        _ui_data_dir = Path(__file__).parent / "ui" / "data"
-        _token_log_path = _ui_data_dir / "token_log.json"
+        # All progress files go into <repo_root>/bridge_progress/ so that
+        # running the bridge on multiple projects never mixes their state.
+        _progress_dir = repo_root / "bridge_progress"
+        _progress_dir.mkdir(parents=True, exist_ok=True)
+        _token_log_path = _progress_dir / "token_log.json"
         try:
             save_session_to_log(token_report, _token_log_path)
             logger.info(
-                "Token usage: %s supervisor tokens used, ~%s saved (%.1f%%)",
+                "Token usage: %s supervisor tokens used, ~%s saved (%.1f%%) — saved to %s",
                 token_report["savings"]["actual_supervisor_tokens"],
                 token_report["savings"]["tokens_saved"],
                 token_report["savings"]["savings_percent"],
+                _token_log_path,
             )
         except Exception as _tok_ex:
             logger.warning("Could not save token log: %s", _tok_ex)
 
         _emit_structured({"type": "token_report", "report": token_report})
 
-        summary = json.dumps({
+        summary = {
             "status": "success",
             "tasks": len(tasks),
             "executed": executed,
             "skipped": skipped,
             "elapsed_seconds": elapsed,
             "tokens": token_tracker.snapshot(),
-        })
-        print(summary)
+        }
+        # Write last_run.json so any tool can inspect the most recent run result.
+        try:
+            (_progress_dir / "last_run.json").write_text(
+                json.dumps(summary, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            pass
+
+        print(json.dumps(summary))
         logger.info(
             "Bridge run completed — %s task(s) executed, %s skipped, %.1fs total",
             executed, skipped, elapsed,
@@ -583,7 +593,16 @@ def main() -> int:
         logger.exception("Bridge run failed after %.1fs: %s", elapsed, ex)
         if rollback_sha:
             logger.warning("To undo all changes made during this run:  git reset --hard %s", rollback_sha)
-        print(json.dumps({"status": "failure", "error": str(ex), "elapsed_seconds": elapsed}))
+        failure_summary = {"status": "failure", "error": str(ex), "elapsed_seconds": elapsed}
+        try:
+            _fail_dir = repo_root / "bridge_progress"
+            _fail_dir.mkdir(parents=True, exist_ok=True)
+            (_fail_dir / "last_run.json").write_text(
+                json.dumps(failure_summary, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            pass
+        print(json.dumps(failure_summary))
         return 1
 
 

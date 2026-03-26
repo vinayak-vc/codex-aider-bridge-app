@@ -206,3 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .aider*
+
+# Per-project bridge progress files
+bridge_progress/
