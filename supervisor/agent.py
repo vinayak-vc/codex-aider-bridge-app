@@ -56,9 +56,10 @@ class SupervisorAgent:
         repo_tree: str,
         idea_text: Optional[str] = None,
         feedback: Optional[str] = None,
+        knowledge_context: Optional[str] = None,
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
-        prompt = self._build_plan_prompt(goal, repo_tree, idea_text, feedback)
+        prompt = self._build_plan_prompt(goal, repo_tree, idea_text, feedback, knowledge_context)
         self._logger.debug(
             "Plan prompt (%d chars): %.500s%s",
             len(prompt),
@@ -113,11 +114,18 @@ class SupervisorAgent:
         repo_tree: str,
         idea_text: Optional[str],
         feedback: Optional[str],
+        knowledge_context: Optional[str] = None,
     ) -> str:
         idea_block = ""
         if idea_text:
             trimmed = idea_text[:_IDEA_MAX_CHARS]
             idea_block = f"\nProject brief:\n{trimmed}\n"
+
+        # Project knowledge — what each file does, what's already built.
+        # This lets the supervisor plan without reading individual source files.
+        knowledge_block = ""
+        if knowledge_context:
+            knowledge_block = f"\nProject knowledge (file roles and history):\n{knowledge_context}\n"
 
         feedback_block = ""
         if feedback:
@@ -138,8 +146,11 @@ class SupervisorAgent:
             "- Task type must be one of: create, modify, validate\n"
             "- Tasks execute sequentially. Later tasks may depend on earlier ones.\n"
             "- Instructions must be concrete but code-free: say WHAT to build, never HOW.\n"
-            "- Do not ask questions. Do not explain. Return the plan only.\n\n"
+            "- Do not ask questions. Do not explain. Return the plan only.\n"
+            "- Use the FILE REGISTRY below to reference existing file roles correctly.\n"
+            "  Do not duplicate work that is already marked as done.\n\n"
             f"Repo structure:\n{repo_tree}\n"
+            f"{knowledge_block}"
             f"{idea_block}"
             f"\nGoal: {goal}\n"
             f"{feedback_block}"

@@ -23,6 +23,12 @@ from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
 from models.task import SubTask
 from utils.token_tracker import TokenTracker, save_session_to_log
+from utils.project_knowledge import (
+    load_knowledge,
+    save_knowledge,
+    to_context_text,
+    update_knowledge_from_run,
+)
 from validator.validator import MechanicalValidator
 
 
@@ -153,6 +159,7 @@ def obtain_plan(
     task_parser: TaskParser,
     repo_tree: str,
     logger: logging.Logger,
+    knowledge_context: Optional[str] = None,
 ) -> list[Task]:
     """Ask the supervisor to produce a valid JSON plan, retrying on failure.
 
@@ -165,7 +172,7 @@ def obtain_plan(
         logger.info("Requesting plan — attempt %s of %s", attempt, config.max_plan_attempts)
         try:
             plan_text = supervisor.generate_plan(
-                config.goal, repo_tree, config.idea_text, feedback
+                config.goal, repo_tree, config.idea_text, feedback, knowledge_context
             )
             tasks = task_parser.parse(plan_text)
 
@@ -553,6 +560,18 @@ def main() -> int:
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
 
+    # Load project knowledge so every AI session starts with full project context.
+    knowledge = load_knowledge(repo_root)
+    knowledge_context = to_context_text(knowledge)
+    if knowledge.get("files"):
+        logger.info(
+            "Project knowledge loaded: %d files registered, %d features done",
+            len(knowledge["files"]),
+            len(knowledge.get("features_done", [])),
+        )
+    else:
+        logger.info("No project knowledge yet — will create after this run.")
+
     # Only create supervisor agent when needed (not in auto-approve mode).
     supervisor: Optional[SupervisorAgent] = None
     if not _auto_approve:
@@ -585,7 +604,9 @@ def main() -> int:
                     "No plan file provided and no supervisor configured. "
                     "Either pass --plan-file or set BRIDGE_SUPERVISOR_COMMAND."
                 )
-            tasks = obtain_plan(config, supervisor, task_parser, repo_tree, logger)
+            tasks = obtain_plan(
+                config, supervisor, task_parser, repo_tree, logger, knowledge_context
+            )
 
         # Feature 6: plan preview + confirmation before any Aider task runs.
         if args.confirm_plan and not args.dry_run:
@@ -634,6 +655,17 @@ def main() -> int:
         elapsed = round(time.monotonic() - run_start, 1)
         executed = len(tasks) - skipped
 
+        # Update project knowledge with every file touched and feature completed.
+        executed_tasks = [t for t in tasks if t.id not in completed_ids or True]
+        knowledge = update_knowledge_from_run(
+            knowledge, config.goal, tasks, all_diffs, repo_root
+        )
+        save_knowledge(knowledge, repo_root)
+        logger.info(
+            "Project knowledge updated: %d files now registered",
+            len(knowledge["files"]),
+        )
+
         # In auto-approve mode: print a diff review summary so the AI session
         # (Claude Code / human) can review all changes in one place.
         if _auto_approve and all_diffs:
@@ -666,6 +698,7 @@ def main() -> int:
             logger.warning("Could not save token log: %s", _tok_ex)
 
         _emit_structured({"type": "token_report", "report": token_report})
+        _emit_structured({"type": "knowledge_updated", "files": len(knowledge["files"])})
 
         summary = {
             "status": "success",

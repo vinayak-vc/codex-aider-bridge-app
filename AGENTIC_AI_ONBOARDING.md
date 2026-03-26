@@ -288,27 +288,44 @@ STEP 2 — Read WORK_LOG.md.
           Understand what is done and what is pending.
           Nothing else to read in the bridge project.
 
-STEP 3 — Ask the user:
-          "What are we building today? Give me:
-           (a) The goal/idea file path
-           (b) The target repo directory
-           (c) Aider model (e.g. ollama/qwen2.5-coder:7b)
-           (d) Any code format standards file"
+STEP 3 — Read bridge_progress/project_knowledge.json (if it exists).
+          This file tells you what every file does, what is already built,
+          and what the patterns are. Do NOT read source files to get this info.
+          The knowledge file IS the project summary.
 
-STEP 4 — Read ONLY: the goal file the user gives you.
+STEP 4 — Ask the user TARGETED CLARIFYING QUESTIONS before planning.
+          Generate 3-5 questions based on what is unclear from the goal.
+
+          FOR A NEW PROJECT (no knowledge file):
+            - What is the target platform? (mobile/PC/web/other)
+            - What must NOT be changed or touched?
+            - Are there performance or size constraints?
+            - Any existing patterns or conventions to follow?
+            - Should I create new files or modify existing ones?
+
+          FOR AN EXISTING PROJECT (knowledge file exists):
+            - How does this new feature connect to [specific existing file]?
+            - Should [ExistingClass] be extended or wrapped?
+            - Are any new dependencies being introduced?
+            - What is the expected user-visible behaviour?
+
+          Wait for answers. Use them to write precise, accurate tasks.
+          Better questions = better tasks = fewer retries = fewer tokens.
+
+STEP 5 — Read ONLY: the goal file the user gives you.
           Do NOT read anything else yet.
 
-STEP 5 — Run ONE file tree command on the target repo:
+STEP 6 — Run ONE file tree command on the target repo:
           find "<repo>" -type f -name "*.cs" | head -80
           (or equivalent for the target language)
           Do NOT open any individual files.
 
-STEP 6 — Create the JSON task plan.
+STEP 7 — Create the JSON task plan.
           - Each task must be atomic and unambiguous
           - Include code style rules inline in instructions
           - Order by dependency (no file referenced before it exists)
 
-STEP 7 — Run the bridge:
+STEP 8 — Run the bridge:
           python main.py "short goal headline" \
             --repo-root "..." \
             --idea-file "path/to/GAME_IDEA.md" \
@@ -317,10 +334,14 @@ STEP 7 — Run the bridge:
           NOTE: goal is positional (no --goal flag).
           Supervisor AI is set via BRIDGE_SUPERVISOR_COMMAND env var — not CLI.
 
-STEP 8 — Review each task diff as the bridge sends it.
+STEP 9 — Review each task diff as the bridge sends it.
           PASS or sub-plan. Never skip.
 
-STEP 9 — Update WORK_LOG.md after every task.
+STEP 10 — Update WORK_LOG.md after every task.
+
+STEP 11 — After the run completes, the bridge auto-updates
+           bridge_progress/project_knowledge.json with every file
+           created or modified. You do not need to update it manually.
 ```
 
 ---
