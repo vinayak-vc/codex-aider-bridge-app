@@ -1180,18 +1180,38 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
             f"less than 50 MB free ({free_bytes // (1024 * 1024)} MB available)."
         )
 
-    # Ensure taskJsons/ is in the target repo's .gitignore so AI-generated plan
-    # files are never accidentally committed.
+    # Ensure all bridge-generated artefacts are in the target repo's .gitignore.
+    # We append only the entries that are not already present, so repeated runs
+    # are idempotent and existing .gitignore content is never disturbed.
+    _BRIDGE_GITIGNORE_ENTRIES: list[tuple[str, str]] = [
+        ("taskJsons/",                  "AI-generated task plan JSON files"),
+        (".aider.tags.cache.v4/",       "Aider repo-map tag cache"),
+        ("bridge_progress/",            "Bridge run state, checkpoints and reports"),
+        ("logs.meta",                   "Unity meta for bridge logs folder"),
+        (".aider.input.history",        "Aider interactive input history"),
+        (".aider.chat.history.md",      "Aider chat history"),
+        ("bridge_progress.meta",        "Unity meta for bridge_progress folder"),
+    ]
     _gitignore_path = config.repo_root / ".gitignore"
-    _gitignore_entry = "taskJsons/"
     try:
-        existing = _gitignore_path.read_text(encoding="utf-8") if _gitignore_path.exists() else ""
-        if _gitignore_entry not in existing.splitlines():
+        existing_text = _gitignore_path.read_text(encoding="utf-8") if _gitignore_path.exists() else ""
+        existing_lines = set(existing_text.splitlines())
+        missing = [
+            (entry, comment)
+            for entry, comment in _BRIDGE_GITIGNORE_ENTRIES
+            if entry not in existing_lines
+        ]
+        if missing:
             with _gitignore_path.open("a", encoding="utf-8") as _gf:
-                _gf.write(f"\n# AI-generated task plan JSON files\n{_gitignore_entry}\n")
-            logger.info("Added %r to %s", _gitignore_entry, _gitignore_path)
-    except OSError:
-        pass  # Non-fatal — just log nothing
+                _gf.write("\n# ── Aider / Bridge artefacts ─────────────────────────────────────\n")
+                for entry, comment in missing:
+                    _gf.write(f"{entry:<40} # {comment}\n")
+            added = [e for e, _ in missing]
+            logger.info("Added %d bridge entries to %s: %s", len(added), _gitignore_path, added)
+        else:
+            logger.debug(".gitignore already contains all bridge entries — nothing to add.")
+    except OSError as _ge:
+        logger.warning("Could not update .gitignore: %s (non-fatal)", _ge)
 
     logger.info("Pre-flight checks passed.")
 
