@@ -31,6 +31,7 @@ from utils.project_knowledge import (
     to_context_text,
     update_knowledge_from_run,
 )
+from utils.project_type_prompt import PROJECT_TYPES, describe, prompt_project_type
 from validator.validator import MechanicalValidator
 
 
@@ -397,6 +398,19 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "Resume a previous run using the saved plan in bridge_progress/improvement_plan.json. "
             "Tasks already marked complete in bridge_progress/task_metrics.json are skipped. "
             "Equivalent to --plan-file bridge_progress/improvement_plan.json --auto-approve."
+        ),
+    )
+    parser.add_argument(
+        "--project-type",
+        default=None,
+        metavar="TYPE",
+        help=(
+            "Declare the project type up-front so the bridge picks the right validator, "
+            "file filters, and plan hints from the start. "
+            "Common values: unity, godot, unreal, python, typescript, javascript, csharp, "
+            "flutter, rust, go, other. "
+            "If omitted and the type is not already saved in project_knowledge.json, "
+            "the bridge will ask interactively (when running in a terminal)."
         ),
     )
     return parser
@@ -1339,6 +1353,39 @@ def main() -> int:
     # Load project knowledge so every AI session starts with full project context.
     knowledge = load_knowledge(repo_root)
 
+    # ── Project-type selection ────────────────────────────────────────────────
+    # Priority: CLI flag > saved in knowledge > interactive prompt > auto-detect.
+    _saved_type: str = knowledge.get("project", {}).get("type", "")
+    _cli_type: Optional[str] = getattr(args, "project_type", None)
+
+    if _cli_type:
+        # Validate the CLI value against the known catalogue.
+        if _cli_type not in PROJECT_TYPES:
+            logger.warning(
+                "--project-type '%s' is not a recognised type. "
+                "Known types: %s. Falling back to auto-detect.",
+                _cli_type, ", ".join(PROJECT_TYPES),
+            )
+            _cli_type = None
+        else:
+            logger.info("Project type set via CLI: %s", describe(_cli_type))
+            knowledge["project"]["type"] = _cli_type
+            save_knowledge(knowledge, repo_root)
+
+    if not _cli_type and not _saved_type:
+        # No type known yet — ask interactively (terminal only).
+        _prompted_type = prompt_project_type()
+        if _prompted_type and _prompted_type != "other":
+            knowledge["project"]["type"] = _prompted_type
+            save_knowledge(knowledge, repo_root)
+            logger.info("Project type saved: %s", describe(_prompted_type))
+        elif _prompted_type == "other":
+            logger.info("Project type: auto-detect (user selected 'other')")
+        # If None (non-interactive), the validator will auto-detect from file markers.
+
+    elif _saved_type and not _cli_type:
+        logger.info("Project type (from saved knowledge): %s", describe(_saved_type))
+
     # Onboarding scan: run once on first use against an existing project to
     # pre-populate file roles so the supervisor generates an accurate plan
     # from the very first run (instead of guessing from file names only).
@@ -1393,7 +1440,13 @@ def main() -> int:
         no_map=config.aider_no_map,
     )
     diff_collector = DiffCollector(repo_root)
-    validator = MechanicalValidator(repo_root, config.validation_command, logger)
+    # Pass the user-declared type so the validator doesn't have to re-detect
+    # from file markers (which may miss the correct type for mono-repos etc.)
+    _declared_type = knowledge.get("project", {}).get("type", "") or None
+    validator = MechanicalValidator(
+        repo_root, config.validation_command, logger,
+        project_type_override=_declared_type,
+    )
     tasks: list[Task] = []
     completed_ids: set[int] = set()
     completed_summaries: list[str] = []

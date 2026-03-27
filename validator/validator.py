@@ -152,12 +152,35 @@ class MechanicalValidator:
         repo_root: Path,
         validation_command: Optional[str],
         logger: logging.Logger,
+        project_type_override: Optional[str] = None,
     ) -> None:
         self._repo_root = repo_root
         self._validation_command = validation_command
         self._logger = logger
-        self._project_type = _detect_project_type(repo_root)
-        self._logger.info("Validator: detected project type '%s'", self._project_type)
+
+        if project_type_override and project_type_override != "other":
+            # Map user-facing catalogue key → internal _ProjectType constant.
+            # Keys match (unity, python, typescript, javascript, csharp) or fall back.
+            _MAP = {
+                "unity":      _ProjectType.UNITY,
+                "godot":      _ProjectType.UNKNOWN,   # no dedicated validator yet
+                "unreal":     _ProjectType.UNKNOWN,
+                "python":     _ProjectType.PYTHON,
+                "typescript": _ProjectType.TYPESCRIPT,
+                "javascript": _ProjectType.JAVASCRIPT,
+                "csharp":     _ProjectType.CSHARP,
+                "flutter":    _ProjectType.UNKNOWN,
+                "rust":       _ProjectType.UNKNOWN,
+                "go":         _ProjectType.UNKNOWN,
+            }
+            self._project_type = _MAP.get(project_type_override, _ProjectType.UNKNOWN)
+            self._logger.info(
+                "Validator: project type set from knowledge: '%s' → '%s'",
+                project_type_override, self._project_type,
+            )
+        else:
+            self._project_type = _detect_project_type(repo_root)
+            self._logger.info("Validator: detected project type '%s'", self._project_type)
 
     @property
     def is_unity_project(self) -> bool:
