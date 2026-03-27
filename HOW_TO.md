@@ -11,6 +11,8 @@ This bridge is designed for a three-part workflow:
 - **Aider** acts as the developer
 - **The bridge** only executes, validates, records, and waits for the next decision
 
+It also keeps a persistent memory of the external project under `bridge_progress/` so the supervising AI can resume from structured state instead of rebuilding context manually.
+
 The recommended mode is:
 - `--manual-supervisor`
 - `--workflow-profile micro`
@@ -110,6 +112,15 @@ During a manual-supervisor run, the bridge creates:
 - Decisions:
   - `<target_repo>/bridge_progress/manual_supervisor/decisions/`
 
+It also maintains:
+
+- `<target_repo>/bridge_progress/project_knowledge.json`
+- `<target_repo>/bridge_progress/project_snapshot.json`
+- `<target_repo>/bridge_progress/task_metrics.json`
+- `<target_repo>/bridge_progress/token_log.json`
+- `<target_repo>/bridge_progress/LATEST_REPORT.md`
+- `<target_repo>/bridge_progress/last_run.json`
+
 ### Request file contains
 
 - task id
@@ -120,6 +131,22 @@ During a manual-supervisor run, the bridge creates:
 - validator result
 - unexpected files
 - git diff
+
+### Knowledge and analytics files contain
+
+- `project_knowledge.json`
+  - what each known file is responsible for
+  - features already completed
+  - run history
+- `project_snapshot.json`
+  - current file tree snapshot
+  - completed and pending task ids
+- `task_metrics.json`
+  - machine-readable per-run task state
+- `token_log.json`
+  - token/savings history
+- `LATEST_REPORT.md`
+  - quick human-readable summary
 
 ---
 
@@ -163,6 +190,7 @@ When a request file appears, read it and write a decision JSON.
 ```
 
 The bridge will archive the processed request and decision files automatically.
+It will also keep updating the knowledge/snapshot/metrics files while the run is in progress.
 
 ---
 
@@ -239,6 +267,14 @@ Check:
 
 If a request exists, write the matching decision JSON.
 
+### The old knowledge JSON was not generated
+
+Current bridge behavior:
+- knowledge and snapshot files are persisted during the run
+- they are also written on failed runs
+
+So if a future run stops midway, you should still have usable state in `bridge_progress/`.
+
 ---
 
 ## Short Version
@@ -248,6 +284,7 @@ AI reads brief + file tree
 AI writes plan JSON into target_repo/taskJsons/
 Bridge runs one atomic task through Aider
 Bridge writes review request JSON
+Bridge updates project knowledge + analytics files
 AI reviews diff and writes decision JSON
 Bridge continues
 Repeat until done

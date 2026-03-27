@@ -15,6 +15,8 @@ That profile is designed for: Codex supervises, Aider implements, bridge validat
 
 It ships with a **web UI** you can launch by double-clicking `launch_ui.bat`, and a CLI you can drive directly from the terminal.
 
+The bridge is also a **project-memory and analytics layer**. Every run writes structured state into the target repo's `bridge_progress/` folder so the supervising agent can resume with context instead of re-reading source files.
+
 ---
 
 ## Architecture
@@ -33,6 +35,7 @@ Bridge (this app)
   │  - Collects git diffs after execution
   │  - Runs mechanical checks (file existence, syntax, CI gate)
   │  - Sends compact review payloads to supervisor
+  │  - Persists project knowledge, task metrics, token log, and latest run report
   │  - Never makes coding decisions
   │
 Aider (local LLM)
@@ -88,6 +91,39 @@ For the most reliable and token-efficient setup:
 7. The bridge resumes and continues until all tasks are complete.
 
 This keeps the bridge dumb, Aider productive, and the expensive AI focused only on planning and review.
+
+---
+
+## `bridge_progress/` Artifacts
+
+Every run writes project state into the **target repo**, not the bridge repo.
+
+Important files:
+
+- `bridge_progress/project_knowledge.json`
+  - rolling file-responsibility map
+  - what each known file does
+  - which features are already done
+  - run history
+- `bridge_progress/project_snapshot.json`
+  - current file tree snapshot
+  - completed vs pending tasks
+  - failed task id when a run stops
+- `bridge_progress/task_metrics.json`
+  - machine-readable task completion state for the current run
+  - resumed checkpoint ids are tracked separately
+- `bridge_progress/token_log.json`
+  - token and savings history across runs
+- `bridge_progress/LATEST_REPORT.md`
+  - short human-readable run summary
+- `bridge_progress/last_run.json`
+  - most recent success/failure payload
+- `bridge_progress/manual_supervisor/requests/`
+  - review request JSON files
+- `bridge_progress/manual_supervisor/decisions/`
+  - supervisor decision JSON files
+
+The bridge now updates the project knowledge and snapshot files **during the run**, not only after a perfect success. That means partial progress is still captured if the local model fails midway.
 
 ---
 
@@ -159,6 +195,12 @@ python main.py "Add unit tests" \
 - Filesystem-based review handoff for manual supervision:
   - `bridge_progress/manual_supervisor/requests/`
   - `bridge_progress/manual_supervisor/decisions/`
+- Persistent project intelligence in the target repo:
+  - `project_knowledge.json`
+  - `project_snapshot.json`
+  - `task_metrics.json`
+  - `token_log.json`
+  - `LATEST_REPORT.md`
 - Aider runs on a local LLM (`--aider-model ollama/mistral`, `ollama/codellama`, etc.)
 - Mechanical validation (file existence, Python syntax, optional CI gate) runs without supervisor tokens
 - Delete tasks as first-class plan items
@@ -216,6 +258,10 @@ python main.py "Short goal headline" \
    - read the request file in `D:\ExternalProject\bridge_progress\manual_supervisor\requests\`
    - review the diff and validation result
    - write a decision file into `...manual_supervisor\decisions\`
+7. Use the analytics files in `bridge_progress/` instead of re-reading the repo blindly on every follow-up:
+   - `project_knowledge.json`
+   - `project_snapshot.json`
+   - `LATEST_REPORT.md`
 
 This is the intended external-project workflow for Codex-style supervision.
 
@@ -296,7 +342,7 @@ bridge-app/
 | `--dry-run` | false | Plan only, skip Aider execution |
 | `--max-plan-attempts` | 3 | Retries on invalid supervisor JSON |
 | `--max-task-retries` | 2 | Max REWORK cycles per task |
-| `--supervisor-command` | `codex.cmd exec …` | Command used to invoke the supervisor agent. Can be set to `interactive` to provide supervisor inputs manually via the terminal. |
+| `--supervisor-command` | env / fallback | Command used only when you intentionally want an external supervisor subprocess |
 | `--manual-supervisor` | false | Disable external supervisor CLI calls and wait for local review decision JSON files instead |
 | `--manual-review-poll-seconds` | 2 | Polling interval while waiting for a manual supervisor decision |
 | `--workflow-profile` | `standard` | `micro` enforces one-file atomic tasks and required assertions |
@@ -393,6 +439,12 @@ Aider handles all code generation locally. In manual-supervisor mode the bridge
 does not invoke any external supervisor CLI at all; it only writes compact
 review request and decision JSON files for the active agent session.
 
+`token_log.json` records:
+- bridge subprocess supervisor tokens when an external supervisor is used
+- session token estimates when manual-supervisor mode is used
+- estimated direct-coding baseline vs total AI tokens
+- savings across runs
+
 ---
 
 ## Notes
@@ -401,4 +453,5 @@ review request and decision JSON files for the active agent session.
 - The supervisor receives the live repo tree at runtime — no hardcoded file paths anywhere.
 - If the supervisor fails to produce a valid plan after all retries, use `--plan-file` to supply one manually.
 - The bridge does not depend on a specific project type and works against any repo reachable via `--repo-root`.
+- `bridge_progress/project_knowledge.json` is the main handoff file for future sessions; the supervising agent should prefer reading it before opening source files.
 - For a non-technical user guide, see `HOW_TO.md`.

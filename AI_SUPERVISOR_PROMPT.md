@@ -11,6 +11,7 @@ The recommended mode is:
 - the bridge validates and records results
 - the active AI session reviews each task
 - the bridge resumes from the AI’s decision
+- the bridge keeps a structured project memory under `bridge_progress/`
 
 ---
 
@@ -120,6 +121,12 @@ Each request contains:
 
 The supervisor should read the request file and produce exactly one decision file.
 
+The supervisor should also prefer reading these files before opening arbitrary source:
+
+- `bridge_progress/project_knowledge.json`
+- `bridge_progress/project_snapshot.json`
+- `bridge_progress/LATEST_REPORT.md`
+
 ---
 
 ## Decision File Formats
@@ -178,6 +185,16 @@ Before using this bridge on another repo, the supervising AI should:
 5. Save the plan under the target repo’s `taskJsons/`
 6. Run the bridge in manual-supervisor mode
 7. Review every task request before allowing the next task
+
+### Preferred context order for follow-up sessions
+
+1. `bridge_progress/LATEST_REPORT.md`
+2. `bridge_progress/project_knowledge.json`
+3. `bridge_progress/project_snapshot.json`
+4. request/decision archive if a specific task needs investigation
+5. only then open source files if still necessary
+
+This keeps supervision token-efficient and preserves the bridge's purpose as a project-memory layer.
 
 This keeps the AI acting as a supervisor, not as the coder.
 

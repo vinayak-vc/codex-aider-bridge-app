@@ -132,7 +132,7 @@ class TokenTracker:
         plan_tokens = snap["plan_in"] + snap["plan_out"]
         estimated_direct = plan_tokens + (tasks_executed * _DIRECT_TOKENS_PER_TASK)
 
-        tokens_saved = max(0, estimated_direct - total_supervisor)
+        tokens_saved = max(0, estimated_direct - total_ai_tokens)
         savings_pct = (
             round(tokens_saved / estimated_direct * 100, 1)
             if estimated_direct > 0 else 0.0
@@ -179,7 +179,8 @@ class TokenTracker:
                 "note": (
                     f"Without bridge: plan ({plan_tokens} tokens) + "
                     f"{tasks_executed} tasks × {_DIRECT_TOKENS_PER_TASK} "
-                    f"direct-coding tokens = {estimated_direct}"
+                    f"direct-coding tokens = {estimated_direct}; "
+                    f"compared against total AI tokens {total_ai_tokens}"
                 ),
             },
             "elapsed_seconds": round(elapsed_seconds, 1),

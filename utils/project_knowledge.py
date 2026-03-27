@@ -93,6 +93,9 @@ def update_knowledge_from_run(
     tasks: list,
     all_diffs: list[dict],
     repo_root: Path,
+    append_run_record: bool = True,
+    run_status: str = "success",
+    tasks_completed_override: Optional[int] = None,
 ) -> dict:
     """Update knowledge after a successful bridge run.
 
@@ -132,12 +135,18 @@ def update_knowledge_from_run(
                 knowledge["features_done"].append(feature_label)
                 done_set.add(feature_label)
 
-    # Append run record.
-    knowledge["runs"].append({
-        "date": _today(),
-        "goal": goal[:150] if goal else "",
-        "tasks_completed": len(tasks),
-    })
+    # Append run record when explicitly requested.
+    if append_run_record:
+        knowledge["runs"].append({
+            "date": _today(),
+            "goal": goal[:150] if goal else "",
+            "tasks_completed": (
+                tasks_completed_override
+                if tasks_completed_override is not None
+                else len(tasks)
+            ),
+            "status": run_status,
+        })
 
     return knowledge
 

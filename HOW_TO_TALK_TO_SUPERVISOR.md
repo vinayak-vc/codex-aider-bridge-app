@@ -21,12 +21,12 @@ python main.py --goal "Build Color Gate Rush mobile game" ...
 python main.py "..." --supervisor-command "claude" ...
 ```
 
-**Supervisor AI is configured via environment variable, set once by the human:**
+**External supervisor CLI can be configured via environment variable when needed:**
 ```bash
 set BRIDGE_SUPERVISOR_COMMAND=claude          # Windows
 export BRIDGE_SUPERVISOR_COMMAND=claude       # Linux/Mac
 ```
-Default if unset: `claude`. You (the AI) never need to know or pass your own CLI name.
+In the recommended workflow you do **not** need this, because manual-supervisor mode keeps review inside the current AI session.
 
 Use `--idea-file` to pass a full brief/plan file. The positional goal is just a short headline.
 
@@ -64,7 +64,8 @@ Track token usage throughout.
 4. Aider executes each task, one at a time
 5. Supervisor reviews each diff — PASS or sub-plan
 6. WORK_LOG.md is updated after every task
-7. Token usage tracked and saved to `token_log.json`
+7. Bridge writes project knowledge and analytics into `bridge_progress/`
+8. Token usage tracked and saved to `token_log.json`
 
 ---
 
@@ -131,6 +132,11 @@ Run via bridge. All code through Aider.
 The bridge has checkpoint support — it automatically skips already-completed tasks
 and continues from the next pending one.
 
+Also check:
+- `bridge_progress/LATEST_REPORT.md`
+- `bridge_progress/project_snapshot.json`
+- `bridge_progress/project_knowledge.json`
+
 ---
 
 ## 5. CHECKING STATUS / PROGRESS
@@ -154,8 +160,9 @@ Show me the token usage report for the last run.
 
 The Supervisor reads `token_log.json` and shows:
 - Tokens used by Supervisor (plan + review)
-- Estimated tokens that WOULD have been used if Supervisor wrote all code directly
-- Tokens saved by using Aider
+- Estimated tokens that WOULD have been used if the AI wrote all code directly
+- Total AI tokens actually spent in this bridge workflow
+- Tokens saved by using Aider + bridge supervision
 - Savings percentage
 
 ---
@@ -226,7 +233,8 @@ Without the bridge, the Supervisor AI writes all code directly:
 With the bridge:
 - Plan: ~1,000 tokens
 - Review 20 diffs × ~300 tokens each = ~6,000 tokens
-- **Total: ~7,000 tokens — Aider wrote everything for free (local GPU)**
+- Plus local Aider model work and bridge analytics in the target repo
+- **Supervisor-model total stays much lower because Aider wrote everything locally**
 - **Savings: ~85-93%**
 
 The more precise your prompts, the less the Supervisor asks clarifying questions,

@@ -285,7 +285,7 @@ If creating a sub-plan for a failed task:
 
 ## 10. WHAT IS ALREADY BUILT IN THE BRIDGE
 
-The bridge is **fully implemented**. You do not need to fix, improve, or read its code.
+The bridge is **intended to be stable enough for normal external-project supervision**. For routine external work, you do not need to read bridge code.
 
 | Feature | Status |
 |---|---|
@@ -298,6 +298,9 @@ The bridge is **fully implemented**. You do not need to fix, improve, or read it
 | Pause / resume mid-run | ✅ Working |
 | Progress tracking (SSE events) | ✅ Working |
 | Token usage tracking + savings log | ✅ Working |
+| Persistent `project_knowledge.json` in target repo | ✅ Working |
+| Persistent `project_snapshot.json` / `task_metrics.json` | ✅ Working |
+| Failure-time artifact persistence | ✅ Working |
 | Security: shell injection prevention | ✅ Working |
 | Security: path traversal prevention | ✅ Working |
 | Pre-flight checks (aider, git, disk) | ✅ Working |
@@ -342,6 +345,10 @@ STEP 3 — Read bridge_progress/project_knowledge.json (if it exists).
           This file tells you what every file does, what is already built,
           and what the patterns are. Do NOT read source files to get this info.
           The knowledge file IS the project summary.
+
+STEP 3.5 — Read bridge_progress/LATEST_REPORT.md and project_snapshot.json if they exist.
+           These tell you what the last run did, what failed, and what is still pending.
+           Prefer these over extra source-file reads.
 
 STEP 4 — Ask the user TARGETED CLARIFYING QUESTIONS before planning.
           Generate 3-5 questions based on what is unclear from the goal.
@@ -389,9 +396,13 @@ STEP 9 — Review each task request JSON as the bridge writes it.
 
 STEP 10 — Update WORK_LOG.md after every task.
 
-STEP 11 — After the run completes, the bridge auto-updates
-           bridge_progress/project_knowledge.json with every file
-           created or modified. You do not need to update it manually.
+STEP 11 — During and after the run, the bridge auto-updates:
+           - bridge_progress/project_knowledge.json
+           - bridge_progress/project_snapshot.json
+           - bridge_progress/task_metrics.json
+           - bridge_progress/token_log.json
+           - bridge_progress/LATEST_REPORT.md
+           You do not need to update them manually.
 ```
 
 ---

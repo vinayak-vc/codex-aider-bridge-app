@@ -34,6 +34,187 @@ from utils.project_knowledge import (
 from validator.validator import MechanicalValidator
 
 
+def _write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _build_task_metrics(
+    tasks: list[Task],
+    completed_ids: set[int],
+    resumed_completed_ids: set[int],
+    skipped: int,
+    all_diffs: list[dict],
+    run_status: str,
+    failed_task_id: Optional[int],
+) -> dict:
+    current_run_completed_ids = sorted(completed_ids - resumed_completed_ids)
+    return {
+        "status": run_status,
+        "planned_tasks": len(tasks),
+        "completed_task_ids": current_run_completed_ids,
+        "completed_tasks": len(current_run_completed_ids),
+        "resumed_completed_task_ids": sorted(resumed_completed_ids),
+        "skipped_tasks": skipped,
+        "failed_task_id": failed_task_id,
+        "diffs_recorded": len(all_diffs),
+        "tasks": [
+            {
+                "id": task.id,
+                "type": task.type,
+                "files": list(task.files),
+                "must_exist": list(task.must_exist),
+                "must_not_exist": list(task.must_not_exist),
+                "completed": task.id in completed_ids,
+            }
+            for task in tasks
+        ],
+    }
+
+
+def _build_project_snapshot(
+    repo_root: Path,
+    goal: str,
+    knowledge: dict,
+    tasks: list[Task],
+    completed_ids: set[int],
+    resumed_completed_ids: set[int],
+    failed_task_id: Optional[int],
+    run_status: str,
+) -> dict:
+    file_tree: list[str] = []
+    for path in sorted(repo_root.rglob("*")):
+        if path.is_dir():
+            continue
+        relative_path = path.relative_to(repo_root).as_posix()
+        if relative_path.startswith(".git/"):
+            continue
+        file_tree.append(relative_path)
+
+    return {
+        "status": run_status,
+        "goal": goal,
+        "repo_root": str(repo_root),
+        "failed_task_id": failed_task_id,
+        "completed_task_ids": sorted(completed_ids - resumed_completed_ids),
+        "resumed_completed_task_ids": sorted(resumed_completed_ids),
+        "pending_task_ids": [task.id for task in tasks if task.id not in completed_ids],
+        "files": knowledge.get("files", {}),
+        "features_done": knowledge.get("features_done", []),
+        "runs": knowledge.get("runs", []),
+        "file_tree": file_tree,
+    }
+
+
+def _build_latest_report(
+    repo_root: Path,
+    goal: str,
+    config: BridgeConfig,
+    tasks: list[Task],
+    completed_ids: set[int],
+    resumed_completed_ids: set[int],
+    failed_task_id: Optional[int],
+    elapsed_seconds: float,
+    run_status: str,
+) -> str:
+    completed_tasks = [task for task in tasks if task.id in (completed_ids - resumed_completed_ids)]
+    pending_tasks = [task for task in tasks if task.id not in completed_ids]
+    lines: list[str] = [
+        "# Latest Bridge Report",
+        "",
+        f"Status: `{run_status}`",
+        f"Goal: `{goal}`",
+        f"Repo: `{repo_root}`",
+        f"Workflow profile: `{config.workflow_profile}`",
+        f"Supervisor mode: `{config.supervisor_mode}`",
+        f"Aider model: `{config.aider_model or 'default'}`",
+        f"Elapsed seconds: `{round(elapsed_seconds, 1)}`",
+        "",
+        "## Task summary",
+        "",
+        f"- Planned tasks: `{len(tasks)}`",
+        f"- Completed tasks: `{len(completed_ids - resumed_completed_ids)}`",
+        f"- Resumed-from-checkpoint tasks: `{len(resumed_completed_ids)}`",
+        f"- Failed task: `{failed_task_id if failed_task_id is not None else 'none'}`",
+        "",
+        "## Completed files",
+        "",
+    ]
+
+    if completed_tasks:
+        for task in completed_tasks:
+            lines.append(f"- `{', '.join(task.files)}`")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Pending files", ""])
+    if pending_tasks:
+        for task in pending_tasks[:10]:
+            lines.append(f"- `{', '.join(task.files)}`")
+    else:
+        lines.append("- None")
+
+    return "\n".join(lines) + "\n"
+
+
+def _persist_bridge_progress(
+    repo_root: Path,
+    goal: str,
+    config: BridgeConfig,
+    knowledge: dict,
+    tasks: list[Task],
+    completed_ids: set[int],
+    resumed_completed_ids: set[int],
+    skipped: int,
+    all_diffs: list[dict],
+    elapsed_seconds: float,
+    run_status: str,
+    failed_task_id: Optional[int],
+) -> None:
+    progress_dir = repo_root / "bridge_progress"
+    progress_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_json_file(
+        progress_dir / "task_metrics.json",
+        _build_task_metrics(
+            tasks,
+            completed_ids,
+            resumed_completed_ids,
+            skipped,
+            all_diffs,
+            run_status,
+            failed_task_id,
+        ),
+    )
+    _write_json_file(
+        progress_dir / "project_snapshot.json",
+        _build_project_snapshot(
+            repo_root,
+            goal,
+            knowledge,
+            tasks,
+            completed_ids,
+            resumed_completed_ids,
+            failed_task_id,
+            run_status,
+        ),
+    )
+    (progress_dir / "LATEST_REPORT.md").write_text(
+        _build_latest_report(
+            repo_root,
+            goal,
+            config,
+            tasks,
+            completed_ids,
+            resumed_completed_ids,
+            failed_task_id,
+            elapsed_seconds,
+            run_status,
+        ),
+        encoding="utf-8",
+    )
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1116,10 +1297,17 @@ def main() -> int:
     )
     diff_collector = DiffCollector(repo_root)
     validator = MechanicalValidator(repo_root, config.validation_command, logger)
+    tasks: list[Task] = []
+    completed_ids: set[int] = set()
+    completed_summaries: list[str] = []
+    all_diffs: list[dict] = []
+    skipped = 0
+    failed_task_id: Optional[int] = None
+    resumed_completed_ids: set[int] = set()
 
     try:
         if args.plan_file:
-            tasks: list[Task] = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
+            tasks = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
             logger.info("Loaded %s task(s) from plan file", len(tasks))
         else:
             if _manual_supervisor_enabled:
@@ -1158,9 +1346,7 @@ def main() -> int:
                 return 0
 
         completed_ids = load_checkpoint(repo_root)
-        completed_summaries: list[str] = []
-        all_diffs: list[dict] = []  # collected for final review summary
-        skipped = 0
+        resumed_completed_ids = set(completed_ids)
 
         for task_index, task in enumerate(tasks):
             wait_if_paused(repo_root, logger)
@@ -1186,6 +1372,7 @@ def main() -> int:
                 runner, diff_collector, validator, logger,
                 aider_context=aider_context,
             )
+            failed_task_id = None
             completed_ids.add(task.id)
             save_checkpoint(repo_root, completed_ids)
             task_summary = (
@@ -1194,6 +1381,29 @@ def main() -> int:
             )
             completed_summaries.append(task_summary)
             all_diffs.append({"task_id": task.id, "summary": task_summary, "diff": task_diff or ""})
+            knowledge = update_knowledge_from_run(
+                knowledge,
+                config.goal,
+                [task],
+                all_diffs[-1:],
+                repo_root,
+                append_run_record=False,
+            )
+            save_knowledge(knowledge, repo_root)
+            _persist_bridge_progress(
+                repo_root,
+                config.goal,
+                config,
+                knowledge,
+                tasks,
+                completed_ids,
+                resumed_completed_ids,
+                skipped,
+                all_diffs,
+                round(time.monotonic() - run_start, 1),
+                "running",
+                None,
+            )
 
         clear_checkpoint(repo_root)
         elapsed = round(time.monotonic() - run_start, 1)
@@ -1279,6 +1489,21 @@ def main() -> int:
         except OSError:
             pass
 
+        _persist_bridge_progress(
+            repo_root,
+            config.goal,
+            config,
+            knowledge,
+            tasks,
+            completed_ids,
+            resumed_completed_ids,
+            skipped,
+            all_diffs,
+            elapsed,
+            "success",
+            None,
+        )
+
         print(json.dumps(summary))
         logger.info(
             "Bridge run completed — %s task(s) executed, %s skipped, %.1fs total",
@@ -1288,6 +1513,9 @@ def main() -> int:
 
     except Exception as ex:
         elapsed = round(time.monotonic() - run_start, 1)
+        if failed_task_id is None and tasks:
+            pending_tasks = [task.id for task in tasks if task.id not in completed_ids]
+            failed_task_id = pending_tasks[0] if pending_tasks else None
         logger.exception("Bridge run failed after %.1fs: %s", elapsed, ex)
         if rollback_sha:
             logger.warning("To undo all changes made during this run:  git reset --hard %s", rollback_sha)
@@ -1300,6 +1528,59 @@ def main() -> int:
             )
         except OSError:
             pass
+
+        if tasks:
+            knowledge = update_knowledge_from_run(
+                knowledge,
+                config.goal,
+                [task for task in tasks if task.id in completed_ids],
+                all_diffs,
+                repo_root,
+                append_run_record=True,
+                run_status="failure",
+                tasks_completed_override=len(completed_ids),
+            )
+            save_knowledge(knowledge, repo_root)
+            _persist_bridge_progress(
+                repo_root,
+                config.goal,
+                config,
+                knowledge,
+                tasks,
+                completed_ids,
+                resumed_completed_ids,
+                skipped,
+                all_diffs,
+                elapsed,
+                "failure",
+                failed_task_id,
+            )
+
+            _explicit_session_tokens = int(args.session_tokens)
+            if _explicit_session_tokens > 0:
+                token_tracker.record_session_tokens(_explicit_session_tokens, is_estimate=False)
+            else:
+                _estimated = estimate_session_tokens(
+                    idea_file,
+                    Path(args.plan_file).resolve() if args.plan_file else None,
+                    repo_root,
+                    tasks,
+                )
+                token_tracker.record_session_tokens(_estimated, is_estimate=True)
+
+            failure_token_report = token_tracker.build_session_report(
+                goal=config.goal,
+                repo_root=repo_root,
+                supervisor_command=config.supervisor_command,
+                tasks_executed=len(completed_ids) - skipped,
+                tasks_skipped=skipped,
+                elapsed_seconds=elapsed,
+            )
+            try:
+                save_session_to_log(failure_token_report, repo_root / "bridge_progress" / "token_log.json")
+            except Exception as token_ex:
+                logger.warning("Could not save token log after failure: %s", token_ex)
+
         print(json.dumps(failure_summary))
         return 1
 
