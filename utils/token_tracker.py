@@ -128,11 +128,21 @@ class TokenTracker:
         snap = self.snapshot()
         total_supervisor = snap["total"]
 
-        # What Claude would have spent without the bridge
+        # What the AI would have spent without the bridge.
+        #
+        # Baseline = planning cost + (per-task direct-coding cost).
+        # Planning cost is whichever is larger: subprocess plan tokens (supervised
+        # mode) or session tokens (interactive mode where the AI IS the planner).
+        # This prevents the "100% savings" illusion where session tokens are
+        # ignored and the baseline collapses to zero.
         plan_tokens = snap["plan_in"] + snap["plan_out"]
-        estimated_direct = plan_tokens + (tasks_executed * _DIRECT_TOKENS_PER_TASK)
+        session_tokens = snap["session_tokens"]
+        baseline_planning = max(plan_tokens, session_tokens)
+        estimated_direct = baseline_planning + (tasks_executed * _DIRECT_TOKENS_PER_TASK)
 
-        tokens_saved = max(0, estimated_direct - total_supervisor)
+        # Actual cost = everything charged to the AI account this session
+        total_ai = total_supervisor + session_tokens
+        tokens_saved = max(0, estimated_direct - total_ai)
         savings_pct = (
             round(tokens_saved / estimated_direct * 100, 1)
             if estimated_direct > 0 else 0.0
