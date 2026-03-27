@@ -390,6 +390,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume a previous run using the saved plan in bridge_progress/improvement_plan.json. "
+            "Tasks already marked complete in bridge_progress/task_metrics.json are skipped. "
+            "Equivalent to --plan-file bridge_progress/improvement_plan.json --auto-approve."
+        ),
+    )
     return parser
 
 
@@ -1194,6 +1203,30 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     logger = configure_logging(repo_root / "logs", args.log_level)
     logger.info("Bridge starting — repo: %s", repo_root)
+
+    # --resume: shorthand for --plan-file <saved plan> --auto-approve
+    if args.resume:
+        _saved_plan = repo_root / "bridge_progress" / "improvement_plan.json"
+        if not _saved_plan.exists():
+            logger.error(
+                "--resume requires bridge_progress/improvement_plan.json to exist. "
+                "Run without --resume first to generate a plan."
+            )
+            sys.exit(1)
+        if not args.plan_file:
+            args.plan_file = str(_saved_plan)
+            logger.info("--resume: using saved plan %s", _saved_plan)
+        args.auto_approve = True
+        logger.info("--resume: auto-approve enabled, skipping already-completed tasks via checkpoint")
+
+    # Warn early if no aider model is set — prevents silently falling back to
+    # Aider's default (GPT-4o) which requires an OpenAI API key.
+    if not args.aider_model and not os.getenv("BRIDGE_AIDER_MODEL"):
+        logger.warning(
+            "No --aider-model set and BRIDGE_AIDER_MODEL env var is not set. "
+            "Aider will use its default model (usually GPT-4o) which requires an OpenAI API key. "
+            "For local/free inference use e.g. --aider-model ollama/qwen2.5-coder:7b"
+        )
 
     idea_loader = IdeaLoader()
     idea_file: Optional[Path] = Path(args.idea_file).resolve() if args.idea_file else None

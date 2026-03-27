@@ -70,14 +70,43 @@ class AiderRunner:
         """Record the SHA-256 of every target file before Aider runs."""
         return {str(p): self._hash_file(p) for p in file_paths}
 
+    @staticmethod
+    def _is_trivial_change(before_content: Optional[bytes], after_content: Optional[bytes]) -> bool:
+        """Return True if the only change between two file versions is whitespace/comments.
+
+        Small local models (e.g. qwen2.5-coder:7b) sometimes touch whitespace or
+        add a blank line, changing the file hash while leaving the logic unchanged.
+        We normalise both versions (strip blank lines + C-style line comments) and
+        compare — if the stripped versions are identical, the change is trivial.
+        """
+        if before_content is None or after_content is None:
+            return False
+        import re as _re
+
+        def _strip(src: bytes) -> bytes:
+            text = src.decode("utf-8", errors="replace")
+            # Remove single-line // comments and blank lines
+            lines = [
+                _re.sub(r"\s*//.*$", "", line)
+                for line in text.splitlines()
+            ]
+            return "\n".join(l for l in lines if l.strip()).encode()
+
+        return _strip(before_content) == _strip(after_content)
+
     def _check_for_silent_failure(
         self,
         task_id: int,
         task_type: str,
         file_paths: list[Path],
         before: dict[str, Optional[str]],
+        before_contents: Optional[dict[str, Optional[bytes]]] = None,
     ) -> Optional[str]:
-        """Return an error message if Aider reported success but changed nothing.
+        """Return an error message if Aider reported success but changed nothing meaningful.
+
+        Two levels of detection:
+          1. Hash unchanged  → file not touched at all.
+          2. Trivial change  → only whitespace/comments changed (local model trick).
 
         Checks create/modify tasks for real content changes and delete tasks for
         actual removal. validate tasks may legitimately leave file content unchanged.
@@ -100,27 +129,51 @@ class AiderRunner:
             return None
 
         unchanged: list[str] = []
+        trivial: list[str] = []
+
         for path in file_paths:
             key = str(path)
-            after = self._hash_file(path)
-            pre = before.get(key)
-            if pre == after:
+            after_hash = self._hash_file(path)
+            pre_hash = before.get(key)
+
+            if pre_hash == after_hash:
                 # File did not exist before and still does not → expected for
                 # tasks that Aider handles via a different mechanism; skip.
-                if pre is None and not path.exists():
+                if pre_hash is None and not path.exists():
                     continue
                 unchanged.append(path.name)
+                continue
 
+            # Hash changed — check if it's only a trivial whitespace/comment edit
+            if before_contents is not None:
+                pre_bytes = before_contents.get(key)
+                try:
+                    after_bytes = path.read_bytes() if path.exists() else None
+                except OSError:
+                    after_bytes = None
+                if self._is_trivial_change(pre_bytes, after_bytes):
+                    trivial.append(path.name)
+
+        problems: list[str] = []
         if unchanged:
             self._logger.warning(
                 "Task %s: Aider exited 0 but these file(s) are unchanged: %s",
                 task_id, ", ".join(unchanged),
             )
-            return (
+            problems.append(
                 f"Aider reported success but did not modify: {', '.join(unchanged)}. "
                 "Implement the task completely — do not skip or stub."
             )
-        return None
+        if trivial:
+            self._logger.warning(
+                "Task %s: Aider made only whitespace/comment changes to: %s",
+                task_id, ", ".join(trivial),
+            )
+            problems.append(
+                f"Aider only changed whitespace or comments in: {', '.join(trivial)}. "
+                "Implement the actual logic changes required — do not just reformat."
+            )
+        return "\n".join(problems) if problems else None
 
     def run(
         self,
@@ -140,8 +193,12 @@ class AiderRunner:
                 command=[self._command],
             )
 
-        # Snapshot file hashes before Aider runs so we can detect silent failures.
+        # Snapshot file hashes AND raw bytes before Aider runs.
+        # Bytes are needed for the trivial-change detector (whitespace-only edits).
         pre_hashes = self._snapshot_hashes(file_paths)
+        pre_contents: dict[str, Optional[bytes]] = {
+            str(p): (p.read_bytes() if p.exists() else None) for p in file_paths
+        }
 
         self._logger.debug("Running Aider: %s", arguments)
 
@@ -183,10 +240,10 @@ class AiderRunner:
                 command=arguments,
             )
 
-        # YourStore suggestion 2: detect silent failure — Aider exits 0 but
-        # never actually writes the target files.
+        # Detect silent failure — Aider exits 0 but never actually writes the
+        # target files, or only makes trivial whitespace/comment changes.
         silent_failure_msg = self._check_for_silent_failure(
-            task.id, task.type, file_paths, pre_hashes
+            task.id, task.type, file_paths, pre_hashes, pre_contents
         )
         if silent_failure_msg and result.returncode == 0:
             return ExecutionResult(
