@@ -232,7 +232,7 @@ class AiderRunner:
             "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--message",
-            self._build_message(task, aider_context),
+            self._build_message(task, aider_context, file_paths),
         ])
 
         if self._no_map:
@@ -259,9 +259,18 @@ class AiderRunner:
     # ── Message template (Feature 1) ─────────────────────────────────────────
 
     def _build_message(
-        self, task: Task, ctx: Optional[AiderContext]
+        self,
+        task: Task,
+        ctx: Optional[AiderContext],
+        file_paths: Optional[list[Path]] = None,
     ) -> str:
-        """Build a structured prompt that gives Aider full project context."""
+        """Build a structured prompt that gives Aider full project context.
+
+        file_paths are injected as an explicit TARGET FILES section so small
+        local models (e.g. qwen2.5-coder:7b) that ignore --file CLI flags
+        still know exactly which absolute paths to edit and never create
+        stray files at the repo root.
+        """
         sections: list[str] = []
 
         if ctx:
@@ -284,10 +293,21 @@ class AiderRunner:
         else:
             sections.append(task.instruction)
 
+        # ── TARGET FILES (path-enforcement for local models) ──────────────────
+        # Always list absolute paths explicitly so the model cannot guess wrong.
+        if file_paths:
+            path_lines = "\n".join(f"  {p.resolve()}" for p in file_paths)
+            sections.append(
+                f"TARGET FILES — edit ONLY these exact paths, nothing else:\n{path_lines}"
+            )
+
         # Rules — prevent the most common Aider failure modes
         rules: list[str] = [
             "RULES",
-            "  - Only write to the task files listed — do not create extra files",
+            "  - CRITICAL: edit only the TARGET FILES listed above — do NOT create"
+            " new files or write to any other path",
+            "  - CRITICAL: use the exact absolute path shown — do not change the"
+            " filename, directory, or extension",
             "  - Do not ask questions or request clarification — implement directly",
             "  - Do not write TODO/stub placeholders — write complete working code",
             "  - Do not remove existing unrelated code",
