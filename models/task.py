@@ -131,3 +131,4 @@ class BridgeConfig:
     supervisor_mode: str = "external"  # external | auto | manual
     manual_review_poll_seconds: int = 2
     workflow_profile: str = "standard"  # standard | micro
+    skip_onboarding_scan: bool = False  # skip one-time source scan on first use

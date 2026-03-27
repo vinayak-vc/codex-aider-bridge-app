@@ -171,6 +171,8 @@ def to_context_text(knowledge: dict) -> str:
     ptype = proj.get("type", "")
     type_str = f" ({ptype}/{lang})" if ptype and lang else f" ({lang or ptype})" if (lang or ptype) else ""
     lines.append(f"PROJECT: {name}{type_str}")
+    if proj.get("scanned"):
+        lines.append("(roles inferred by static scan — not task-authored)")
 
     summary = proj.get("summary", "")
     if summary:

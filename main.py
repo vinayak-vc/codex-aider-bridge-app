@@ -351,6 +351,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--skip-onboarding-scan",
+        action="store_true",
+        help=(
+            "Skip the one-time source scan performed on the first run against an "
+            "existing project. The scan reads source files to pre-populate project "
+            "knowledge so the supervisor generates a better first plan. Use this flag "
+            "to bypass it (e.g. when knowledge already exists or for faster CI runs)."
+        ),
+    )
+    parser.add_argument(
         "--session-tokens",
         type=int,
         default=0,
@@ -1246,6 +1256,7 @@ def main() -> int:
         supervisor_mode=_supervisor_mode,
         manual_review_poll_seconds=max(1, int(args.manual_review_poll_seconds)),
         workflow_profile=str(args.workflow_profile),
+        skip_onboarding_scan=bool(args.skip_onboarding_scan),
     )
 
     run_preflight_checks(config, logger)
@@ -1259,6 +1270,24 @@ def main() -> int:
 
     # Load project knowledge so every AI session starts with full project context.
     knowledge = load_knowledge(repo_root)
+
+    # Onboarding scan: run once on first use against an existing project to
+    # pre-populate file roles so the supervisor generates an accurate plan
+    # from the very first run (instead of guessing from file names only).
+    if not knowledge.get("files") and not config.skip_onboarding_scan:
+        try:
+            from utils.onboarding_scanner import OnboardingScanner  # lazy import
+            knowledge = OnboardingScanner(repo_root, logger).run(knowledge)
+            save_knowledge(knowledge, repo_root)
+            logger.info(
+                "Onboarding scan complete: %d files registered, type=%s, language=%s",
+                len(knowledge["files"]),
+                knowledge["project"].get("type", "unknown"),
+                knowledge["project"].get("language", "unknown"),
+            )
+        except Exception as _scan_err:
+            logger.warning("Onboarding scan failed (continuing without): %s", _scan_err)
+
     knowledge_context = to_context_text(knowledge)
     if knowledge.get("files"):
         logger.info(
