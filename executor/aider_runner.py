@@ -137,9 +137,12 @@ class AiderRunner:
             pre_hash = before.get(key)
 
             if pre_hash == after_hash:
-                # File did not exist before and still does not → expected for
-                # tasks that Aider handles via a different mechanism; skip.
+                # For CREATE tasks: file didn't exist before AND still doesn't →
+                # that means Aider never created it — this IS a failure, not a skip.
                 if pre_hash is None and not path.exists():
+                    if task_type == "create":
+                        unchanged.append(path.name)
+                    # For modify/validate: file simply wasn't touched → skip
                     continue
                 unchanged.append(path.name)
                 continue
