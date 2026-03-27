@@ -132,15 +132,15 @@ class TokenTracker:
         plan_tokens = snap["plan_in"] + snap["plan_out"]
         estimated_direct = plan_tokens + (tasks_executed * _DIRECT_TOKENS_PER_TASK)
 
+        # Total tokens charged to the AI account this session:
+        #   subprocess supervisor calls (plan/review) + interactive session work
+        total_ai_tokens = total_supervisor + snap["session_tokens"]
+
         tokens_saved = max(0, estimated_direct - total_ai_tokens)
         savings_pct = (
             round(tokens_saved / estimated_direct * 100, 1)
             if estimated_direct > 0 else 0.0
         )
-
-        # Total tokens charged to the AI account this session:
-        #   subprocess supervisor calls (plan/review) + interactive session work
-        total_ai_tokens = total_supervisor + snap["session_tokens"]
 
         return {
             "session_id": str(uuid.uuid4()),
