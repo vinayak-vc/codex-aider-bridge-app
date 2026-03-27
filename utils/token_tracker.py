@@ -140,17 +140,15 @@ class TokenTracker:
         baseline_planning = max(plan_tokens, session_tokens)
         estimated_direct = baseline_planning + (tasks_executed * _DIRECT_TOKENS_PER_TASK)
 
-        # Actual cost = everything charged to the AI account this session
-        total_ai = total_supervisor + session_tokens
-        tokens_saved = max(0, estimated_direct - total_ai)
+        # Total tokens charged to the AI account this session:
+        #   subprocess supervisor calls (plan/review) + interactive session work
+        total_ai_tokens = total_supervisor + session_tokens
+
+        tokens_saved = max(0, estimated_direct - total_ai_tokens)
         savings_pct = (
             round(tokens_saved / estimated_direct * 100, 1)
             if estimated_direct > 0 else 0.0
         )
-
-        # Total tokens charged to the AI account this session:
-        #   subprocess supervisor calls (plan/review) + interactive session work
-        total_ai_tokens = total_supervisor + snap["session_tokens"]
 
         return {
             "session_id": str(uuid.uuid4()),
@@ -189,7 +187,8 @@ class TokenTracker:
                 "note": (
                     f"Without bridge: plan ({plan_tokens} tokens) + "
                     f"{tasks_executed} tasks × {_DIRECT_TOKENS_PER_TASK} "
-                    f"direct-coding tokens = {estimated_direct}"
+                    f"direct-coding tokens = {estimated_direct}; "
+                    f"compared against total AI tokens {total_ai_tokens}"
                 ),
             },
             "elapsed_seconds": round(elapsed_seconds, 1),

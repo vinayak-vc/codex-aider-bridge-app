@@ -89,6 +89,10 @@ class MechanicalValidator:
         if not existence.succeeded:
             return existence
 
+        assertions = self._check_task_assertions(task)
+        if not assertions.succeeded:
+            return assertions
+
         syntax = self._check_syntax(task.id, file_paths)
         if not syntax.succeeded:
             return syntax
@@ -108,11 +112,29 @@ class MechanicalValidator:
     # ── File existence ────────────────────────────────────────────────────────
 
     def _check_file_existence(self, task: Task, file_paths: list[Path]) -> ValidationResult:
-        if task.type not in {"create", "modify"} or not file_paths:
+        if task.type not in {"create", "modify", "delete"} or not file_paths:
             return ValidationResult(
                 task_id=task.id,
                 succeeded=True,
                 message="File existence check skipped.",
+                stdout="",
+                stderr="",
+            )
+
+        if task.type == "delete":
+            remaining = [str(p) for p in file_paths if p.exists()]
+            if remaining:
+                return ValidationResult(
+                    task_id=task.id,
+                    succeeded=False,
+                    message=f"Expected files were not deleted: {remaining}",
+                    stdout="",
+                    stderr="",
+                )
+            return ValidationResult(
+                task_id=task.id,
+                succeeded=True,
+                message="Delete task removed the expected files.",
                 stdout="",
                 stderr="",
             )
@@ -131,6 +153,44 @@ class MechanicalValidator:
             task_id=task.id,
             succeeded=True,
             message="All expected files exist.",
+            stdout="",
+            stderr="",
+        )
+
+    def _check_task_assertions(self, task: Task) -> ValidationResult:
+        missing_required: list[str] = []
+        unexpected_existing: list[str] = []
+
+        for relative_path in task.must_exist:
+            if not (self._repo_root / relative_path).exists():
+                missing_required.append(relative_path)
+
+        for relative_path in task.must_not_exist:
+            if (self._repo_root / relative_path).exists():
+                unexpected_existing.append(relative_path)
+
+        if missing_required or unexpected_existing:
+            message_parts: list[str] = []
+            if missing_required:
+                message_parts.append(
+                    f"Required outputs missing: {', '.join(missing_required)}"
+                )
+            if unexpected_existing:
+                message_parts.append(
+                    f"Unexpected files still exist: {', '.join(unexpected_existing)}"
+                )
+            return ValidationResult(
+                task_id=task.id,
+                succeeded=False,
+                message="; ".join(message_parts),
+                stdout="",
+                stderr="",
+            )
+
+        return ValidationResult(
+            task_id=task.id,
+            succeeded=True,
+            message="Task assertions passed.",
             stdout="",
             stderr="",
         )

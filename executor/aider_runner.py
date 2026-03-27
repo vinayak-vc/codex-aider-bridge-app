@@ -79,9 +79,23 @@ class AiderRunner:
     ) -> Optional[str]:
         """Return an error message if Aider reported success but changed nothing.
 
-        Only checks create/modify tasks — validate/delete tasks may legitimately
-        leave file content unchanged.
+        Checks create/modify tasks for real content changes and delete tasks for
+        actual removal. validate tasks may legitimately leave file content unchanged.
         """
+        if task_type == "delete":
+            undeleted: list[str] = [path.name for path in file_paths if path.exists()]
+            if undeleted:
+                self._logger.warning(
+                    "Task %s: delete task left files on disk: %s",
+                    task_id,
+                    ", ".join(undeleted),
+                )
+                return (
+                    f"Delete task did not remove: {', '.join(undeleted)}. "
+                    "Delete the specified files instead of editing or documenting them."
+                )
+            return None
+
         if task_type not in {"create", "modify"}:
             return None
 

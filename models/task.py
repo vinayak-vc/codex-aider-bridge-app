@@ -13,6 +13,8 @@ class Task:
     type: str
     # Feature 4: read-only reference files Aider may consult but will not modify.
     context_files: list[str] = field(default_factory=list)
+    must_exist: list[str] = field(default_factory=list)
+    must_not_exist: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,7 @@ class ReviewResult:
     verdict: str
     new_instruction: Optional[str]
     message: str
+    sub_tasks: list[SubTask] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -125,3 +128,6 @@ class BridgeConfig:
     aider_no_map: bool = False
     auto_approve: bool = False  # skip supervisor review; use mechanical validation only
     auto_split_threshold: int = 0  # 0 = disabled; N = split tasks with N+ files into single-file sub-tasks
+    supervisor_mode: str = "external"  # external | auto | manual
+    manual_review_poll_seconds: int = 2
+    workflow_profile: str = "standard"  # standard | micro

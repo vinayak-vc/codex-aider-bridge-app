@@ -345,17 +345,32 @@ tr:hover td{background:rgba(255,255,255,.02)}
         </div>
 
         <!-- Supervisor -->
-        <div class="form-group">
-          <label>Supervisor Agent</label>
-          <div class="supervisor-row">
-            <button class="sup-btn active" id="sup-codex" onclick="setSupervisor('codex')">🤖 Codex</button>
-            <button class="sup-btn" id="sup-claude" onclick="setSupervisor('claude')">🤖 Claude</button>
-            <button class="sup-btn" id="sup-custom" onclick="setSupervisor('custom')">⚙ Custom</button>
+          <div class="form-group">
+            <label>Supervisor Agent</label>
+            <div class="supervisor-row">
+              <button class="sup-btn active" id="sup-codex" onclick="setSupervisor('codex')">🤖 Codex</button>
+              <button class="sup-btn" id="sup-claude" onclick="setSupervisor('claude')">🤖 Claude</button>
+              <button class="sup-btn" id="sup-manual" onclick="setSupervisor('manual')">🧭 Manual</button>
+              <button class="sup-btn" id="sup-custom" onclick="setSupervisor('custom')">⚙ Custom</button>
+            </div>
+            <div id="custom-cmd-wrap" style="display:none;margin-top:6px">
+              <input type="text" id="f-supervisor-command" placeholder="e.g. my-agent --print">
+            </div>
+            <div style="margin-top:6px;font-size:12px;color:var(--muted)" id="manual-supervisor-hint">
+              Manual mode keeps supervision inside the current agent session. The bridge writes review request JSON files and waits for decision JSON files instead of spawning another AI CLI.
+            </div>
           </div>
-          <div id="custom-cmd-wrap" style="display:none;margin-top:6px">
-            <input type="text" id="f-supervisor-command" placeholder="e.g. my-agent --print">
+
+          <div class="form-group">
+            <label for="f-workflow-profile">Workflow Profile</label>
+            <select id="f-workflow-profile">
+              <option value="standard">Standard</option>
+              <option value="micro">Micro-task / high-accuracy</option>
+            </select>
+            <div style="margin-top:6px;font-size:12px;color:var(--muted)">
+              Micro-task mode forces one-file atomic tasks, requires assertions, enables manual supervision, and is optimized for local Aider with low token use.
+            </div>
           </div>
-        </div>
 
         <!-- Advanced options -->
         <button class="advanced-toggle" onclick="toggleAdvanced()">
@@ -577,6 +592,7 @@ let taskCards = {};
 const SUPERVISOR_COMMANDS = {
   codex:  'codex.cmd exec --skip-git-repo-check --color never',
   claude: 'claude --print',
+  manual: '',
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────
@@ -626,7 +642,8 @@ async function loadSettings() {
     if (s.max_plan_attempts)  document.getElementById('f-max-plan').value = s.max_plan_attempts;
     if (s.max_task_retries !== undefined) document.getElementById('f-max-retry').value = s.max_task_retries;
     if (s.dry_run)            document.getElementById('f-dry-run').checked = s.dry_run;
-    setSupervisor(s.supervisor || 'codex', s.supervisor_command);
+    if (s.workflow_profile)   document.getElementById('f-workflow-profile').value = s.workflow_profile;
+    setSupervisor(s.supervisor || (s.manual_supervisor ? 'manual' : 'codex'), s.supervisor_command);
     // Model selection restored after models are loaded
     window._savedModel = s.aider_model;
   } catch(_) {}
@@ -643,6 +660,9 @@ function gatherSettings() {
     aider_model:        document.getElementById('f-model').value.trim(),
     supervisor:         currentSupervisor,
     supervisor_command: supervisorCmd,
+    manual_supervisor:  currentSupervisor === 'manual',
+    manual_review_poll_seconds: 2,
+    workflow_profile:   document.getElementById('f-workflow-profile').value,
     validation_command: document.getElementById('f-validation').value.trim(),
     max_plan_attempts:  parseInt(document.getElementById('f-max-plan').value) || 3,
     max_task_retries:   parseInt(document.getElementById('f-max-retry').value) || 2,
@@ -655,13 +675,17 @@ function gatherSettings() {
 // ── Supervisor selector ───────────────────────────────────────────────────
 function setSupervisor(name, customCmd) {
   currentSupervisor = name;
-  ['codex','claude','custom'].forEach(n => {
+  ['codex','claude','manual','custom'].forEach(n => {
     document.getElementById('sup-' + n).classList.toggle('active', n === name);
   });
   const customWrap = document.getElementById('custom-cmd-wrap');
   customWrap.style.display = name === 'custom' ? 'block' : 'none';
+  document.getElementById('manual-supervisor-hint').style.display = name === 'manual' ? 'block' : 'none';
   if (name === 'custom' && customCmd) {
     document.getElementById('f-supervisor-command').value = customCmd;
+  }
+  if (name === 'manual') {
+    document.getElementById('f-workflow-profile').value = 'micro';
   }
 }
 
@@ -998,7 +1022,8 @@ async function toggleCommandPreview() {
     const parts = ['python main.py', JSON.stringify(settings.goal)];
     if (settings.repo_root)          parts.push('--repo-root ' + JSON.stringify(settings.repo_root));
     if (settings.aider_model)        parts.push('--aider-model ' + settings.aider_model);
-    if (settings.supervisor_command) parts.push('--supervisor-command ' + JSON.stringify(settings.supervisor_command));
+    if (settings.manual_supervisor)  parts.push('--manual-supervisor');
+    else if (settings.supervisor_command) parts.push('--supervisor-command ' + JSON.stringify(settings.supervisor_command));
     if (settings.dry_run)            parts.push('--dry-run');
     el.textContent = parts.join(' ');
   }
@@ -1027,6 +1052,10 @@ function handleEvent(evt) {
       break;
     case 'task_update':
       updateTaskCard(evt.task);
+      break;
+    case 'review_required':
+      setBanner('running', `⏸ Waiting for manual review on task ${evt.task_id}`);
+      toast(`Manual review required for task ${evt.task_id}`, 'info');
       break;
     case 'log':
       appendLog(evt.line);
@@ -1093,7 +1122,7 @@ function updateTaskCard(task) {
   const files = (task.files || []).map(f => `<span class="file-tag">${f}</span>`).join('');
   const instr = task.instruction ? `<div class="task-instruction">${escHtml(task.instruction)}</div>` : '';
   const reworks = (task.reworks || []).map(r =>
-    `<div class="rework-block"><div class="rework-label">↻ Supervisor rework instruction:</div>${escHtml(r)}</div>`
+    `<div class="rework-block"><div class="rework-label">↻ Review instruction:</div>${escHtml(r)}</div>`
   ).join('');
 
   const html = `
@@ -1201,7 +1230,8 @@ async function reRun(id) {
   if (entry.goal)               document.getElementById('f-goal').value = entry.goal;
   if (entry.repo_root)          document.getElementById('f-repo').value = entry.repo_root;
   if (entry.aider_model)        setModel(entry.aider_model);
-  if (entry.supervisor_command) setSupervisor(entry.supervisor || 'custom', entry.supervisor_command);
+  if (entry.supervisor === 'manual') setSupervisor('manual', '');
+  else if (entry.supervisor_command) setSupervisor(entry.supervisor || 'custom', entry.supervisor_command);
   switchTab('run');
   toast('Settings restored — review and click Run.', 'info');
 }

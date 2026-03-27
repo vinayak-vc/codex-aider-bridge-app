@@ -87,6 +87,8 @@ class TaskParser:
         instruction: Any = item.get("instruction")
         task_type: Any = item.get("type")
         context_files: Any = item.get("context_files", [])
+        must_exist: Any = item.get("must_exist", [])
+        must_not_exist: Any = item.get("must_not_exist", [])
 
         # Fix #5: coerce string IDs like "1" or "task-1" to int where possible.
         if not isinstance(task_id, int):
@@ -109,10 +111,10 @@ class TaskParser:
             raise PlanParseError(f"Task {task_id} contains an invalid file path.")
         if not isinstance(instruction, str) or not instruction.strip():
             raise PlanParseError(f"Task {task_id} must include a non-empty 'instruction'.")
-        if not isinstance(task_type, str) or task_type not in {"create", "modify", "validate"}:
+        if not isinstance(task_type, str) or task_type not in {"create", "modify", "delete", "validate"}:
             raise PlanParseError(
                 f"Task {task_id} has an unsupported type {task_type!r}. "
-                "Must be one of: create, modify, validate."
+                "Must be one of: create, modify, delete, validate."
             )
 
         normalized_files = [fp.strip() for fp in files]
@@ -155,10 +157,45 @@ class TaskParser:
                     )
                 normalized_context_files.append(cf)
 
+        normalized_must_exist = self._normalize_relative_paths(
+            task_id, must_exist, "must_exist"
+        )
+        normalized_must_not_exist = self._normalize_relative_paths(
+            task_id, must_not_exist, "must_not_exist"
+        )
+
         return Task(
             id=task_id,
             files=normalized_files,
             instruction=normalized_instruction,
             type=task_type,
             context_files=normalized_context_files,
+            must_exist=normalized_must_exist,
+            must_not_exist=normalized_must_not_exist,
         )
+
+    def _normalize_relative_paths(
+        self,
+        task_id: int,
+        raw_paths: Any,
+        field_name: str,
+    ) -> list[str]:
+        normalized: list[str] = []
+        if raw_paths is None:
+            return normalized
+        if not isinstance(raw_paths, list):
+            raise PlanParseError(
+                f"Task {task_id} field {field_name!r} must be an array of relative paths."
+            )
+        for raw_path in raw_paths:
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                raise PlanParseError(
+                    f"Task {task_id} field {field_name!r} contains an invalid path."
+                )
+            file_path = raw_path.strip()
+            if Path(file_path).is_absolute() or ".." in Path(file_path).parts:
+                raise PlanParseError(
+                    f"Task {task_id} field {field_name!r} contains invalid path: {file_path!r}"
+                )
+            normalized.append(file_path)
+        return normalized

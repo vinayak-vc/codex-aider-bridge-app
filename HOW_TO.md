@@ -1,402 +1,293 @@
 # How To Use the Codex Aider Bridge App
-### A plain-English guide — no Python knowledge required
+### Practical guide for manual-supervisor workflow
 
 ---
 
-## Two Ways to Use This App
+## What This Tool Is For
 
-| Method | Best for |
-|---|---|
-| **Web UI** (recommended) | Everyone — point and click, no typing commands |
-| **Command Line** | Advanced users who prefer a terminal |
+This bridge is designed for a three-part workflow:
 
-Jump to the method you want:
-- [Web UI — Setup and Launch](#using-the-web-ui)
-- [Command Line — First Run](#your-first-run-command-line)
+- **You / an agentic AI session** acts as the technical supervisor
+- **Aider** acts as the developer
+- **The bridge** only executes, validates, records, and waits for the next decision
 
----
+It also keeps a persistent memory of the external project under `bridge_progress/` so the supervising AI can resume from structured state instead of rebuilding context manually.
 
-## What Does This Tool Do?
+The recommended mode is:
+- `--manual-supervisor`
+- `--workflow-profile micro`
 
-Imagine you have two AI helpers:
-
-- **The Supervisor** (Codex, Claude, or similar) — a smart planner that reads your project and decides *what* needs to be built, step by step. It also checks the work after each step.
-- **The Developer** (Aider + a local AI model) — a coding assistant that runs on your own computer and actually writes the code, file by file.
-
-This app is the **bridge** between them. You tell it your goal in plain English, and it:
-
-1. Asks the Supervisor to make a task-by-task plan
-2. Sends each task to Aider to write the code
-3. Shows the Supervisor what was changed
-4. Gets a thumbs up (PASS) or correction (REWORK) before moving on
-
-You do not need to write any Python. You only need to type one command.
+That means:
+- the AI writes the plan
+- the bridge does not call another AI CLI
+- Aider performs the file changes
+- the bridge pauses after each task for review
 
 ---
 
-## Before You Start — What You Need to Install
+## The Recommended Flow
 
-You need four things on your computer. Each has a download link and simple installer.
-
----
-
-### 1. Python 3.10 or newer
-
-Python is the language this app is written in. You need it to run the bridge.
-
-**Windows:**
-1. Go to [python.org/downloads](https://www.python.org/downloads/)
-2. Click the big yellow **Download Python** button
-3. Run the installer
-4. **Important:** On the first screen, tick the box that says **"Add Python to PATH"** before clicking Install
-
-**Check it worked** — open a new Command Prompt and type:
-```
-python --version
-```
-You should see something like `Python 3.12.0`
+1. Choose a target project.
+2. Create a brief or goal file if needed.
+3. Have the agentic AI read:
+   - the brief
+   - a file tree of the target repo
+   - any project summary file if available
+4. Have the AI write a plan JSON into:
+   - `<target_repo>/taskJsons/`
+5. Run the bridge against that plan.
+6. Review each task request JSON and write a decision JSON.
+7. Let the bridge continue until done.
 
 ---
 
-### 2. Aider
-
-Aider is the AI coding assistant that writes the actual code.
-
-Open **Command Prompt** (press `Windows key`, type `cmd`, press Enter) and paste:
-```
-pip install aider-chat
-```
-
-Wait for it to finish, then check it worked:
-```
-aider --version
-```
-
----
-
-### 3. A Local AI Model via Ollama
-
-Ollama lets you run AI models on your own computer — no internet required for the coding work, and no per-token cost.
-
-1. Go to [ollama.com](https://ollama.com) and click **Download**
-2. Install it like a normal Windows program
-3. Open Command Prompt and download a coding model:
-
-```
-ollama pull mistral
-```
-
-This downloads the Mistral model (~4 GB). Good alternatives if you want better code quality:
-```
-ollama pull codellama
-ollama pull deepseek-coder
-```
-
-> **Which model should I pick?**
-> - `mistral` — fast, good for most things
-> - `codellama` — designed for coding, slower but more accurate
-> - `deepseek-coder` — excellent for code, recommended if your PC can handle it
-
-**Check Ollama is running** — after installation, Ollama runs quietly in the background. You can see its icon in the system tray (bottom-right of your screen).
-
----
-
-### 4. A Supervisor Agent — Codex or Claude CLI
-
-The Supervisor is the AI that plans your project and reviews the code. You need one of these:
-
-#### Option A — Codex CLI (OpenAI)
-Follow the setup at [github.com/openai/codex](https://github.com/openai/codex). You will need an OpenAI account.
-
-#### Option B — Claude CLI (Anthropic)
-Follow the setup at [claude.ai/download](https://claude.ai/download). You will need an Anthropic account.
-
-You only need one of these. Either works fine.
-
----
-
-### 5. Download This App
-
-1. Go to the project page on GitHub
-2. Click the green **Code** button → **Download ZIP**
-3. Extract the ZIP to a folder, for example: `C:\tools\codex-aider-bridge-app`
-
----
-
----
-
-## Using the Web UI
-
-### Step 1 — Launch the UI
-
-In File Explorer, navigate to the app folder and **double-click `launch_ui.bat`**.
-
-A Command Prompt window opens briefly, then your browser opens automatically at:
-```
-http://127.0.0.1:7823
-```
-
-> If the browser does not open, type that address manually into Chrome, Firefox, or Edge.
-
----
-
-### Step 2 — Check Setup (first time only)
-
-The app opens on the **Setup** tab. It scans your computer for required tools and shows a green tick or a red warning next to each one.
-
-- If **Aider** is missing → click **Install Aider** and watch it install in real time.
-- If **Ollama** is installed but has no models → type a model name (e.g. `mistral`) and click **Pull Model**.
-- If **Python** is missing → see [Install Python](#1-python-310-or-newer) below and re-launch.
-
----
-
-### Step 3 — Run a task
-
-Click the **Run** tab. Fill in:
-
-| Field | What to enter |
-|---|---|
-| **Goal** | Plain-English description of what you want built |
-| **Repo / Project Folder** | Click **Browse** and pick your project folder |
-| **Aider Model** | Choose from the dropdown, or type `ollama/mistral` |
-| **Supervisor Command** | Leave as default (Codex), or change to `claude --print` for Claude |
-
-Click **Start Run**. Watch task cards appear as each step is planned, executed, reviewed, and approved. The live log scrolls below.
-
-Click **Stop** at any time to cancel.
-
----
-
-### Step 4 — Review history
-
-Click the **History** tab to see every run you have ever started. You can:
-- **Re-run** — fills the Run form with the exact same settings
-- **View Log** — see the full output from any past run
-- **Delete** — remove an entry from the list
-
----
-
-## Your First Run (Command Line)
-
-### Step 1 — Open Command Prompt in the app folder
-
-1. Open File Explorer and navigate to where you extracted the app
-2. Click the address bar at the top
-3. Type `cmd` and press Enter
-
-A Command Prompt window will open already inside the right folder.
-
----
-
-### Step 2 — Run the bridge
-
-Type this command, replacing the parts in `< >` with your own values:
-
-```
-python main.py "Your goal here" --repo-root "C:\path\to\your\project" --aider-model ollama/mistral
-```
-
-**Example — building a feature in an existing project:**
-```
-python main.py "Add a user login page" --repo-root "C:\MyProject\website" --aider-model ollama/mistral
-```
-
-**Example — working on a game project with a brief:**
-```
-python main.py "Build the first playable level" --repo-root "C:\MyGame\GameProject" --idea-file "C:\MyGame\GAME_IDEA.md" --aider-model ollama/deepseek-coder
-```
-
-**Example — just see the plan without changing any files (safe preview):**
-```
-python main.py "Refactor the settings page" --repo-root "C:\MyProject" --aider-model ollama/mistral --dry-run
-```
-
-Press Enter and watch it go.
-
----
-
-## What You Will See
-
-The app prints status messages as it works. Here is what they mean:
-
-```
-Bridge starting — repo: C:\MyProject
-```
-The app started and found your project folder.
-
-```
-Requesting plan — attempt 1 of 3
-Supervisor produced 5 task(s)
-```
-The Supervisor read your project and made a 5-step plan.
-
-```
-Task 1 — attempt 1/3 — files: src/login.py
-```
-Aider is now working on task 1, editing the file `src/login.py`.
-
-```
-Task 1: supervisor approved
-```
-The Supervisor looked at what Aider changed and gave it a thumbs up.
-
-```
-Task 1 — supervisor requested rework: Add input validation for the email field
-```
-The Supervisor was not happy and gave Aider a more specific instruction to try again.
-
-```
-{"status": "success", "tasks": 5}
-```
-All 5 tasks are done. Your project has been updated.
-
----
-
-## Common Options Explained Simply
-
-You put these after `python main.py "your goal"`:
-
-| What you type | What it does |
-|---|---|
-| `--repo-root "C:\MyProject"` | Tells the app where your project is |
-| `--aider-model ollama/mistral` | Which local AI model Aider should use |
-| `--idea-file "C:\path\to\brief.md"` | A text file describing your project in detail |
-| `--dry-run` | Shows the plan but does **not** change any files |
-| `--plan-file "myplan.json"` | Use a saved plan instead of asking the Supervisor |
-| `--plan-output-file "plan.json"` | Save the generated plan to a file |
-| `--max-task-retries 3` | How many times to retry a task that fails (default: 2) |
-| `--log-level DEBUG` | Show much more detail — useful if something goes wrong |
-
----
-
-## Using a Project Brief (Recommended for Game / App Projects)
-
-If you have a detailed document describing what you want to build, the Supervisor will use it to make a much better plan.
-
-Create a plain text file called `GAME_IDEA.md` or `PROJECT_BRIEF.md` anywhere on your computer. Write in plain English:
-
-```
-My project is a mobile puzzle game called Stack Pulse.
-The player taps the screen to drop a block onto a stack.
-If the block is aligned perfectly, the stack grows. If not, the edges are trimmed.
-The game ends when the block misses completely.
-Features needed: scoring, combo system, increasing difficulty, a restart button.
-```
-
-Then run:
-```
-python main.py "Build the core gameplay loop" --repo-root "C:\MyGame" --idea-file "C:\MyGame\PROJECT_BRIEF.md" --aider-model ollama/mistral
+## The Plan Format You Should Use
+
+For this bridge, the best plan format is extremely atomic.
+
+### Good plan rules
+
+- One file per task
+- One concern per task
+- Specific instruction
+- Observable post-condition
+- No vague “refactor everything” tasks
+
+### Recommended JSON shape
+
+```json
+{
+  "tasks": [
+    {
+      "id": 1,
+      "files": ["src/app/config.py"],
+      "instruction": "Create the configuration loader for runtime settings.",
+      "type": "create",
+      "must_exist": ["src/app/config.py"],
+      "must_not_exist": []
+    },
+    {
+      "id": 2,
+      "files": ["src/app/main.py"],
+      "instruction": "Update the CLI entry point to load settings from config.py before bootstrapping the app.",
+      "type": "modify",
+      "must_exist": ["src/app/main.py"],
+      "must_not_exist": []
+    }
+  ]
+}
 ```
 
 ---
 
-## Using a Different Supervisor
+## How To Run The Bridge
 
-By default the app uses Codex. To switch to Claude CLI:
+From the bridge repo root:
 
+```powershell
+python main.py "Short goal headline" `
+  --repo-root "D:\ExternalProject" `
+  --plan-file "D:\ExternalProject\taskJsons\plan_001_feature.json" `
+  --workflow-profile micro `
+  --manual-supervisor `
+  --aider-model ollama/qwen2.5-coder:14b
 ```
-python main.py "Add error handling" --repo-root "C:\MyProject" --supervisor-command "claude --print" --aider-model ollama/mistral
-```
+
+### What each flag means
+
+- `--repo-root` points to the external project being edited
+- `--plan-file` gives the prewritten atomic task plan
+- `--workflow-profile micro` enforces high-accuracy one-file tasks
+- `--manual-supervisor` keeps review inside the current AI session
+- `--aider-model` chooses the local coding model
 
 ---
 
-## Saving and Reusing a Plan
+## Where Review Files Appear
 
-To save the plan the Supervisor makes (useful for reviewing or rerunning):
-```
-python main.py "Add a search feature" --repo-root "C:\MyProject" --aider-model ollama/mistral --plan-output-file "search-plan.json"
-```
+During a manual-supervisor run, the bridge creates:
 
-To run again from the saved plan (skips the Supervisor planning step):
-```
-python main.py --plan-file "search-plan.json" --repo-root "C:\MyProject" --aider-model ollama/mistral
-```
+- Requests:
+  - `<target_repo>/bridge_progress/manual_supervisor/requests/`
+- Decisions:
+  - `<target_repo>/bridge_progress/manual_supervisor/decisions/`
+
+It also maintains:
+
+- `<target_repo>/bridge_progress/project_knowledge.json`
+- `<target_repo>/bridge_progress/project_snapshot.json`
+- `<target_repo>/bridge_progress/task_metrics.json`
+- `<target_repo>/bridge_progress/token_log.json`
+- `<target_repo>/bridge_progress/LATEST_REPORT.md`
+- `<target_repo>/bridge_progress/last_run.json`
+
+### Request file contains
+
+- task id
+- task type
+- target files
+- instruction
+- execution result
+- validator result
+- unexpected files
+- git diff
+
+### Knowledge and analytics files contain
+
+- `project_knowledge.json`
+  - what each known file is responsible for
+  - features already completed
+  - run history
+- `project_snapshot.json`
+  - current file tree snapshot
+  - completed and pending task ids
+- `task_metrics.json`
+  - machine-readable per-run task state
+- `token_log.json`
+  - token/savings history
+- `LATEST_REPORT.md`
+  - quick human-readable summary
 
 ---
 
-## Logs
+## How To Approve Or Correct A Task
 
-Every run saves a detailed log to `logs\bridge-app.log` inside your project folder. If something goes wrong, open that file in Notepad to see exactly what happened.
+When a request file appears, read it and write a decision JSON.
+
+### PASS
+
+```json
+{
+  "task_id": 4,
+  "decision": "pass"
+}
+```
+
+### REWORK
+
+```json
+{
+  "task_id": 4,
+  "decision": "rework",
+  "instruction": "In src/app/main.py, fix the CLI parsing so --help works without requiring the runtime-only arguments."
+}
+```
+
+### SUBPLAN
+
+```json
+{
+  "task_id": 4,
+  "decision": "subplan",
+  "sub_tasks": [
+    {
+      "instruction": "In src/app/main.py, repair the syntax error near the top of the file.",
+      "files": ["src/app/main.py"],
+      "type": "modify"
+    }
+  ]
+}
+```
+
+The bridge will archive the processed request and decision files automatically.
+It will also keep updating the knowledge/snapshot/metrics files while the run is in progress.
+
+---
+
+## How To Prepare An Agentic AI For External Projects
+
+If you want to use this bridge with another repo, the supervising AI should follow this checklist:
+
+1. Do not directly edit the target repo.
+2. Read only the minimum context:
+   - brief / goal file
+   - file tree
+   - optional knowledge cache
+3. Generate a plan JSON, not code.
+4. Save the plan under the external repo’s `taskJsons/` directory.
+5. Keep tasks micro-atomic:
+   - one file
+   - one concern
+   - assertions included
+6. Run the bridge in manual-supervisor mode.
+7. Review every task before allowing the next one.
+
+This keeps the agent acting as a technical lead instead of as the coder.
+
+---
+
+## Picking A Local Model
+
+For your bridge workflow:
+
+- Use the biggest coding model your hardware can actually run comfortably.
+- If your GPU is weak, shrink the tasks instead of forcing a huge model.
+
+On smaller hardware, prefer:
+
+- `qwen2.5-coder:14b` if it fits
+- smaller coding models only with very tiny tasks
+
+Avoid large models that barely fit, because slow local coding increases retries and lowers accuracy.
 
 ---
 
 ## Troubleshooting
 
-### The browser did not open / "This site can't be reached"
-The server takes about 2 seconds to start. Wait a moment and refresh. If it still fails, open Command Prompt, go to the app folder, and run:
-```
-python launch_ui.py --no-browser
-```
-Then open `http://127.0.0.1:7823` manually. Read the error message printed in the Command Prompt window.
+### The bridge says manual-supervisor mode requires a plan file
 
-### "python is not recognized"
-You forgot to tick **"Add Python to PATH"** during installation. Re-run the Python installer, choose **Modify**, and tick that option.
+That is expected. In manual mode, the bridge does not ask another AI to plan.
+You must supply `--plan-file`.
 
-### "aider is not recognized"
-Run `pip install aider-chat` again in Command Prompt.
+### Aider created junk files
 
-### "ollama is not recognized"
-Make sure Ollama is installed and its icon is visible in the system tray. Try restarting your computer.
+Most common causes:
 
-### The plan keeps failing / "Supervisor failed to produce a valid plan"
-This means the Supervisor agent could not produce a usable plan after 3 attempts. Options:
-- Add an `--idea-file` brief to give the Supervisor more context
-- Write a plan manually and use `--plan-file` (see the `example plan.json` file in the app folder for the format)
-- Try `--max-plan-attempts 5` to give it more attempts
+- tasks were too large
+- tasks were multi-file
+- no assertions were included
+- local model was too weak
+- auto-approve was used instead of manual review
 
-### Aider is changing the wrong files
-Use `--dry-run` first to inspect the plan and make sure the Supervisor picked the right files before running for real.
+Fix:
 
-### Nothing happens / it hangs
-The Supervisor or Aider is still thinking. Large projects and slow models can take a few minutes per task. Watch the log file for progress or add `--log-level DEBUG` to see more detail in real time.
+- use `--workflow-profile micro`
+- keep one file per task
+- require `must_exist` or `must_not_exist`
+- review every task
 
-### I want to stop it mid-run
-Press `Ctrl + C` in the Command Prompt window. Any files already changed by Aider will remain. Re-run from a `--plan-file` to continue from where you left off.
+### The bridge is waiting forever
 
----
+It is waiting for a decision file.
 
-## Environment Variables (Advanced — Skip If Unsure)
+Check:
 
-If you always use the same settings, you can save them as Windows environment variables so you do not have to type them every time.
+- `<target_repo>/bridge_progress/manual_supervisor/requests/`
+- `<target_repo>/bridge_progress/manual_supervisor/decisions/`
 
-1. Press `Windows key`, search for **"Edit the system environment variables"**, open it
-2. Click **Environment Variables**
-3. Under **User variables**, click **New** and add:
+If a request exists, write the matching decision JSON.
 
-| Variable name | Example value |
-|---|---|
-| `BRIDGE_AIDER_MODEL` | `ollama/mistral` |
-| `BRIDGE_SUPERVISOR_COMMAND` | `codex.cmd exec --skip-git-repo-check --color never` |
-| `BRIDGE_DEFAULT_VALIDATION` | `python -m pytest` |
+### The old knowledge JSON was not generated
 
-After saving, restart Command Prompt. Now you can run just:
-```
-python main.py "Add a search feature" --repo-root "C:\MyProject"
-```
+Current bridge behavior:
+- knowledge and snapshot files are persisted during the run
+- they are also written on failed runs
+
+So if a future run stops midway, you should still have usable state in `bridge_progress/`.
 
 ---
 
-## Quick Reference Card
+## Short Version
 
+```text
+AI reads brief + file tree
+AI writes plan JSON into target_repo/taskJsons/
+Bridge runs one atomic task through Aider
+Bridge writes review request JSON
+Bridge updates project knowledge + analytics files
+AI reviews diff and writes decision JSON
+Bridge continues
+Repeat until done
 ```
-# Web UI (recommended)
-launch_ui.bat                                 Double-click to open browser UI
-python launch_ui.py                           Same, from terminal
-python launch_ui.py --port 8080               Use a different port
 
-# Command line
-python main.py "<your goal>" [options]
-
-Essential options:
-  --repo-root "C:\path\to\project"     Where your project lives
-  --aider-model ollama/mistral          Which local AI model to use
-
-Useful options:
-  --dry-run                             Preview the plan, no file changes
-  --idea-file "C:\path\to\brief.md"    Project description for the Supervisor
-  --plan-output-file "plan.json"        Save the plan to a file
-  --plan-file "plan.json"              Run from a saved plan
-  --max-task-retries 3                  More retries per task
-  --supervisor-command "claude --print" Use Claude instead of Codex
-  --log-level DEBUG                     Show more detail
-```
+That is the intended way to use this bridge on external projects.
