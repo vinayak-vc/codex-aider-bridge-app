@@ -30,6 +30,8 @@ _IGNORE_DIRS: frozenset[str] = frozenset({
     "logs", ".vs", "obj", "bin", "Library", "Temp", "Packages",
     ".idea", ".vscode", "dist", "build", ".mypy_cache", ".pytest_cache",
     ".tox", "coverage", ".eggs", "bridge_progress", "taskJsons",
+    # Claude Code internal dirs (worktrees, settings, plans, etc.)
+    ".claude",
 })
 
 # Only attempt role extraction for these extensions.
