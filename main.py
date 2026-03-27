@@ -592,6 +592,9 @@ _UNEXPECTED_FILE_IGNORE_NAMES: tuple[str, ...] = (
     ".aider.chat.history.md",
     ".aider.input.history",
 )
+# Unity auto-generates a .meta file for every new asset file and every new
+# directory. These are never task outputs; treat them as expected side-effects.
+_UNITY_META_SUFFIX: str = ".meta"
 
 
 def _snapshot_repo_files(repo_root: Path) -> set[str]:
@@ -612,11 +615,20 @@ def _find_unexpected_files(
     before_snapshot: set[str],
     after_snapshot: set[str],
     task: Task,
+    is_unity_project: bool = False,
 ) -> list[str]:
     allowed = {Path(file_path).as_posix() for file_path in task.files}
     allowed.update(Path(file_path).as_posix() for file_path in task.must_exist)
-    unexpected = sorted((after_snapshot - before_snapshot) - allowed)
-    return unexpected
+    new_files = (after_snapshot - before_snapshot) - allowed
+
+    if is_unity_project:
+        # Unity auto-generates .meta files for every new asset and every new
+        # directory. Filter them out — they are expected side-effects, not scope
+        # violations.  Example: creating Foo.cs also creates Foo.cs.meta and
+        # potentially Assets/Scripts.meta if that directory was new.
+        new_files = {f for f in new_files if not f.endswith(_UNITY_META_SUFFIX)}
+
+    return sorted(new_files)
 
 
 def _execute_sub_tasks(
@@ -765,7 +777,10 @@ def execute_task_with_review(
         diff = diff_collector.collect()
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
         repo_after = _snapshot_repo_files(config.repo_root)
-        unexpected_files = _find_unexpected_files(repo_before, repo_after, current_task)
+        unexpected_files = _find_unexpected_files(
+            repo_before, repo_after, current_task,
+            is_unity_project=validator.is_unity_project,
+        )
         if unexpected_files:
             logger.warning(
                 "Task %s: unexpected files created outside task scope: %s",

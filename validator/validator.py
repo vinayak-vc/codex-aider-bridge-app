@@ -1,15 +1,90 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
 from models.task import Task, ValidationResult
+
+# ── Unity MCP ─────────────────────────────────────────────────────────────────
+
+# URL of the Unity MCP HTTP server. Override via UNITY_MCP_URL env var.
+_UNITY_MCP_URL: str = os.getenv("UNITY_MCP_URL", "http://127.0.0.1:8080/mcp")
+_UNITY_MCP_HEALTH_URL: str = _UNITY_MCP_URL.replace("/mcp", "/health")
+
+# Matches Unity compiler error lines, e.g.:
+#   Assets/Scripts/Foo.cs(12,5): error CS0103: ...
+_UNITY_COMPILER_ERROR_RE = re.compile(
+    r"error\s+CS\d+",
+    re.IGNORECASE,
+)
+
+
+def _call_unity_mcp_tool(
+    tool_name: str,
+    arguments: dict,
+    timeout: int = 10,
+) -> Optional[dict]:
+    """Call a Unity MCP tool via HTTP.  Returns the result dict or None on failure.
+
+    Handles both plain JSON and SSE (text/event-stream) response formats.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments},
+    }
+    try:
+        req = urllib.request.Request(
+            _UNITY_MCP_URL,
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            body = resp.read().decode("utf-8", errors="replace")
+
+            if "text/event-stream" in content_type:
+                # SSE format: "data: <json>\n\n"
+                for line in body.splitlines():
+                    if line.startswith("data: "):
+                        chunk = line[6:].strip()
+                        if chunk in ("", "[DONE]"):
+                            continue
+                        parsed = json.loads(chunk)
+                        if "result" in parsed:
+                            return parsed["result"]
+            else:
+                parsed = json.loads(body)
+                if "result" in parsed:
+                    return parsed["result"]
+    except Exception:
+        return None
+    return None
+
+
+def _unity_mcp_available() -> bool:
+    """Return True if the Unity MCP server is reachable and healthy."""
+    try:
+        req = urllib.request.Request(_UNITY_MCP_HEALTH_URL, method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
 
 
 # Maximum seconds the CI gate command is allowed to run before being killed.
@@ -83,6 +158,10 @@ class MechanicalValidator:
         self._logger = logger
         self._project_type = _detect_project_type(repo_root)
         self._logger.info("Validator: detected project type '%s'", self._project_type)
+
+    @property
+    def is_unity_project(self) -> bool:
+        return self._project_type == _ProjectType.UNITY
 
     def validate(self, task: Task, file_paths: list[Path]) -> ValidationResult:
         existence = self._check_file_existence(task, file_paths)
@@ -242,15 +321,103 @@ class MechanicalValidator:
         if not brace_result.succeeded:
             return brace_result
 
-        # Step 3: dotnet build — only for plain C# projects (not Unity).
+        # Step 3a: dotnet build — only for plain C# projects (not Unity).
         # Unity's .csproj files reference Unity DLLs unavailable outside the editor.
         if self._project_type == _ProjectType.CSHARP and shutil.which("dotnet"):
             return self._run_dotnet_build(task_id)
+
+        # Step 3b: Unity — check real compiler output via Unity MCP read_console.
+        # This catches errors that brace-balance and artifact scans miss (wrong
+        # namespace, missing using directives, type mismatches, etc.).
+        if self._project_type == _ProjectType.UNITY:
+            return self._check_unity_compilation(task_id)
 
         return ValidationResult(
             task_id=task_id,
             succeeded=True,
             message="C# syntax checks passed.",
+            stdout="",
+            stderr="",
+        )
+
+    def _check_unity_compilation(self, task_id: int) -> ValidationResult:
+        """Query Unity console for compiler errors via the MCP HTTP server.
+
+        Gracefully degrades: if the MCP server is unreachable (Unity not open),
+        logs a warning and returns success so the bridge run isn't blocked.
+        """
+        if not _unity_mcp_available():
+            self._logger.warning(
+                "Task %s: Unity MCP server unreachable (%s) — "
+                "skipping live compilation check. Open Unity to enable it.",
+                task_id, _UNITY_MCP_HEALTH_URL,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="Unity compilation check skipped (MCP server not reachable).",
+                stdout="",
+                stderr="",
+            )
+
+        self._logger.debug("Task %s: querying Unity console for compiler errors", task_id)
+        result = _call_unity_mcp_tool(
+            "read_console",
+            {"action": "get", "types": ["error"], "count": 30, "format": "plain"},
+        )
+
+        if result is None:
+            self._logger.warning(
+                "Task %s: Unity MCP read_console call failed — skipping compilation check.",
+                task_id,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="Unity compilation check skipped (MCP call failed).",
+                stdout="",
+                stderr="",
+            )
+
+        # Extract compiler errors (CS-prefixed) from the console output.
+        raw_messages: list[str] = []
+        if isinstance(result, dict):
+            # result may be {"content": [{"type":"text","text":"..."}]}
+            for item in result.get("content", []):
+                if isinstance(item, dict) and item.get("type") == "text":
+                    raw_messages.append(item.get("text", ""))
+        elif isinstance(result, str):
+            raw_messages.append(result)
+
+        console_text = "\n".join(raw_messages)
+        compiler_errors = [
+            line.strip()
+            for line in console_text.splitlines()
+            if _UNITY_COMPILER_ERROR_RE.search(line)
+        ]
+
+        if compiler_errors:
+            errors_summary = "\n".join(compiler_errors[:10])
+            self._logger.warning(
+                "Task %s: Unity reported %d compiler error(s):\n%s",
+                task_id, len(compiler_errors), errors_summary,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message=(
+                    f"Unity compiler reported {len(compiler_errors)} error(s). "
+                    "Fix all CS errors before proceeding."
+                ),
+                stdout="",
+                stderr=errors_summary,
+            )
+
+        self._logger.debug("Task %s: Unity compilation — no errors found.", task_id)
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="Unity compilation check passed — no CS errors.",
             stdout="",
             stderr="",
         )
