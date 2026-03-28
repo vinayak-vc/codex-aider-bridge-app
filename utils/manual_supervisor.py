@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -34,9 +35,11 @@ class ManualSupervisorSession:
         self._base_dir = repo_root / "bridge_progress" / "manual_supervisor"
         self._requests_dir = self._base_dir / "requests"
         self._decisions_dir = self._base_dir / "decisions"
+        self._completed_dir = self._base_dir / "completed"
         self._archive_dir = self._base_dir / "archive"
         self._requests_dir.mkdir(parents=True, exist_ok=True)
         self._decisions_dir.mkdir(parents=True, exist_ok=True)
+        self._completed_dir.mkdir(parents=True, exist_ok=True)
         self._archive_dir.mkdir(parents=True, exist_ok=True)
 
     def submit_review_request(
@@ -79,6 +82,101 @@ class ManualSupervisorSession:
         request_path.write_text(json.dumps(request_payload, indent=2), encoding="utf-8")
         self._logger.info("Manual supervisor review requested: %s", request_path)
         return request_path
+
+    def consume_existing_decision(self, task: TaskReport | object) -> Optional[tuple[ReviewResult, dict]]:
+        if not hasattr(task, "id") or not hasattr(task, "files") or not hasattr(task, "instruction"):
+            return None
+
+        task_id = int(getattr(task, "id"))
+        request_path = self._request_path(task_id)
+        decision_path = self._decision_path(task_id)
+
+        if not request_path.exists() or not decision_path.exists():
+            return None
+
+        request_payload = self._read_json_file(request_path, f"manual review request for task {task_id}")
+        decision_payload = self._read_json_file(decision_path, f"manual decision for task {task_id}")
+        if request_payload is None or decision_payload is None:
+            return None
+
+        if not self._request_matches_task(request_payload, task):
+            self._archive_path(request_path, suffix="stale")
+            self._archive_path(decision_path, suffix="stale")
+            self._logger.info(
+                "Archived stale manual review artefacts for task %s because the task payload changed.",
+                task_id,
+            )
+            return None
+
+        review = self._parse_decision(task_id, decision_payload)
+        self._archive_path(decision_path)
+        self._archive_path(request_path)
+        self._logger.info("Recovered existing manual decision for task %s without waiting.", task_id)
+        return review, request_payload
+
+    def record_completed_review(
+        self,
+        task_id: int,
+        instruction: str,
+        files: list[str],
+        file_paths: list[Path],
+        diff: str,
+    ) -> None:
+        payload = {
+            "task_id": task_id,
+            "instruction": instruction,
+            "files": list(files),
+            "diff": diff,
+            "file_fingerprints": [
+                self._build_file_fingerprint(path)
+                for path in file_paths
+            ],
+        }
+        completed_path = self._completed_path(task_id)
+        completed_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._logger.debug("Recorded completed manual review receipt: %s", completed_path)
+
+    def try_resume_completed_task(
+        self,
+        task_id: int,
+        instruction: str,
+        files: list[str],
+        file_paths: list[Path],
+    ) -> Optional[str]:
+        completed_path = self._completed_path(task_id)
+        if not completed_path.exists():
+            return None
+
+        payload = self._read_json_file(completed_path, f"completed review receipt for task {task_id}")
+        if payload is None:
+            return None
+
+        if str(payload.get("instruction", "")) != instruction:
+            self._archive_path(completed_path, suffix="stale")
+            return None
+
+        saved_files = payload.get("files", [])
+        if not isinstance(saved_files, list) or [str(item) for item in saved_files] != list(files):
+            self._archive_path(completed_path, suffix="stale")
+            return None
+
+        saved_fingerprints = payload.get("file_fingerprints", [])
+        if not isinstance(saved_fingerprints, list):
+            self._archive_path(completed_path, suffix="stale")
+            return None
+
+        current_fingerprints = [self._build_file_fingerprint(path) for path in file_paths]
+        if saved_fingerprints != current_fingerprints:
+            self._archive_path(completed_path, suffix="stale")
+            return None
+
+        self._archive_stale_live_review_files(task_id)
+        diff = str(payload.get("diff", ""))
+        self._logger.info(
+            "Recovered completed manual task %s from persisted receipt; skipping duplicate Aider run.",
+            task_id,
+        )
+        return diff
 
     def wait_for_decision(self, task_id: int) -> ReviewResult:
         decision_path = self._decision_path(task_id)
@@ -184,3 +282,60 @@ class ManualSupervisorSession:
 
     def _decision_path(self, task_id: int) -> Path:
         return self._decisions_dir / f"task_{task_id:04d}_decision.json"
+
+    def _completed_path(self, task_id: int) -> Path:
+        return self._completed_dir / f"task_{task_id:04d}_completed.json"
+
+    def _archive_stale_live_review_files(self, task_id: int) -> None:
+        request_path = self._request_path(task_id)
+        decision_path = self._decision_path(task_id)
+        if request_path.exists():
+            self._archive_path(request_path, suffix="stale")
+        if decision_path.exists():
+            self._archive_path(decision_path, suffix="stale")
+
+    def _archive_path(self, path: Path, suffix: Optional[str] = None) -> None:
+        destination_name = path.name if not suffix else f"{path.stem}_{suffix}{path.suffix}"
+        destination = self._archive_dir / destination_name
+        if destination.exists():
+            destination.unlink()
+        path.replace(destination)
+
+    def _read_json_file(self, path: Path, description: str) -> Optional[dict]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as ex:
+            self._logger.warning("Could not read %s from %s: %s", description, path, ex)
+            return None
+
+        if not isinstance(payload, dict):
+            self._logger.warning("%s in %s is not a JSON object.", description, path)
+            return None
+
+        return payload
+
+    def _request_matches_task(self, payload: dict, task: object) -> bool:
+        payload_instruction = str(payload.get("instruction", ""))
+        payload_files = payload.get("files", [])
+        if not isinstance(payload_files, list):
+            return False
+
+        task_instruction = str(getattr(task, "instruction"))
+        task_files = [str(item) for item in getattr(task, "files")]
+        return payload_instruction == task_instruction and [str(item) for item in payload_files] == task_files
+
+    def _build_file_fingerprint(self, path: Path) -> dict:
+        if not path.exists():
+            return {
+                "path": path.as_posix(),
+                "exists": False,
+                "sha256": None,
+            }
+
+        file_bytes = path.read_bytes()
+        return {
+            "path": path.as_posix(),
+            "exists": True,
+            "sha256": hashlib.sha256(file_bytes).hexdigest(),
+            "size": len(file_bytes),
+        }

@@ -71,6 +71,11 @@ Agent session creates plan JSON
        subplan -> execute corrective micro-tasks, then continue
 ```
 
+Manual-supervisor reruns are crash-tolerant:
+- structured stdout events are best-effort only and no longer define task success
+- a passed review writes a completed receipt before UI emission
+- rerunning the same command can consume matching request/decision files or resume an unchanged approved task without invoking Aider again
+
 ---
 
 ## Recommended Workflow
@@ -122,6 +127,8 @@ Important files:
   - review request JSON files
 - `bridge_progress/manual_supervisor/decisions/`
   - supervisor decision JSON files
+- `bridge_progress/manual_supervisor/completed/`
+  - persisted approval receipts used to recover a passed task after a crash
 
 The bridge now updates the project knowledge and snapshot files **during the run**, not only after a perfect success. That means partial progress is still captured if the local model fails midway.
 
@@ -443,7 +450,50 @@ review request and decision JSON files for the active agent session.
 - bridge subprocess supervisor tokens when an external supervisor is used
 - session token estimates when manual-supervisor mode is used
 - estimated direct-coding baseline vs total AI tokens
-- savings across runs
+- weighted savings across runs
+- successful-session savings averages
+- wasted token totals for zero-progress sessions
+- likely waste reasons such as `bridge_stdout_crash`, `model_missing`, and `manual_review_rerun`
+
+### How to read the token totals
+
+- `savings_percent_weighted` is the most accurate all-runs headline metric.
+- `savings_percent_successful_avg` excludes zero-progress sessions.
+- `wasted_tokens_total` counts sessions that spent tokens but completed no tasks.
+- `waste_reason_counts` groups those zero-progress sessions by likely cause.
+
+If a run completes no tasks, its session note now marks it as overhead rather than productive savings.
+
+---
+
+## Known Failure Modes
+
+### Stdout emit crash
+
+Symptoms:
+- `OSError: [Errno 22] Invalid argument`
+- the bridge stops right after a review handoff or task completion event
+
+Recovery:
+- rerun the exact same bridge command
+- keep the same `--plan-file`
+- let checkpointing and `bridge_progress/manual_supervisor/completed/` recover the last approved task
+
+### Missing model
+
+If Aider reports that the configured model is missing, install it and rerun the same command. Those zero-progress runs are now classified as `model_missing` in `token_log.json`.
+
+### Stale request or decision files
+
+If the saved request/decision pair does not match the current task instruction or file list, the bridge archives it as stale automatically. Matching pairs are consumed automatically on rerun.
+
+### Interactive Aider prompts
+
+The bridge already uses non-interactive flags, but some Aider/model combinations still emit confirmation prompts. That output is now treated as an explicit task failure instead of a silent success. Narrow the task and rerun.
+
+### Zero-progress token spikes
+
+Use `wasted_tokens_total` and `waste_reason_counts` in `token_log.json` to separate crash overhead from productive savings.
 
 ---
 

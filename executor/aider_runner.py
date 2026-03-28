@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -21,6 +22,13 @@ _STANDARDS_FILENAMES: list[str] = [
     ".editorconfig",
     "CONTRIBUTING.md",
 ]
+_INTERACTIVE_PROMPT_PATTERNS: tuple[str, ...] = (
+    "add file to the chat",
+    "attempt to fix lint errors",
+    "(y)es/(n)o",
+    "[y/n]",
+    "open docs url",
+)
 
 
 class AiderRunner:
@@ -55,6 +63,7 @@ class AiderRunner:
                 "AiderRunner: auto-injecting standards via --read: %s",
                 [p.name for p in self._standards_files],
             )
+        self._repo_file_index: list[str] = self._build_repo_file_index()
 
     # ── Pre/post hash helpers (YourStore suggestion 2) ───────────────────────
 
@@ -178,6 +187,26 @@ class AiderRunner:
             )
         return "\n".join(problems) if problems else None
 
+    def _detect_interactive_prompt_output(self, stdout: str, stderr: str) -> Optional[str]:
+        combined = "\n".join([stdout, stderr]).lower()
+        matched_patterns: list[str] = []
+        for pattern in _INTERACTIVE_PROMPT_PATTERNS:
+            if pattern in combined:
+                matched_patterns.append(pattern)
+
+        if not matched_patterns:
+            return None
+
+        self._logger.warning(
+            "Aider emitted interactive prompt text during automated run: %s",
+            ", ".join(matched_patterns),
+        )
+        return (
+            "Aider emitted an interactive prompt during a non-interactive bridge run "
+            f"({', '.join(matched_patterns)}). Re-run with a narrower task or adjust the prompt "
+            "so Aider does not request confirmation."
+        )
+
     def run(
         self,
         task: Task,
@@ -259,6 +288,21 @@ class AiderRunner:
                 duration_seconds=round(time.monotonic() - _start, 2),
             )
 
+        interactive_prompt_msg = self._detect_interactive_prompt_output(
+            result.stdout,
+            result.stderr,
+        )
+        if interactive_prompt_msg is not None:
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=result.returncode if result.returncode != 0 else -1,
+                stdout=result.stdout,
+                stderr=interactive_prompt_msg,
+                command=arguments,
+                duration_seconds=round(time.monotonic() - _start, 2),
+            )
+
         return ExecutionResult(
             task_id=task.id,
             succeeded=result.returncode == 0,
@@ -288,6 +332,7 @@ class AiderRunner:
             "--yes-always",
             "--no-pretty",
             "--no-stream",
+            "--no-auto-lint",
             "--no-auto-commits",
             "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
@@ -299,16 +344,33 @@ class AiderRunner:
             arguments.extend(["--map-tokens", "0"])
 
         # Feature 4: task-level context_files via --read (read-only reference).
+        read_only_paths: list[Path] = []
+
         for cf in task.context_files:
             cf_path = self._repo_root / cf
             if cf_path.exists():
-                arguments.extend(["--read", str(cf_path)])
+                read_only_paths.append(cf_path)
             else:
                 self._logger.debug("context_file not found, skipping --read: %s", cf)
 
         # Feature 2: project-wide standards files via --read.
         for sf in self._standards_files:
-            arguments.extend(["--read", str(sf)])
+            read_only_paths.append(sf)
+
+        for mentioned_path in self._find_instruction_reference_files(task, file_paths):
+            read_only_paths.append(mentioned_path)
+
+        unique_read_only_paths: list[Path] = []
+        seen_read_only_paths: set[str] = set()
+        for read_only_path in read_only_paths:
+            normalized_path = str(read_only_path.resolve()).lower()
+            if normalized_path in seen_read_only_paths:
+                continue
+            seen_read_only_paths.add(normalized_path)
+            unique_read_only_paths.append(read_only_path)
+
+        for read_only_path in unique_read_only_paths:
+            arguments.extend(["--read", str(read_only_path)])
 
         # Files Aider will modify.
         for file_path in file_paths:
@@ -389,3 +451,44 @@ class AiderRunner:
             if candidate.exists():
                 found.append(candidate)
         return found
+
+    def _build_repo_file_index(self) -> list[str]:
+        indexed_files: list[str] = []
+        for path in self._repo_root.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                relative_path = path.relative_to(self._repo_root).as_posix()
+            except ValueError:
+                continue
+            if relative_path.startswith(".git/"):
+                continue
+            indexed_files.append(relative_path)
+        return indexed_files
+
+    def _find_instruction_reference_files(
+        self,
+        task: Task,
+        file_paths: list[Path],
+    ) -> list[Path]:
+        instruction = task.instruction
+        target_paths = {str(path.resolve()).lower() for path in file_paths}
+        referenced_paths: list[Path] = []
+
+        for relative_path in self._repo_file_index:
+            if relative_path in task.files:
+                continue
+            pattern = r"(?<![A-Za-z0-9_./\\\\-])" + re.escape(relative_path) + r"(?![A-Za-z0-9_./\\\\-])"
+            if re.search(pattern, instruction):
+                candidate = (self._repo_root / relative_path).resolve()
+                if str(candidate).lower() in target_paths:
+                    continue
+                referenced_paths.append(candidate)
+
+        if referenced_paths:
+            self._logger.debug(
+                "AiderRunner: auto-injecting instruction reference files via --read: %s",
+                [str(path.relative_to(self._repo_root)) for path in referenced_paths],
+            )
+
+        return referenced_paths

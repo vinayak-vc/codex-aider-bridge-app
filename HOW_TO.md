@@ -111,6 +111,8 @@ During a manual-supervisor run, the bridge creates:
   - `<target_repo>/bridge_progress/manual_supervisor/requests/`
 - Decisions:
   - `<target_repo>/bridge_progress/manual_supervisor/decisions/`
+- Completed receipts:
+  - `<target_repo>/bridge_progress/manual_supervisor/completed/`
 
 It also maintains:
 
@@ -191,6 +193,7 @@ When a request file appears, read it and write a decision JSON.
 
 The bridge will archive the processed request and decision files automatically.
 It will also keep updating the knowledge/snapshot/metrics files while the run is in progress.
+If a task was already approved and the bridge crashed before checkpointing it, the completed receipt lets the next run resume that approval without asking Aider to rewrite the file.
 
 ---
 
@@ -266,6 +269,39 @@ Check:
 - `<target_repo>/bridge_progress/manual_supervisor/decisions/`
 
 If a request exists, write the matching decision JSON.
+
+If both the request and decision already exist from a prior interrupted run, rerun the same bridge command first. The bridge now consumes a matching pair automatically.
+
+### The bridge crashed with `OSError: [Errno 22] Invalid argument`
+
+That usually means stdout event emission failed, not that the task itself was lost.
+
+Fix:
+- rerun the exact same bridge command
+- keep the same plan file
+- let checkpointing and the completed receipt recover the last approved task
+
+The bridge now treats stdout emission as best-effort, so the progress files in `bridge_progress/` should still be present.
+
+### Token usage looks too high
+
+Check `bridge_progress/token_log.json` for:
+- `savings_percent_weighted`
+- `savings_percent_successful_avg`
+- `wasted_tokens_total`
+- `waste_reason_counts`
+
+If `tasks_executed` is `0`, treat that session as overhead rather than productive savings.
+
+### Aider asks follow-up questions or lint-fix prompts
+
+That means the task is still too broad or the model/tool pairing surfaced interactive output.
+
+Fix:
+- make the task narrower
+- keep one file per task
+- rerun with the same plan when possible so checkpointing skips finished work
+- inspect stderr because the bridge now flags interactive prompt output explicitly
 
 ### The old knowledge JSON was not generated
 

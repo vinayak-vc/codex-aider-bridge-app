@@ -175,7 +175,7 @@ The bridge will:
 2. Execute each task via Aider
 3. Write a review request JSON after each task
 4. Wait for your decision JSON
-5. Handle retries, sub-plans, checkpointing, and logging automatically
+5. Handle retries, sub-plans, checkpointing, crash-safe review recovery, and logging automatically
 
 ---
 
@@ -298,6 +298,8 @@ The bridge is **intended to be stable enough for normal external-project supervi
 | Pause / resume mid-run | ✅ Working |
 | Progress tracking (SSE events) | ✅ Working |
 | Token usage tracking + savings log | ✅ Working |
+| Crash-safe stdout event emission | ✅ Working |
+| Manual-review receipt recovery on rerun | ✅ Working |
 | Persistent `project_knowledge.json` in target repo | ✅ Working |
 | Persistent `project_snapshot.json` / `task_metrics.json` | ✅ Working |
 | Failure-time artifact persistence | ✅ Working |
@@ -394,6 +396,12 @@ STEP 8 — Run the bridge:
 STEP 9 — Review each task request JSON as the bridge writes it.
           Write PASS / REWORK / SUBPLAN decision JSON. Never skip.
 
+          If the bridge crashes after the review handoff:
+          - rerun the same command first
+          - keep the same plan file unless the task itself is wrong
+          - the bridge can consume matching request/decision files automatically
+          - an unchanged already-approved task can be resumed from the completed-review receipt
+
 STEP 10 — Update WORK_LOG.md after every task.
 
 STEP 11 — During and after the run, the bridge auto-updates:
@@ -402,6 +410,7 @@ STEP 11 — During and after the run, the bridge auto-updates:
            - bridge_progress/task_metrics.json
            - bridge_progress/token_log.json
            - bridge_progress/LATEST_REPORT.md
+           - bridge_progress/manual_supervisor/completed/*.json
            You do not need to update them manually.
 ```
 
@@ -421,7 +430,16 @@ STEP 11 — During and after the run, the bridge auto-updates:
 
 ---
 
-## 14. CURRENT ACTIVE PROJECTS
+## 14. TROUBLESHOOTING NOTES FOR SUPERVISORS
+
+- If the model is missing, install it and rerun the same bridge command instead of creating a new plan.
+- If request/decision files are left behind after an interrupted run, rerun first. Matching pairs are consumed automatically and stale mismatched pairs are archived.
+- If a run spends tokens but completes no tasks, inspect `bridge_progress/token_log.json` for `wasted_tokens_total` and `waste_reason_counts`.
+- If Aider output includes follow-up prompts, shrink the task. The bridge now treats that output as a task failure instead of silently drifting.
+
+---
+
+## 15. CURRENT ACTIVE PROJECTS
 
 | Project | Target Folder | Goal File | Status |
 |---|---|---|---|
@@ -429,7 +447,7 @@ STEP 11 — During and after the run, the bridge auto-updates:
 
 ---
 
-## 15. QUICK REFERENCE CARD
+## 16. QUICK REFERENCE CARD
 
 ```
 YOU read: goal file + file tree only

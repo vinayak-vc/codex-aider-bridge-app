@@ -160,3 +160,14 @@ if not validation_result.succeeded:
 | 2026-03-25 | 🔵 Claude | Full codebase scan completed |
 | 2026-03-25 | 🔵 Claude | Workflow audit completed — 6/7 steps working, sub-plan missing |
 | 2026-03-25 | 🔵 Claude | `WORK_LOG.md` created |
+| 2026-03-27 | 🔵 Codex | Read onboarding, work log, and bridge progress for supervisor workflow |
+| 2026-03-27 | 🔵 Codex | Read target project brief and file tree for `D:\AI_Project\valorant-clip-data-extractor-v2` |
+| 2026-03-27 | 🔵 Codex | Wrote `plan_001_core_pipeline.json` and attempted bridge run |
+| 2026-03-27 | 🔵 Codex | Diagnosed bridge blockers: missing `aider` on PATH, UTF-8 console issue, required `must_exist` assertions |
+| 2026-03-27 | 🔵 Codex | Detected Aider model mismatch: `ollama/qwen2.5-coder:14b` not installed; local model is `qwen2.5-coder:7b` |
+| 2026-03-27 | 🔵 Codex | Wrote recovery plan `plan_002_config_bootstrap.json` and relaunched bridge with `qwen2.5-coder:7b` |
+| 2026-03-27 | 🔵 Codex | Reviewed task 1 result for `config.py` and issued `REWORK` decision via manual supervisor JSON |
+| 2026-03-27 | 🔵 Codex | Reviewed second `config.py` result and issued final targeted `REWORK` decision |
+| 2026-03-27 | 🔴 Bridge | Crash after writing manual review request due stdout emit `OSError: [Errno 22] Invalid argument` |
+| 2026-03-27 | 🔵 Codex | Reviewed final `config.py` result, recorded `PASS`, and re-ran recovery plan successfully |
+| 2026-03-27 | 🔴 Bridge | Recovery plan `plan_002_config_bootstrap.json` completed successfully with `qwen2.5-coder:7b` |

@@ -39,6 +39,30 @@ def _estimate(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _classify_waste_reason(
+    tasks_executed: int,
+    failure_reason: Optional[str],
+) -> Optional[str]:
+    if tasks_executed > 0:
+        return None
+
+    normalized = (failure_reason or "").lower()
+    if "invalid argument" in normalized or "stdout" in normalized:
+        return "bridge_stdout_crash"
+    if "model" in normalized and ("not found" in normalized or "missing" in normalized):
+        return "model_missing"
+    if (
+        "mechanical check" in normalized
+        or "unexpected file" in normalized
+        or "did not modify" in normalized
+        or "whitespace or comments" in normalized
+    ):
+        return "mechanical_validation_loop"
+    if "manual supervisor" in normalized or "decision" in normalized or "request" in normalized:
+        return "manual_review_rerun"
+    return "zero_progress_other"
+
+
 class TokenTracker:
     """Accumulates token usage for a single bridge run session."""
 
@@ -123,6 +147,7 @@ class TokenTracker:
         tasks_executed: int,
         tasks_skipped: int,
         elapsed_seconds: float,
+        failure_reason: Optional[str] = None,
     ) -> dict:
         """Build a complete session report dict including savings calculation."""
         snap = self.snapshot()
@@ -149,6 +174,19 @@ class TokenTracker:
             round(tokens_saved / estimated_direct * 100, 1)
             if estimated_direct > 0 else 0.0
         )
+        waste_reason = _classify_waste_reason(tasks_executed, failure_reason)
+        productivity = {
+            "is_productive": tasks_executed > 0,
+            "waste_reason": waste_reason,
+        }
+        note = (
+            f"Without bridge: plan ({plan_tokens} tokens) + "
+            f"{tasks_executed} tasks × {_DIRECT_TOKENS_PER_TASK} "
+            f"direct-coding tokens = {estimated_direct}; "
+            f"compared against total AI tokens {total_ai_tokens}"
+        )
+        if tasks_executed == 0:
+            note += "; session completed no tasks and should be treated as overhead, not productive savings"
 
         return {
             "session_id": str(uuid.uuid4()),
@@ -178,18 +216,14 @@ class TokenTracker:
                 "reworks": self._reworks,
                 "subplans_generated": self._subplans,
             },
+            "productivity": productivity,
             "savings": {
                 "estimated_direct_tokens": estimated_direct,
                 "actual_supervisor_tokens": total_supervisor,
                 "total_ai_tokens": total_ai_tokens,
                 "tokens_saved": tokens_saved,
                 "savings_percent": savings_pct,
-                "note": (
-                    f"Without bridge: plan ({plan_tokens} tokens) + "
-                    f"{tasks_executed} tasks × {_DIRECT_TOKENS_PER_TASK} "
-                    f"direct-coding tokens = {estimated_direct}; "
-                    f"compared against total AI tokens {total_ai_tokens}"
-                ),
+                "note": note,
             },
             "elapsed_seconds": round(elapsed_seconds, 1),
         }
@@ -218,10 +252,28 @@ def save_session_to_log(session: dict, log_path: Path) -> None:
     total_session = sum(s.get("session", {}).get("tokens", 0) for s in sessions)
     total_ai = sum(s.get("session", {}).get("total_ai_tokens", s["supervisor"]["total"]) for s in sessions)
     total_saved = sum(s["savings"]["tokens_saved"] for s in sessions)
-    avg_savings_pct = (
-        round(sum(s["savings"]["savings_percent"] for s in sessions) / len(sessions), 1)
-        if sessions else 0.0
+    successful_sessions = [s for s in sessions if s["aider"]["tasks_executed"] > 0]
+    zero_progress_sessions = [s for s in sessions if s["aider"]["tasks_executed"] == 0]
+    successful_avg = (
+        round(
+            sum(s["savings"]["savings_percent"] for s in successful_sessions) / len(successful_sessions),
+            1,
+        )
+        if successful_sessions else 0.0
     )
+    total_estimated_direct = sum(s["savings"]["estimated_direct_tokens"] for s in sessions)
+    weighted_savings_pct = (
+        round(total_saved / total_estimated_direct * 100, 1)
+        if total_estimated_direct > 0 else 0.0
+    )
+    wasted_tokens_total = sum(
+        s.get("session", {}).get("total_ai_tokens", s["supervisor"]["total"])
+        for s in zero_progress_sessions
+    )
+    waste_reason_counts: dict[str, int] = {}
+    for zero_progress_session in zero_progress_sessions:
+        reason = str(zero_progress_session.get("productivity", {}).get("waste_reason", "zero_progress_other"))
+        waste_reason_counts[reason] = waste_reason_counts.get(reason, 0) + 1
 
     data["totals"] = {
         "sessions_count": len(sessions),
@@ -230,7 +282,12 @@ def save_session_to_log(session: dict, log_path: Path) -> None:
         "session_tokens_total": total_session,
         "total_ai_tokens_total": total_ai,
         "tokens_saved_total": total_saved,
-        "savings_percent_avg": avg_savings_pct,
+        "savings_percent_weighted": weighted_savings_pct,
+        "savings_percent_successful_avg": successful_avg,
+        "savings_percent_avg": successful_avg,
+        "wasted_tokens_total": wasted_tokens_total,
+        "wasted_sessions_count": len(zero_progress_sessions),
+        "waste_reason_counts": waste_reason_counts,
         "last_updated": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -243,7 +300,14 @@ def _empty_totals() -> dict:
         "sessions_count": 0,
         "tasks_executed_total": 0,
         "supervisor_tokens_total": 0,
+        "session_tokens_total": 0,
+        "total_ai_tokens_total": 0,
         "tokens_saved_total": 0,
+        "savings_percent_weighted": 0.0,
+        "savings_percent_successful_avg": 0.0,
         "savings_percent_avg": 0.0,
+        "wasted_tokens_total": 0,
+        "wasted_sessions_count": 0,
+        "waste_reason_counts": {},
         "last_updated": None,
     }

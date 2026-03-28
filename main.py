@@ -606,9 +606,23 @@ _UNEXPECTED_FILE_IGNORE_NAMES: tuple[str, ...] = (
     ".aider.chat.history.md",
     ".aider.input.history",
 )
+_PYTHON_RUNTIME_SUFFIXES: tuple[str, ...] = (
+    ".pyc",
+    ".pyo",
+)
 # Unity auto-generates a .meta file for every new asset file and every new
 # directory. These are never task outputs; treat them as expected side-effects.
 _UNITY_META_SUFFIX: str = ".meta"
+
+
+def _is_ignorable_runtime_artifact(relative_path: str) -> bool:
+    normalized = relative_path.replace("\\", "/")
+    path_parts = normalized.split("/")
+    if "__pycache__" in path_parts:
+        return True
+    if normalized.endswith(_PYTHON_RUNTIME_SUFFIXES):
+        return True
+    return False
 
 
 def _snapshot_repo_files(repo_root: Path) -> set[str]:
@@ -620,6 +634,8 @@ def _snapshot_repo_files(repo_root: Path) -> set[str]:
         if relative_path in _UNEXPECTED_FILE_IGNORE_NAMES:
             continue
         if any(relative_path.startswith(prefix) for prefix in _UNEXPECTED_FILE_IGNORE_PREFIXES):
+            continue
+        if _is_ignorable_runtime_artifact(relative_path):
             continue
         snapshot.add(relative_path)
     return snapshot
@@ -642,6 +658,7 @@ def _find_unexpected_files(
         # potentially Assets/Scripts.meta if that directory was new.
         new_files = {f for f in new_files if not f.endswith(_UNITY_META_SUFFIX)}
 
+    new_files = {f for f in new_files if not _is_ignorable_runtime_artifact(f)}
     return sorted(new_files)
 
 
@@ -725,6 +742,25 @@ def execute_task_with_review(
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
 
+    if manual_supervisor is not None:
+        resumed_diff = manual_supervisor.try_resume_completed_task(
+            task.id,
+            current_instruction,
+            task.files,
+            selected_files.all_paths,
+        )
+        if resumed_diff is not None:
+            logger.info("Task %s: resumed from completed manual review receipt", task.id)
+            _emit_structured(
+                {
+                    "type": "task_complete",
+                    "task_id": task.id,
+                    "diff": resumed_diff[:1500],
+                    "resumed": True,
+                }
+            )
+            return resumed_diff
+
     for attempt in range(config.max_task_retries + 1):
         repo_before = _snapshot_repo_files(config.repo_root)
         current_task = Task(
@@ -744,6 +780,51 @@ def execute_task_with_review(
             config.max_task_retries + 1,
             ", ".join(current_task.files),
         )
+
+        if manual_supervisor is not None:
+            existing_review = manual_supervisor.consume_existing_decision(current_task)
+            if existing_review is not None:
+                review, request_payload = existing_review
+                request_diff = str(request_payload.get("diff", ""))
+                if review.verdict == "PASS":
+                    manual_supervisor.record_completed_review(
+                        current_task.id,
+                        current_task.instruction,
+                        current_task.files,
+                        selected_files.all_paths,
+                        request_diff,
+                    )
+                    logger.info("Task %s: reused existing manual PASS decision", current_task.id)
+                    _emit_structured(
+                        {
+                            "type": "task_complete",
+                            "task_id": current_task.id,
+                            "diff": request_diff[:1500],
+                            "resumed": True,
+                        }
+                    )
+                    return request_diff
+                if review.verdict == "SUBPLAN":
+                    _execute_sub_tasks(
+                        review.sub_tasks,
+                        config,
+                        selector,
+                        runner,
+                        validator,
+                        logger,
+                        aider_context,
+                    )
+                    wait_seconds = min(2 ** attempt, 30)
+                    time.sleep(wait_seconds)
+                    continue
+                logger.info(
+                    "Task %s: reused existing manual REWORK decision on rerun",
+                    current_task.id,
+                )
+                current_instruction = review.new_instruction or current_instruction
+                wait_seconds = min(2 ** attempt, 30)
+                time.sleep(wait_seconds)
+                continue
 
         if config.dry_run:
             logger.info("[dry-run] Task %s: %s", current_task.id, current_instruction)
@@ -858,6 +939,13 @@ def execute_task_with_review(
                         "Task %s: manual supervisor overrode validation failure and approved",
                         current_task.id,
                     )
+                    manual_supervisor.record_completed_review(
+                        current_task.id,
+                        current_task.instruction,
+                        current_task.files,
+                        selected_files.all_paths,
+                        diff,
+                    )
                     _emit_structured(
                         {
                             "type": "task_complete",
@@ -943,6 +1031,13 @@ def execute_task_with_review(
             review = manual_supervisor.wait_for_decision(current_task.id)
             if review.verdict == "PASS":
                 logger.info("Task %s: manual supervisor approved", current_task.id)
+                manual_supervisor.record_completed_review(
+                    current_task.id,
+                    current_task.instruction,
+                    current_task.files,
+                    selected_files.all_paths,
+                    diff,
+                )
                 _emit_structured({
                     "type": "task_complete",
                     "task_id": current_task.id,
@@ -1047,7 +1142,26 @@ def _emit_structured(data: dict) -> None:
     parses them into rich SSE events for the frontend. Regular log lines are
     unaffected — they don't start with that key.
     """
-    print(json.dumps({"_bridge_event": True, **data}), flush=True)
+    logger = logging.getLogger(__name__)
+    try:
+        payload = json.dumps({"_bridge_event": True, **data}, ensure_ascii=False)
+    except (TypeError, ValueError) as ex:
+        logger.warning("Could not serialize structured bridge event: %s", ex)
+        return
+
+    _safe_stdout_write(payload, logger)
+
+
+def _safe_stdout_write(text: str, logger: Optional[logging.Logger] = None) -> bool:
+    active_logger = logger or logging.getLogger(__name__)
+    try:
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
+        return True
+    except (OSError, UnicodeEncodeError, ValueError) as ex:
+        preview = text if len(text) <= 500 else text[:500] + "...<truncated>"
+        active_logger.warning("Could not write bridge output to stdout: %s | payload=%s", ex, preview)
+        return False
 
 
 def _summarize_process_failure(stderr: str, stdout: str) -> str:
@@ -1654,7 +1768,7 @@ def main() -> int:
             None,
         )
 
-        print(json.dumps(summary))
+        _safe_stdout_write(json.dumps(summary, ensure_ascii=False), logger)
         logger.info(
             "Bridge run completed — %s task(s) executed, %s skipped, %.1fs total",
             executed, skipped, elapsed,
@@ -1725,13 +1839,14 @@ def main() -> int:
                 tasks_executed=len(completed_ids) - skipped,
                 tasks_skipped=skipped,
                 elapsed_seconds=elapsed,
+                failure_reason=str(ex),
             )
             try:
                 save_session_to_log(failure_token_report, repo_root / "bridge_progress" / "token_log.json")
             except Exception as token_ex:
                 logger.warning("Could not save token log after failure: %s", token_ex)
 
-        print(json.dumps(failure_summary))
+        _safe_stdout_write(json.dumps(failure_summary, ensure_ascii=False), logger)
         return 1
 
 
