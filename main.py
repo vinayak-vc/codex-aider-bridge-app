@@ -381,8 +381,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=(
             "Automatically split any task targeting N or more files into individual "
             "single-file sub-tasks before Aider runs them. 0 = disabled (default). "
-            "Recommended: 3 when using small local models (e.g. ollama/qwen2.5-coder:7b) "
-            "that struggle to edit multiple files in a single pass without losing context."
+            "Recommended: 3 when using small local models (e.g. ollama/qwen2.5-coder:7b). "
+            "14B models (e.g. ollama/qwen2.5-coder:14b) handle multi-file tasks well without splitting."
         ),
     )
     parser.add_argument(
@@ -1390,7 +1390,7 @@ def main() -> int:
         logger.warning(
             "No --aider-model set and BRIDGE_AIDER_MODEL env var is not set. "
             "Aider will use its default model (usually GPT-4o) which requires an OpenAI API key. "
-            "For local/free inference use e.g. --aider-model ollama/qwen2.5-coder:7b"
+            "For local/free inference use e.g. --aider-model ollama/qwen2.5-coder:14b"
         )
 
     idea_loader = IdeaLoader()
