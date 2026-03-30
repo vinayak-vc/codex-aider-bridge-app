@@ -252,8 +252,12 @@ class AiderRunner:
                 env=_subprocess_env,
             )
         except subprocess.TimeoutExpired as ex:
-            if ex.process:
-                ex.process.kill()
+            # ex.process is not always set (Python 3.11 bug on Windows)
+            try:
+                if ex.process:
+                    ex.process.kill()
+            except Exception:
+                pass
             return ExecutionResult(
                 task_id=task.id,
                 succeeded=False,
@@ -271,6 +275,12 @@ class AiderRunner:
                 stderr=str(ex),
                 command=arguments,
             )
+
+        # Scope enforcement: revert any files the model touched that were NOT
+        # in the task's file list. Reasoning models (deepseek-r1, etc.) tend to
+        # "helpfully" edit nearby files, which can corrupt binary assets or cause
+        # unexpected side-effects.
+        self._revert_out_of_scope_changes(task.id, file_paths)
 
         # Detect silent failure — Aider exits 0 but never actually writes the
         # target files, or only makes trivial whitespace/comment changes.
@@ -312,6 +322,76 @@ class AiderRunner:
             command=arguments,
             duration_seconds=round(time.monotonic() - _start, 2),
         )
+
+    # ── Scope enforcement ─────────────────────────────────────────────────────
+
+    def _revert_out_of_scope_changes(
+        self,
+        task_id: str,
+        allowed_paths: list[Path],
+    ) -> None:
+        """Revert any files modified by Aider that were NOT in the task's file list.
+
+        Reasoning models (deepseek-r1, qwen-thinking, etc.) often "helpfully" edit
+        nearby files — this can corrupt binary assets, Unity .asset files, or cause
+        unintended side-effects.  We detect all dirty working-tree files via
+        ``git diff --name-only`` and restore anything outside *allowed_paths*.
+        """
+        try:
+            proc = subprocess.run(
+                ["git", "diff", "--name-only"],
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                return  # not a git repo or git unavailable — skip quietly
+
+            # Resolve allowed paths to strings relative to repo root for comparison
+            allowed_rel: set[str] = set()
+            for p in allowed_paths:
+                try:
+                    allowed_rel.add(str(p.resolve().relative_to(self._repo_root.resolve())))
+                except ValueError:
+                    allowed_rel.add(p.name)  # fallback: match by name only
+
+            # Normalise to forward-slash for cross-platform comparison
+            allowed_rel = {r.replace("\\", "/") for r in allowed_rel}
+
+            out_of_scope: list[str] = []
+            for rel_path in proc.stdout.splitlines():
+                rel_norm = rel_path.strip().replace("\\", "/")
+                if not rel_norm:
+                    continue
+                if rel_norm not in allowed_rel:
+                    out_of_scope.append(rel_path.strip())
+
+            if not out_of_scope:
+                return
+
+            self._logger.warning(
+                "Task %s: model edited %d out-of-scope file(s) — reverting: %s",
+                task_id,
+                len(out_of_scope),
+                ", ".join(out_of_scope),
+            )
+            # Revert each file individually so a bad path doesn't abort the batch
+            for rel in out_of_scope:
+                revert = subprocess.run(
+                    ["git", "checkout", "--", rel],
+                    cwd=self._repo_root,
+                    capture_output=True,
+                    timeout=15,
+                )
+                if revert.returncode != 0:
+                    self._logger.debug(
+                        "Task %s: could not revert %s (may be untracked — ignoring)", task_id, rel
+                    )
+        except Exception as exc:  # noqa: BLE001
+            self._logger.debug("Task %s: scope-enforcement check failed: %s", task_id, exc)
 
     # ── Command builder ───────────────────────────────────────────────────────
 

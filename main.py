@@ -1197,11 +1197,13 @@ def record_rollback_point(repo_root: Path, logger: logging.Logger) -> Optional[s
     return None
 
 
-# Model size patterns that indicate a small local model (≤ 14 B parameters).
+# Model size patterns that indicate a small local model (≤ 8 B parameters).
 # Matched against the --aider-model value (case-insensitive).
-# Examples that match: 7b, 7B, 6.7b, 8b, 13b, 14b, 3b, 1b, 1.5b
-# Examples that do NOT match: 32b, 34b, 70b, 72b, claude, gpt-4, gemini
-_SMALL_MODEL_RE = re.compile(r"\b(1[0-4]|[1-9](\.\d+)?)b\b", re.IGNORECASE)
+# Examples that match: 7b, 7B, 6.7b, 8b, 3b, 1b, 1.5b
+# Examples that do NOT match: 9b, 13b, 14b, 32b, 70b, claude, gpt-4, gemini
+# 14B+ models (deepseek-r1:14b, qwen2.5-coder:14b) are capable enough to handle
+# multi-file tasks without splitting.
+_SMALL_MODEL_RE = re.compile(r"\b([1-8](\.\d+)?)b\b", re.IGNORECASE)
 _AUTO_SPLIT_DEFAULT_THRESHOLD = 3
 
 
