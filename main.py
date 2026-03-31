@@ -15,6 +15,7 @@ from typing import Optional
 from bridge_logging.logger import configure_logging
 from context.file_selector import FileSelector
 from context.idea_loader import IdeaLoader
+from context.project_understanding import ensure_project_understanding, understanding_file_path
 from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
@@ -1502,22 +1503,39 @@ def main() -> int:
     elif _saved_type and not _cli_type:
         logger.info("Project type (from saved knowledge): %s", describe(_saved_type))
 
-    # Onboarding scan: run once on first use against an existing project to
-    # pre-populate file roles so the supervisor generates an accurate plan
-    # from the very first run (instead of guessing from file names only).
-    if not knowledge.get("files") and not config.skip_onboarding_scan:
-        try:
-            from utils.onboarding_scanner import OnboardingScanner  # lazy import
-            knowledge = OnboardingScanner(repo_root, logger).run(knowledge)
-            save_knowledge(knowledge, repo_root)
-            logger.info(
-                "Onboarding scan complete: %d files registered, type=%s, language=%s",
-                len(knowledge["files"]),
-                knowledge["project"].get("type", "unknown"),
-                knowledge["project"].get("language", "unknown"),
-            )
-        except Exception as _scan_err:
-            logger.warning("Onboarding scan failed (continuing without): %s", _scan_err)
+    # Project understanding bootstrap: runs once on first use.
+    # Discovers docs, infers file roles via static scan (OnboardingScanner),
+    # writes AI_UNDERSTANDING.md, and optionally asks user to confirm/clarify.
+    try:
+        knowledge = ensure_project_understanding(
+            repo_root,
+            knowledge,
+            logger,
+            skip_source_scan=bool(config.skip_onboarding_scan),
+            allow_user_confirm=bool(sys.stdin.isatty()),
+        )
+        _emit_structured(
+            {
+                "type": "understanding_ready",
+                "understanding_file": str(understanding_file_path(repo_root)),
+                "confirmed": bool(
+                    knowledge.get("project", {}).get("understanding_confirmed", False)
+                ),
+                "doc_count": len(knowledge.get("docs", [])),
+                "file_count": len(knowledge.get("files", {})),
+            }
+        )
+        logger.info(
+            "Project understanding ready: %d docs, %d files, confirmed=%s",
+            len(knowledge.get("docs", [])),
+            len(knowledge.get("files", {})),
+            knowledge.get("project", {}).get("understanding_confirmed", False),
+        )
+    except Exception as _understanding_err:
+        logger.warning(
+            "Project understanding bootstrap failed (continuing without blocking run): %s",
+            _understanding_err,
+        )
 
     knowledge_context = to_context_text(knowledge)
     if knowledge.get("files"):

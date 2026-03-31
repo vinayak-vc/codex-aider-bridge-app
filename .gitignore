@@ -207,8 +207,14 @@ marimo/_lsp/
 __marimo__/
 .aider*
 
-# Per-project bridge progress files
-bridge_progress/
+# Per-project bridge runtime state
+# Keep knowledge + understanding files so context persists across sessions
+bridge_progress/**
+!bridge_progress/project_knowledge.json
+!bridge_progress/AI_UNDERSTANDING.md
+
+# Local logs
+logs/
 
 # AI-generated task plan JSON files (stored per-project, not committed)
 taskJsons/

@@ -11,8 +11,10 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
+from context.project_understanding import ensure_project_understanding
 from models.task import Task
 from utils.manual_supervisor import ManualSupervisorSession
+from utils.project_knowledge import load_knowledge
 from utils.token_tracker import TokenTracker, save_session_to_log
 
 
@@ -108,6 +110,82 @@ class BridgeResilienceTests(unittest.TestCase):
                 totals["savings_percent_weighted"],
                 totals["savings_percent_successful_avg"],
             )
+
+    def test_project_understanding_bootstrap_creates_durable_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "README.md").write_text(
+                "# Sample Game\n\n"
+                "Sample Game is a Unity project for experimenting with combat abilities.\n"
+                "It contains gameplay scripts, UI logic, and scene setup notes.\n",
+                encoding="utf-8",
+            )
+            scripts_dir = repo_root / "Assets" / "Scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (repo_root / "ProjectSettings").mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "PlayerController.cs").write_text(
+                "using UnityEngine;\n\n"
+                "public class PlayerController : MonoBehaviour\n"
+                "{\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            knowledge = load_knowledge(repo_root)
+            updated = ensure_project_understanding(
+                repo_root,
+                knowledge,
+                logging.getLogger("test"),
+                skip_source_scan=False,
+                allow_user_confirm=False,
+            )
+
+            self.assertTrue((repo_root / "bridge_progress" / "project_knowledge.json").exists())
+            self.assertTrue((repo_root / "bridge_progress" / "AI_UNDERSTANDING.md").exists())
+            self.assertTrue(updated["docs"])
+            self.assertIn("README.md", updated["docs"][0]["path"])
+            self.assertIn("Assets/Scripts/PlayerController.cs", updated["files"])
+
+    def test_project_understanding_confirmation_records_clarifications(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "README.md").write_text(
+                "# Tooling Repo\n\n"
+                "This repository manages tooling for an internal build pipeline.\n"
+                "It includes scripts and supporting documentation.\n",
+                encoding="utf-8",
+            )
+            src_dir = repo_root / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            (src_dir / "app.py").write_text(
+                "def main():\n"
+                "    return 'ok'\n",
+                encoding="utf-8",
+            )
+
+            answers = iter(
+                [
+                    "n",
+                    "src/app.py and docs/ should be the main focus.",
+                    "Ignore archived exports.",
+                    "y",
+                ]
+            )
+
+            knowledge = load_knowledge(repo_root)
+            with mock.patch.object(sys.stdin, "isatty", return_value=True):
+                updated = ensure_project_understanding(
+                    repo_root,
+                    knowledge,
+                    logging.getLogger("test"),
+                    skip_source_scan=False,
+                    allow_user_confirm=True,
+                    input_func=lambda _: next(answers),
+                )
+
+            self.assertTrue(updated["project"]["understanding_confirmed"])
+            self.assertTrue(updated["clarifications"])
+            self.assertIn("src/app.py", updated["project"]["summary"].lower())
 
 
 if __name__ == "__main__":

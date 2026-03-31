@@ -162,6 +162,8 @@ def to_context_text(knowledge: dict) -> str:
     patterns = knowledge.get("patterns", [])
     done = knowledge.get("features_done", [])
     suggested = knowledge.get("suggested_next", [])
+    docs = knowledge.get("docs", [])
+    clarifications = knowledge.get("clarifications", [])
 
     lines: list[str] = []
 
@@ -177,6 +179,16 @@ def to_context_text(knowledge: dict) -> str:
     summary = proj.get("summary", "")
     if summary:
         lines.append(f"SUMMARY: {summary}")
+
+    if docs:
+        lines.append("")
+        lines.append("DOCUMENTATION SIGNALS:")
+        for doc in docs[:5]:
+            doc_path = str(doc.get("path", "")).strip()
+            doc_summary = str(doc.get("summary", "")).strip()
+            if doc_path and doc_summary:
+                lines.append(f"  {doc_path}")
+                lines.append(f"    -> {doc_summary}")
 
     # File registry — the core value
     if files:
@@ -206,6 +218,12 @@ def to_context_text(knowledge: dict) -> str:
         for s in suggested:
             lines.append(f"  -{s}")
 
+    if clarifications:
+        lines.append("")
+        lines.append("USER CLARIFICATIONS:")
+        for item in clarifications:
+            lines.append(f"  -{item}")
+
     # Run history
     runs = knowledge.get("runs", [])
     if runs:
@@ -231,10 +249,13 @@ def _empty_knowledge(repo_root: Path) -> dict:
             "repo_root": str(repo_root),
             "first_seen": _today(),
             "last_updated": _today(),
+            "understanding_confirmed": False,
         },
         "files": {},
+        "docs": [],
         "patterns": [],
         "features_done": [],
         "suggested_next": [],
+        "clarifications": [],
         "runs": [],
     }
