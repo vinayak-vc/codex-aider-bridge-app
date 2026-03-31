@@ -25,7 +25,13 @@ _template_folder = (
     else "templates"  # relative to this file's directory (ui/templates/)
 )
 
-app = Flask(__name__, template_folder=_template_folder)
+_static_folder = (
+    str(Path(sys._MEIPASS) / "ui" / "static")  # type: ignore[attr-defined]
+    if _frozen
+    else "static"
+)
+
+app = Flask(__name__, template_folder=_template_folder, static_folder=_static_folder)
 app.config["JSON_SORT_KEYS"] = False
 
 # Per-client SSE queue registry
@@ -47,7 +53,45 @@ def _broadcast(event_type: str, data: dict) -> None:
 
 @app.route("/")
 def index():
+    from flask import redirect
+    return redirect("/dashboard")
+
+
+@app.route("/legacy")
+def legacy():
     return render_template("index.html")
+
+
+# ── New multi-page routes ───────────────────────────────────────────────────────
+
+@app.route("/dashboard")
+def page_dashboard():
+    return render_template("dashboard.html", active_page="dashboard")
+
+
+@app.route("/run")
+def page_run():
+    return render_template("run.html", active_page="run")
+
+
+@app.route("/knowledge")
+def page_knowledge():
+    return render_template("knowledge.html", active_page="knowledge")
+
+
+@app.route("/history")
+def page_history():
+    return render_template("history.html", active_page="history")
+
+
+@app.route("/tokens")
+def page_tokens():
+    return render_template("tokens.html", active_page="tokens")
+
+
+@app.route("/setup")
+def page_setup():
+    return render_template("setup.html", active_page="setup")
 
 
 # ── Setup checks ───────────────────────────────────────────────────────────────
@@ -475,3 +519,19 @@ def api_reports_last_run():
         return jsonify(json.loads(last_run_file.read_text(encoding="utf-8")))
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/reports/understanding")
+def api_reports_understanding():
+    """AI_UNDERSTANDING.md content (reads bridge_progress/AI_UNDERSTANDING.md)."""
+    progress_dir = _project_progress_dir(request.args)
+    if progress_dir is None:
+        return jsonify({"content": "", "exists": False, "error": "repo_root not set"})
+    understanding_file = progress_dir / "AI_UNDERSTANDING.md"
+    if not understanding_file.exists():
+        return jsonify({"content": "", "exists": False})
+    try:
+        content = understanding_file.read_text(encoding="utf-8")
+        return jsonify({"content": content, "exists": True})
+    except Exception as ex:
+        return jsonify({"content": "", "exists": False, "error": str(ex)})
