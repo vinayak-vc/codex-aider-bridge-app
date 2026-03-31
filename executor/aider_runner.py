@@ -45,6 +45,10 @@ class AiderRunner:
 
         self._logger.debug("Running Aider: %s", arguments)
 
+        # Snapshot untracked files BEFORE running aider so we only clean up
+        # files that aider itself creates, not pre-existing untracked work.
+        pre_untracked = self._get_untracked_files()
+
         try:
             result = subprocess.run(
                 arguments,
@@ -52,6 +56,7 @@ class AiderRunner:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
                 check=False,
             )
         except OSError as ex:
@@ -64,6 +69,9 @@ class AiderRunner:
                 command=arguments,
             )
 
+        # Revert any files aider touched that are outside the allowed scope
+        self._revert_out_of_scope_changes(task.id, file_paths, pre_untracked)
+
         return ExecutionResult(
             task_id=task.id,
             succeeded=result.returncode == 0,
@@ -72,6 +80,81 @@ class AiderRunner:
             stderr=result.stderr,
             command=arguments,
         )
+
+    def _get_untracked_files(self) -> set[str]:
+        """Return a set of currently untracked file paths (repo-relative posix)."""
+        try:
+            out = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            return {p.strip() for p in out.stdout.splitlines() if p.strip()}
+        except Exception:
+            return set()
+
+    def _revert_out_of_scope_changes(
+        self, task_id: int, allowed_paths: list[Path], pre_untracked: set[str]
+    ) -> None:
+        """Revert tracked files aider modified outside scope.
+        Only remove NEW untracked files aider created (not files that existed before)."""
+        allowed_rel = {
+            p.relative_to(self._repo_root).as_posix()
+            if p.is_absolute() else Path(p).as_posix()
+            for p in allowed_paths
+        }
+
+        # --- Revert tracked files modified outside scope ---
+        try:
+            diff_out = subprocess.run(
+                ["git", "diff", "--name-only"],
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            for rel_path in diff_out.stdout.splitlines():
+                rel_path = rel_path.strip()
+                if rel_path and rel_path not in allowed_rel:
+                    self._logger.warning(
+                        "Task %s: reverting out-of-scope tracked file: %s",
+                        task_id,
+                        rel_path,
+                    )
+                    subprocess.run(
+                        ["git", "checkout", "--", rel_path],
+                        cwd=self._repo_root,
+                        check=False,
+                    )
+        except Exception as ex:
+            self._logger.warning("Task %s: scope revert (tracked) failed: %s", task_id, ex)
+
+        # --- Remove ONLY untracked files aider CREATED (not pre-existing ones) ---
+        try:
+            post_untracked = self._get_untracked_files()
+            new_files = post_untracked - pre_untracked  # files that didn't exist before
+            for rel_path in new_files:
+                if rel_path not in allowed_rel:
+                    full_path = self._repo_root / rel_path
+                    self._logger.warning(
+                        "Task %s: removing out-of-scope new file: %s",
+                        task_id,
+                        rel_path,
+                    )
+                    try:
+                        full_path.unlink()
+                    except Exception as ex:
+                        self._logger.warning(
+                            "Task %s: could not remove %s: %s", task_id, rel_path, ex
+                        )
+        except Exception as ex:
+            self._logger.warning("Task %s: scope revert (untracked) failed: %s", task_id, ex)
 
     def _build_command(
         self, task: Task, file_paths: list[Path]

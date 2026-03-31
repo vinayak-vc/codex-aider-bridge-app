@@ -96,9 +96,19 @@ class SupervisorAgent:
     def _build_review_prompt(self, report: TaskReport) -> str:
         task = report.task
         result = report.execution_result
-        diff = report.diff or "(no diff captured — no file changes detected)"
+        diff = report.diff or ""
+
+        # If aider failed and produced no diff, skip full review — just ask for retry.
+        if result.exit_code != 0 and not diff.strip():
+            return (
+                "You are a Tech Supervisor.\n"
+                "Aider failed to apply changes (exit code 1, no diff produced).\n"
+                "Reply with exactly:\n"
+                "  REWORK: Retry applying the original instruction exactly as stated.\n"
+            )
 
         exit_summary = "succeeded" if result.exit_code == 0 else f"failed (exit code {result.exit_code})"
+        diff_display = diff if diff.strip() else "(no diff captured — no file changes detected)"
 
         return (
             "You are a Tech Supervisor reviewing completed developer work.\n"
@@ -109,7 +119,7 @@ class SupervisorAgent:
             f"Files: {', '.join(task.files)}\n"
             f"Instruction: {task.instruction}\n"
             f"Aider execution: {exit_summary}\n\n"
-            f"Changes made:\n{diff}\n"
+            f"Changes made:\n{diff_display}\n"
         )
 
     # ------------------------------------------------------------------
@@ -141,9 +151,38 @@ class SupervisorAgent:
                 message="Supervisor requested rework.",
             )
 
-        raise SupervisorError(
-            f"Supervisor returned an unrecognized review response for task {task_id}: "
-            f"{stripped[:140]!r}"
+        # Lenient fallback: scan lines for PASS / REWORK anywhere in the response.
+        for line in stripped.splitlines():
+            line_upper = line.strip().upper()
+            if line_upper == "PASS" or line_upper.startswith("PASS "):
+                return ReviewResult(
+                    task_id=task_id,
+                    verdict="PASS",
+                    new_instruction=None,
+                    message="Supervisor approved (lenient parse).",
+                )
+            if line_upper.startswith("REWORK:"):
+                new_instruction = line.strip()[len("REWORK:"):].strip()
+                if new_instruction:
+                    return ReviewResult(
+                        task_id=task_id,
+                        verdict="REWORK",
+                        new_instruction=new_instruction,
+                        message="Supervisor requested rework (lenient parse).",
+                    )
+
+        # Final fallback: supervisor gave unstructured review — signal RETRY
+        # so the caller retries with the ORIGINAL instruction unchanged.
+        self._logger.warning(
+            "Task %s: supervisor response not in PASS/REWORK format — "
+            "will retry with original instruction.",
+            task_id,
+        )
+        return ReviewResult(
+            task_id=task_id,
+            verdict="RETRY",
+            new_instruction=None,
+            message="Supervisor returned unstructured review; retrying with original instruction.",
         )
 
     # ------------------------------------------------------------------
@@ -151,6 +190,21 @@ class SupervisorAgent:
     # ------------------------------------------------------------------
 
     def _run(self, prompt: str, output_schema: Optional[str] = None) -> str:
+        if self._command == "interactive":
+            print("\n" + "="*80)
+            print("INTERACTIVE SUPERVISOR REQUIRED")
+            print("="*80)
+            print(prompt)
+            print("="*80)
+            if output_schema:
+                import sys
+                print("\nEXPECTED SCHEMA:")
+                print(output_schema)
+                print("\nPlease enter your JSON plan below (Press Ctrl+Z/Ctrl+D and Enter to finish):")
+                return sys.stdin.read().strip()
+            else:
+                return input("\nReview Result (PASS / REWORK: <instruction>): ").strip()
+
         with tempfile.TemporaryDirectory(prefix="supervisor-bridge-") as tmp_dir:
             output_file = Path(tmp_dir) / "supervisor-output.txt"
             schema_file: Optional[Path] = None
@@ -175,6 +229,7 @@ class SupervisorAgent:
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
+                    errors="replace",
                     check=False,
                 )
             except OSError as ex:

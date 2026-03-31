@@ -56,7 +56,8 @@ class TaskReport:
 class ReviewResult:
     """The supervisor's verdict on a completed task.
 
-    verdict is either "PASS" (approved) or "REWORK" (rejected with new instruction).
+    verdict is either "PASS" (approved), "REWORK" (rejected with new instruction),
+    or "RETRY" (supervisor gave unstructured response — retry with original instruction).
     new_instruction is only populated when verdict == "REWORK".
     """
 

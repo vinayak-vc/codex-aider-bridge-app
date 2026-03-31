@@ -17,6 +17,7 @@ from executor.diff_collector import DiffCollector
 from models.task import BridgeConfig, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
+from utils.driver_detection import detect_driver, detect_driver_info
 from validator.validator import MechanicalValidator
 
 
@@ -75,16 +76,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=os.getenv("BRIDGE_DEFAULT_VALIDATION"),
         help="Optional CI gate command run after each task (e.g. 'python -m pytest').",
     )
+    _detected_driver, _detected_supervisor = detect_driver()
     parser.add_argument(
         "--supervisor-command",
         default=os.getenv(
             "BRIDGE_SUPERVISOR_COMMAND",
-            "codex.cmd exec --skip-git-repo-check --color never",
+            _detected_supervisor,
         ),
         help=(
             "Command used to invoke the supervisor agent "
             "(Codex, Claude CLI, or any coding agent). "
-            "Supports {prompt} and {output_file} placeholders."
+            "Supports {prompt} and {output_file} placeholders. "
+            "Set to 'interactive' to provide supervisor inputs manually."
         ),
     )
     parser.add_argument(
@@ -245,6 +248,20 @@ def execute_task_with_review(
             logger.info("Task %s: supervisor approved", current_task.id)
             return
 
+        if review.verdict == "RETRY":
+            # Supervisor gave unstructured output — retry with original instruction
+            logger.warning(
+                "Task %s: retrying with original instruction (attempt %s)",
+                current_task.id,
+                attempt + 1,
+            )
+            if attempt >= config.max_task_retries:
+                raise RuntimeError(
+                    f"Task {current_task.id} exhausted retries."
+                )
+            # current_instruction stays unchanged — keep original
+            continue
+
         # REWORK — supervisor provides a corrected instruction
         logger.warning(
             "Task %s: supervisor requested rework (attempt %s): %s",
@@ -278,7 +295,13 @@ def main() -> int:
 
     repo_root = Path(args.repo_root).resolve()
     logger = configure_logging(repo_root / "logs", args.log_level)
-    logger.info("Bridge starting — repo: %s", repo_root)
+    driver_info = detect_driver_info()
+    logger.info(
+        "Bridge starting — driver: %s | supervisor: %s | repo: %s",
+        driver_info["driver"],
+        driver_info["supervisor"],
+        repo_root,
+    )
 
     idea_loader = IdeaLoader()
     idea_file: Optional[Path] = Path(args.idea_file).resolve() if args.idea_file else None
