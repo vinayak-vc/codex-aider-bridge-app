@@ -10,6 +10,7 @@ const NAV_CHORDS = {
   h: '/history',
   t: '/tokens',
   s: '/setup',
+  c: '/chat',
 };
 
 const CHORD_TIMEOUT_MS = 1500;
@@ -25,6 +26,7 @@ const SHORTCUTS = [
   { keys: ['g', 'h'],     desc: 'Go to History'     },
   { keys: ['g', 't'],     desc: 'Go to Tokens'      },
   { keys: ['g', 's'],     desc: 'Go to Setup'       },
+  { keys: ['g', 'c'],     desc: 'Go to Chat'        },
   { keys: ['Ctrl', '↵'],  desc: 'Launch run (Run page)' },
   { keys: ['Esc'],        desc: 'Close modal / overlay' },
   { keys: ['?'],          desc: 'Show this help'    },

@@ -530,3 +530,114 @@ def api_reports_understanding():
         return jsonify({"content": content, "exists": True})
     except Exception as ex:
         return jsonify({"content": "", "exists": False, "error": str(ex)})
+
+# ── Chat ───────────────────────────────────────────────────────────────────────
+
+@app.route("/chat")
+def page_chat():
+    return render_template("chat.html", active_page="chat")
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """Stream a chat response from Ollama using project knowledge as context."""
+    import urllib.request
+    import urllib.error
+
+    data = request.json or {}
+    message = data.get("message", "").strip()
+    history = data.get("history", [])   # [{role, content}, ...]
+
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+
+    settings = state_store.load_settings()
+    raw_model = settings.get("aider_model", "ollama/qwen2.5-coder:14b")
+    # Ollama API wants the bare model name (no "ollama/" prefix)
+    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
+
+    # --- Reject non-Ollama models (no API key in the UI) ---
+    if not raw_model.startswith("ollama/"):
+        return jsonify({
+            "error": (
+                f"Chat only works with local Ollama models (e.g. ollama/qwen2.5-coder:14b). "
+                f"Your configured model '{raw_model}' requires an API key which the chat "
+                f"endpoint does not manage. Switch to an Ollama model in Run settings first."
+            )
+        }), 400
+
+    # --- Build project context from knowledge file ---
+    repo_root = settings.get("repo_root", "").strip()
+    knowledge_ctx = ""
+    if repo_root:
+        try:
+            _root = Path(__file__).parent.parent
+            if str(_root) not in sys.path:
+                sys.path.insert(0, str(_root))
+            from utils.project_knowledge import load_knowledge, to_context_text
+            knowledge = load_knowledge(Path(repo_root))
+            knowledge_ctx = to_context_text(knowledge)
+        except Exception:
+            pass
+
+    system_prompt = f"""You are a helpful AI coding assistant integrated into the Codex-Aider Bridge tool.
+You help developers understand their codebase, plan features, debug issues, and discuss architecture.
+You are conversational, concise, and precise.
+
+IMPORTANT LIMITATIONS — disclose these when relevant:
+- You CANNOT edit files or run code directly. For actual code changes, use the Run tab.
+- Your project knowledge comes from a static scan and may not reflect the latest edits.
+- You have NO internet access.
+- Conversation history is NOT saved after the page is refreshed.
+- You run on the locally-installed Ollama model: {ollama_model}
+
+{knowledge_ctx}
+
+When suggesting code changes, be specific: name the file, the function, and exactly what to change.
+When the user is ready to execute, suggest they go to the Run tab with a clear goal description."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for h in history[-20:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": message})
+
+    def generate():
+        body = json.dumps({
+            "model": ollama_model,
+            "messages": messages,
+            "stream": True,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "http://localhost:11434/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                for raw_line in resp:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        token = chunk.get("message", {}).get("content", "")
+                        if token:
+                            yield f"data: {json.dumps({'token': token})}\n\n"
+                        if chunk.get("done"):
+                            yield f"data: {json.dumps({'done': True})}\n\n"
+                    except json.JSONDecodeError:
+                        pass
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", str(exc))
+            yield f"data: {json.dumps({'error': f'Ollama not reachable: {reason}. Is Ollama running?'})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        content_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

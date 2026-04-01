@@ -15,6 +15,124 @@ const SUPERVISOR_CMDS = {
   custom:   '',     // freeform
 };
 
+// ── Compatibility info ────────────────────────────────────────────────────────
+
+const SUPERVISOR_COMPAT = {
+  codex: {
+    level: 'warning',
+    message:
+      'Codex CLI requires <strong>OPENAI_API_KEY</strong> set in your environment. ' +
+      'ChatGPT Plus / Pro does NOT include API access — ' +
+      'sign up separately at platform.openai.com and add credits.',
+  },
+  claude: {
+    level: 'success',
+    message:
+      'Claude Code works with your <strong>Claude Pro subscription</strong> via ' +
+      '<code>claude login</code> (OAuth — no raw API key needed).',
+  },
+  cursor: {
+    level: 'info',
+    message:
+      'Cursor runs as an IDE and uses your <strong>Cursor subscription</strong>. ' +
+      'Cursor IDE must be installed and licensed on this machine.',
+  },
+  windsurf: {
+    level: 'info',
+    message:
+      'Windsurf runs as an IDE and uses your <strong>Windsurf subscription</strong>. ' +
+      'Windsurf IDE must be installed and licensed on this machine.',
+  },
+  manual: {
+    level: 'success',
+    message:
+      '<strong>No account or API key required.</strong> ' +
+      'You provide supervisor responses manually — works fully offline.',
+  },
+  custom: {
+    level: 'info',
+    message:
+      'Custom command: ensure the binary is on PATH and any required ' +
+      'environment variables (API keys, tokens) are set before launching.',
+  },
+};
+
+const MODEL_COMPAT = {
+  'gpt-': {
+    level: 'warning',
+    message:
+      'OpenAI models (gpt-*) require <strong>OPENAI_API_KEY</strong>. ' +
+      'ChatGPT Plus / Pro does NOT include API access.',
+  },
+  'claude-': {
+    level: 'warning',
+    message:
+      'Anthropic models (claude-*) require <strong>ANTHROPIC_API_KEY</strong>. ' +
+      'Claude Pro (claude.ai) does NOT include API access — ' +
+      'API billing is separate at console.anthropic.com.',
+  },
+  'o1': {
+    level: 'warning',
+    message:
+      'OpenAI o1 models require <strong>OPENAI_API_KEY</strong>. ' +
+      'ChatGPT Plus / Pro does NOT include API access.',
+  },
+};
+
+function makeBanner(level, html) {
+  // level: 'success' | 'info' | 'warning'
+  const icons = {
+    success: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>',
+    info:    '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>',
+    warning: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>',
+  };
+  const colorMap = {
+    success: 'var(--color-success)',
+    info:    'var(--color-info)',
+    warning: 'var(--color-warning)',
+  };
+  const bgMap = {
+    success: 'rgba(34,197,94,.08)',
+    info:    'rgba(6,182,212,.08)',
+    warning: 'rgba(245,158,11,.08)',
+  };
+  return `<div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:var(--radius-md);border:1px solid ${colorMap[level]};background:${bgMap[level]};font-size:var(--font-size-sm);color:var(--color-text-muted);line-height:1.5">
+    <span style="color:${colorMap[level]};flex-shrink:0;margin-top:1px">${icons[level]}</span>
+    <span>${html}</span>
+  </div>`;
+}
+
+function updateCompatWarnings() {
+  // Supervisor banner
+  const sup = document.querySelector('input[name="supervisor"]:checked')?.value || '';
+  const supBanner = $('supervisor-compat-banner');
+  if (supBanner) {
+    const compat = SUPERVISOR_COMPAT[sup];
+    if (compat) {
+      supBanner.innerHTML = makeBanner(compat.level, compat.message);
+      supBanner.style.display = '';
+    } else {
+      supBanner.style.display = 'none';
+    }
+  }
+
+  // Model banner
+  const model = $('f-aider-model')?.value?.trim() || '';
+  const modelBanner = $('model-api-banner');
+  if (modelBanner) {
+    let matched = null;
+    for (const [prefix, info] of Object.entries(MODEL_COMPAT)) {
+      if (model.startsWith(prefix)) { matched = info; break; }
+    }
+    if (matched) {
+      modelBanner.innerHTML = makeBanner(matched.level, matched.message);
+      modelBanner.style.display = '';
+    } else {
+      modelBanner.style.display = 'none';
+    }
+  }
+}
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
 const $ = id => document.getElementById(id);
@@ -51,6 +169,7 @@ function populateForm(s) {
   }
 
   updateCommandPreview();
+  updateCompatWarnings();
 }
 
 // ── Form → settings object ────────────────────────────────────────────────────
@@ -328,6 +447,9 @@ function bindControls() {
     });
   });
 
+  // Model input change → update compat warning
+  $('f-aider-model')?.addEventListener('input', updateCompatWarnings);
+
   // Number +/- buttons
   document.querySelectorAll('.num-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -348,6 +470,7 @@ function bindControls() {
       const wrap = $('supervisor-custom-wrap');
       if (wrap) wrap.style.display = isCustom ? '' : 'none';
       updateCommandPreview();
+      updateCompatWarnings();
     });
   });
   $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
@@ -409,6 +532,7 @@ async function init() {
 
   // If a run is already active, show live state
   await hydrateExistingRun();
+  updateCompatWarnings();
 }
 
 init();
