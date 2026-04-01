@@ -33,7 +33,9 @@ Supervisor Agent (Codex / Claude / any)
 Bridge (this app)
   │  - Routes messages between supervisor and Aider
   │  - Collects git diffs after execution
+  │  - Requires a git-backed target repo before execution
   │  - Runs mechanical checks (file existence, syntax, CI gate)
+  │  - Auto-commits approved task changes into small local commits
   │  - Sends compact review payloads to supervisor
   │  - Persists project knowledge, task metrics, token log, and latest run report
   │  - Never makes coding decisions
@@ -93,7 +95,8 @@ For the most reliable and token-efficient setup:
    - `pass`
    - `rework`
    - `subplan`
-7. The bridge resumes and continues until all tasks are complete.
+7. The bridge auto-commits each approved task into the target repo.
+8. The bridge resumes and continues until all tasks are complete.
 
 This keeps the bridge dumb, Aider productive, and the expensive AI focused only on planning and review.
 
@@ -117,6 +120,7 @@ Important files:
 - `bridge_progress/task_metrics.json`
   - machine-readable task completion state for the current run
   - resumed checkpoint ids are tracked separately
+  - records per-task `commit_sha` values when auto-commit succeeds
 - `bridge_progress/token_log.json`
   - token and savings history across runs
 - `bridge_progress/LATEST_REPORT.md`
@@ -191,6 +195,14 @@ python main.py "Add unit tests" \
   --validation-command "python -m pytest"
 ```
 
+Before task execution starts, the bridge now logs a git-readiness preview for the target repo:
+- whether the target is a git repository
+- whether `HEAD` exists
+- current branch
+- clean vs dirty worktree
+- staged, unstaged, and untracked counts
+- what the bridge will do next
+
 ---
 
 ## Features
@@ -198,6 +210,8 @@ python main.py "Add unit tests" \
 - **Web UI** with setup wizard, live task progress, run history, and persisted settings
 - Supervisor agent produces atomic sequential plans from the live repo tree — no hardcoded file lists
 - Supervisor reviews each task's git diff before the next task is allowed to start
+- Git-readiness pre-flight preview before Aider runs
+- The bridge refuses to work on non-git target repos unless the operator lets it initialize one interactively
 - Manual supervisor mode for in-session agents such as Codex — no external supervisor CLI required
 - Filesystem-based review handoff for manual supervision:
   - `bridge_progress/manual_supervisor/requests/`
@@ -209,6 +223,7 @@ python main.py "Add unit tests" \
   - `token_log.json`
   - `LATEST_REPORT.md`
 - Aider runs on a local LLM (`--aider-model ollama/mistral`, `ollama/codellama`, etc.)
+- Approved tasks are auto-committed as small local git commits in the target repo
 - Mechanical validation (file existence, Python syntax, optional CI gate) runs without supervisor tokens
 - Delete tasks as first-class plan items
 - Task assertions via `must_exist` and `must_not_exist`
@@ -261,10 +276,16 @@ python main.py "Short goal headline" \
   --aider-model ollama/qwen2.5-coder:14b
 ```
 
+The target repo must be backed by git before the bridge will execute tasks.
+If the folder is not a git repository and you are running interactively, the bridge can:
+- stop and let you create the repo yourself
+- or initialize a local git repo and create the baseline commit for you
+
 6. After each task:
    - read the request file in `D:\ExternalProject\bridge_progress\manual_supervisor\requests\`
    - review the diff and validation result
    - write a decision file into `...manual_supervisor\decisions\`
+   - once approved, let the bridge auto-commit that task's file changes
 7. Use the analytics files in `bridge_progress/` instead of re-reading the repo blindly on every follow-up:
    - `project_knowledge.json`
    - `project_snapshot.json`
@@ -501,6 +522,7 @@ Use `wasted_tokens_total` and `waste_reason_counts` in `token_log.json` to separ
 
 - The bridge resolves `codex`, `aider`, and other executables from PATH, `.venv\Scripts`, `venv\Scripts`, and `aider-env\Scripts` automatically on Windows.
 - The supervisor receives the live repo tree at runtime — no hardcoded file paths anywhere.
+- `bridge_progress/task_metrics.json` now includes per-task commit SHAs when auto-commit succeeds.
 - If the supervisor fails to produce a valid plan after all retries, use `--plan-file` to supply one manually.
 - The bridge does not depend on a specific project type and works against any repo reachable via `--repo-root`.
 - `bridge_progress/project_knowledge.json` is the main handoff file for future sessions; the supervising agent should prefer reading it before opening source files.

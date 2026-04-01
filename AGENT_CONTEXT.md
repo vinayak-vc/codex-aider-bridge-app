@@ -18,7 +18,9 @@ Bridge (this app)
   - Sends planning and review prompts to the supervisor
   - Runs Aider per task with task-scoped file list
   - Collects git diffs after each Aider run
+  - Requires the target repo to be git-backed and can initialize a baseline commit interactively
   - Runs mechanical checks (no supervisor tokens)
+  - Auto-commits each approved task into a small local git commit
   - Routes REWORK instructions back to Aider
   - NEVER makes coding or implementation decisions
 
@@ -44,7 +46,8 @@ terminal interaction.
 
 - `main.py`
   Orchestrates repo scanning, plan acquisition, the sequential task-review loop,
-  logging, and CLI argument handling. No coding decisions.
+  logging, git-readiness pre-flight, per-task auto-commit, and CLI argument handling.
+  No coding decisions.
 
 - `supervisor/agent.py` (`SupervisorAgent`)
   Builds planning and review prompts, runs the supervisor CLI subprocess,
@@ -221,6 +224,7 @@ main()
      e. SupervisorAgent.review_task(TaskReport) → ReviewResult
         PASS   → move to next task
         REWORK → retry with supervisor's new instruction
+     f. Bridge auto-commits approved task changes and stores the commit SHA in task metrics
         → on retries exhausted: raise RuntimeError
   6. Print JSON summary {"status": "success", "tasks": N}
 ```
@@ -250,7 +254,8 @@ back to the browser via Server-Sent Events.
 4. **Diff-driven review.** The supervisor sees the actual git diff, not just exit codes.
 5. **Mechanical failures are free.** File existence and syntax checks don't call the supervisor.
 6. **Aider uses local LLM.** Configured via `--aider-model` (e.g. `ollama/mistral`).
-7. **No hardcoded paths.** The supervisor receives the live repo tree every run.
+7. **Target repos must use git.** The bridge blocks non-git repos unless the operator lets it initialize one.
+8. **No hardcoded paths.** The supervisor receives the live repo tree every run.
 
 ---
 

@@ -35,9 +35,10 @@ That means:
    - any project summary file if available
 4. Have the AI write a plan JSON into:
    - `<target_repo>/taskJsons/`
-5. Run the bridge against that plan.
-6. Review each task request JSON and write a decision JSON.
-7. Let the bridge continue until done.
+5. Make sure the target repo is a git repository.
+6. Run the bridge against that plan.
+7. Review each task request JSON and write a decision JSON.
+8. Let the bridge continue until done.
 
 ---
 
@@ -101,6 +102,11 @@ python main.py "Short goal headline" `
 - `--manual-supervisor` keeps review inside the current AI session
 - `--aider-model` chooses the local coding model
 
+Before Aider starts, the bridge now shows a git-readiness summary for the target repo.
+If the target folder is not a git repository, the bridge will not proceed until:
+- you create the repo yourself and rerun
+- or you allow the bridge to initialize the local git repo and baseline commit for you
+
 ---
 
 ## Where Review Files Appear
@@ -145,6 +151,7 @@ It also maintains:
   - completed and pending task ids
 - `task_metrics.json`
   - machine-readable per-run task state
+  - per-task `commit_sha` values when auto-commit succeeds
 - `token_log.json`
   - token/savings history
 - `LATEST_REPORT.md`
@@ -214,6 +221,7 @@ If you want to use this bridge with another repo, the supervising AI should foll
    - assertions included
 6. Run the bridge in manual-supervisor mode.
 7. Review every task before allowing the next one.
+8. Let the bridge auto-commit each approved task so future diffs stay small and recoverable.
 
 This keeps the agent acting as a technical lead instead of as the coder.
 
@@ -271,6 +279,16 @@ Check:
 If a request exists, write the matching decision JSON.
 
 If both the request and decision already exist from a prior interrupted run, rerun the same bridge command first. The bridge now consumes a matching pair automatically.
+
+### The bridge says the target project must be a git repository
+
+That is expected.
+
+The bridge now requires git because diff-driven review and rollback depend on it.
+
+If you are running interactively, choose one of:
+- create the repo yourself and rerun
+- let the bridge initialize the local git repo and create the first baseline commit
 
 ### The bridge crashed with `OSError: [Errno 22] Invalid argument`
 

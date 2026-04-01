@@ -45,6 +45,7 @@ def _build_task_metrics(
     tasks: list[Task],
     completed_ids: set[int],
     resumed_completed_ids: set[int],
+    task_commit_shas: dict[int, str],
     skipped: int,
     all_diffs: list[dict],
     run_status: str,
@@ -68,6 +69,7 @@ def _build_task_metrics(
                 "must_exist": list(task.must_exist),
                 "must_not_exist": list(task.must_not_exist),
                 "completed": task.id in completed_ids,
+                "commit_sha": task_commit_shas.get(task.id),
             }
             for task in tasks
         ],
@@ -167,6 +169,7 @@ def _persist_bridge_progress(
     tasks: list[Task],
     completed_ids: set[int],
     resumed_completed_ids: set[int],
+    task_commit_shas: dict[int, str],
     skipped: int,
     all_diffs: list[dict],
     elapsed_seconds: float,
@@ -182,6 +185,7 @@ def _persist_bridge_progress(
             tasks,
             completed_ids,
             resumed_completed_ids,
+            task_commit_shas,
             skipped,
             all_diffs,
             run_status,
@@ -1319,6 +1323,74 @@ def _has_git_head(repo_root: Path) -> bool:
     return result.returncode == 0
 
 
+def _get_git_branch_name(repo_root: Path) -> Optional[str]:
+    result = _run_git_command(repo_root, ["branch", "--show-current"])
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+def _collect_git_readiness(repo_root: Path) -> dict[str, object]:
+    is_git = _is_git_repository(repo_root)
+    has_head = _has_git_head(repo_root) if is_git else False
+    branch = _get_git_branch_name(repo_root) if is_git else None
+
+    staged_count = 0
+    unstaged_count = 0
+    untracked_count = 0
+    clean = False
+
+    if is_git:
+        status_result = _run_git_command(repo_root, ["status", "--porcelain"])
+        if status_result.returncode == 0:
+            lines = [line for line in status_result.stdout.splitlines() if line.strip()]
+            for line in lines:
+                if line.startswith("??"):
+                    untracked_count += 1
+                    continue
+                if len(line) >= 2:
+                    if line[0] != " ":
+                        staged_count += 1
+                    if line[1] != " ":
+                        unstaged_count += 1
+            clean = len(lines) == 0
+
+    next_action = "continue"
+    if not is_git:
+        next_action = "prompt_to_create_or_stop"
+    elif not has_head:
+        next_action = "create_baseline_commit"
+
+    return {
+        "is_git_repository": is_git,
+        "has_head": has_head,
+        "branch": branch,
+        "clean_worktree": clean,
+        "staged_changes": staged_count,
+        "unstaged_changes": unstaged_count,
+        "untracked_files": untracked_count,
+        "next_action": next_action,
+    }
+
+
+def _log_git_readiness_preview(repo_root: Path, logger: logging.Logger) -> dict[str, object]:
+    readiness = _collect_git_readiness(repo_root)
+    branch = readiness.get("branch") or "(none)"
+    logger.info(
+        "Git readiness — repo=%s, head=%s, branch=%s, clean=%s, staged=%s, unstaged=%s, untracked=%s, next=%s",
+        "yes" if readiness["is_git_repository"] else "no",
+        "yes" if readiness["has_head"] else "no",
+        branch,
+        "yes" if readiness["clean_worktree"] else "no",
+        readiness["staged_changes"],
+        readiness["unstaged_changes"],
+        readiness["untracked_files"],
+        readiness["next_action"],
+    )
+    return readiness
+
+
 def _prompt_for_git_repo_creation(repo_root: Path) -> bool:
     if not sys.stdin.isatty():
         raise RuntimeError(
@@ -1467,6 +1539,7 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
         )
 
     logger.debug("Pre-flight: checking git repository at %s", config.repo_root)
+    _log_git_readiness_preview(config.repo_root, logger)
     _ensure_git_repository_exists(config.repo_root, logger)
 
     logger.debug("Pre-flight: checking disk space at %s", config.repo_root)
@@ -1511,6 +1584,7 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
         logger.warning("Could not update .gitignore: %s (non-fatal)", _ge)
 
     _ensure_git_baseline_commit(config.repo_root, logger)
+    _log_git_readiness_preview(config.repo_root, logger)
     logger.info("Pre-flight checks passed.")
 
 
@@ -1757,6 +1831,7 @@ def main() -> int:
     )
     tasks: list[Task] = []
     completed_ids: set[int] = set()
+    task_commit_shas: dict[int, str] = {}
     completed_summaries: list[str] = []
     all_diffs: list[dict] = []
     skipped = 0
@@ -1831,7 +1906,9 @@ def main() -> int:
                 aider_context=aider_context,
             )
             failed_task_id = None
-            _auto_commit_task_changes(repo_root, task, logger)
+            commit_sha = _auto_commit_task_changes(repo_root, task, logger)
+            if commit_sha:
+                task_commit_shas[task.id] = commit_sha
             completed_ids.add(task.id)
             save_checkpoint(repo_root, completed_ids)
             task_summary = (
@@ -1839,7 +1916,14 @@ def main() -> int:
                 + (" ..." if len(task.files) > 2 else "")
             )
             completed_summaries.append(task_summary)
-            all_diffs.append({"task_id": task.id, "summary": task_summary, "diff": task_diff or ""})
+            all_diffs.append(
+                {
+                    "task_id": task.id,
+                    "summary": task_summary,
+                    "diff": task_diff or "",
+                    "commit_sha": commit_sha,
+                }
+            )
             knowledge = update_knowledge_from_run(
                 knowledge,
                 config.goal,
@@ -1857,6 +1941,7 @@ def main() -> int:
                 tasks,
                 completed_ids,
                 resumed_completed_ids,
+                task_commit_shas,
                 skipped,
                 all_diffs,
                 round(time.monotonic() - run_start, 1),
@@ -1956,6 +2041,7 @@ def main() -> int:
             tasks,
             completed_ids,
             resumed_completed_ids,
+            task_commit_shas,
             skipped,
             all_diffs,
             elapsed,
@@ -2008,6 +2094,7 @@ def main() -> int:
                 tasks,
                 completed_ids,
                 resumed_completed_ids,
+                task_commit_shas,
                 skipped,
                 all_diffs,
                 elapsed,

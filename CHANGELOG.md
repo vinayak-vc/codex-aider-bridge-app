@@ -2,6 +2,28 @@
 
 ---
 
+## [2026-04-01] — Git Readiness and Auto-Commit
+
+### Added
+- Git-readiness preview in pre-flight:
+  - whether the target repo is git-backed
+  - whether `HEAD` exists
+  - current branch
+  - clean vs dirty worktree
+  - staged / unstaged / untracked counts
+  - next bridge action
+- Interactive recovery for non-git target repos:
+  - stop and let the user create the repo
+  - or initialize the local git repo and baseline commit automatically
+- Per-task auto-commit after approval so each completed task lands in a small local git commit
+- `task_metrics.json` now stores per-task `commit_sha` values when auto-commit succeeds
+
+### Changed
+- The bridge now refuses to execute tasks against non-git target projects
+- Pre-flight now guarantees the target repo has a valid `HEAD` before diff collection starts
+
+---
+
 ## [2026-03-25] — Web UI, Architecture Redesign, HOW_TO
 
 ### Added
