@@ -1296,6 +1296,161 @@ def estimate_session_tokens(
     return total
 
 
+def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git"] + args,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=30,
+    )
+
+
+def _is_git_repository(repo_root: Path) -> bool:
+    result = _run_git_command(repo_root, ["rev-parse", "--is-inside-work-tree"])
+    return result.returncode == 0 and result.stdout.strip().lower() == "true"
+
+
+def _has_git_head(repo_root: Path) -> bool:
+    result = _run_git_command(repo_root, ["rev-parse", "--verify", "HEAD"])
+    return result.returncode == 0
+
+
+def _prompt_for_git_repo_creation(repo_root: Path) -> bool:
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            f"Repo root is not a git repository: {repo_root}. "
+            "The bridge requires a git repository with at least one commit before it can run. "
+            "Create the repository yourself, or rerun interactively and let the bridge do it for you."
+        )
+
+    print()
+    print(f"Target project is not a git repository: {repo_root}")
+    print("The bridge will not run without git because diff-based review depends on it.")
+    print("Choose one:")
+    print("  [1] I will create the git repository myself and rerun the bridge")
+    print("  [2] Create a local git repository and baseline commit for me now")
+
+    while True:
+        try:
+            answer = input("Select 1 or 2: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise RuntimeError(
+                "Bridge cancelled. The target project must be a git repository before the run can continue."
+            )
+
+        if answer in {"1", "self", "manual"}:
+            raise RuntimeError(
+                "Bridge stopped. Create the git repository yourself and rerun when it is ready."
+            )
+        if answer in {"2", "bridge", "auto"}:
+            return True
+
+        print("Please enter 1 or 2.")
+
+
+def _ensure_git_repository_exists(repo_root: Path, logger: logging.Logger) -> None:
+    if _is_git_repository(repo_root):
+        return
+
+    logger.warning("Pre-flight: %s is not a git repository.", repo_root)
+    should_create = _prompt_for_git_repo_creation(repo_root)
+    if not should_create:
+        raise RuntimeError(
+            "Bridge stopped. The target project must be a git repository before the run can continue."
+        )
+
+    logger.info("Initialising local git repository at %s", repo_root)
+    init_result = _run_git_command(repo_root, ["init"])
+    if init_result.returncode != 0:
+        raise RuntimeError(
+            "Failed to initialise git repository at "
+            f"{repo_root}: {init_result.stderr.strip() or init_result.stdout.strip()}"
+        )
+
+    logger.info("Local git repository created at %s", repo_root)
+
+
+def _ensure_git_baseline_commit(repo_root: Path, logger: logging.Logger) -> None:
+    if _has_git_head(repo_root):
+        return
+
+    logger.info("Pre-flight: repository at %s has no commits yet. Creating baseline commit.", repo_root)
+
+    add_result = _run_git_command(repo_root, ["add", "-A"])
+    if add_result.returncode != 0:
+        raise RuntimeError(
+            "Failed to stage files for the initial git commit: "
+            f"{add_result.stderr.strip() or add_result.stdout.strip()}"
+        )
+
+    commit_result = _run_git_command(
+        repo_root,
+        ["commit", "--allow-empty", "-m", "Initial bridge baseline"],
+    )
+    if commit_result.returncode != 0:
+        output = commit_result.stderr.strip() or commit_result.stdout.strip()
+        raise RuntimeError(
+            "Failed to create the initial git commit required by the bridge: "
+            f"{output}"
+        )
+
+    logger.info("Created initial git baseline commit for %s", repo_root)
+
+
+def _auto_commit_task_changes(repo_root: Path, task: Task, logger: logging.Logger) -> Optional[str]:
+    file_args = list(task.files)
+    add_result = _run_git_command(repo_root, ["add", "-A", "--"] + file_args)
+    if add_result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to stage task {task.id} changes for auto-commit: "
+            f"{add_result.stderr.strip() or add_result.stdout.strip()}"
+        )
+
+    diff_result = _run_git_command(repo_root, ["diff", "--cached", "--name-only", "--"] + file_args)
+    if diff_result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to inspect staged changes for task {task.id}: "
+            f"{diff_result.stderr.strip() or diff_result.stdout.strip()}"
+        )
+
+    staged_files = [line.strip() for line in diff_result.stdout.splitlines() if line.strip()]
+    if not staged_files:
+        logger.info("Task %s: no staged file changes to auto-commit.", task.id)
+        return None
+
+    commit_message = f"bridge: task {task.id} {task.type} " + ", ".join(task.files[:2])
+    if len(task.files) > 2:
+        commit_message += " ..."
+
+    commit_result = _run_git_command(repo_root, ["commit", "-m", commit_message])
+    if commit_result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to auto-commit task {task.id}: "
+            f"{commit_result.stderr.strip() or commit_result.stdout.strip()}"
+        )
+
+    head_result = _run_git_command(repo_root, ["rev-parse", "--short", "HEAD"])
+    if head_result.returncode != 0:
+        raise RuntimeError(
+            f"Task {task.id} committed, but the new HEAD could not be resolved: "
+            f"{head_result.stderr.strip() or head_result.stdout.strip()}"
+        )
+
+    commit_sha = head_result.stdout.strip()
+    logger.info(
+        "Task %s: auto-committed %d file(s) at %s",
+        task.id,
+        len(staged_files),
+        commit_sha,
+    )
+    return commit_sha
+
+
 def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     """Validate environment before spending any tokens on planning or execution.
 
@@ -1312,11 +1467,7 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
         )
 
     logger.debug("Pre-flight: checking git repository at %s", config.repo_root)
-    if not (config.repo_root / ".git").exists():
-        raise RuntimeError(
-            f"Repo root is not a git repository: {config.repo_root}. "
-            "Initialise with: git init"
-        )
+    _ensure_git_repository_exists(config.repo_root, logger)
 
     logger.debug("Pre-flight: checking disk space at %s", config.repo_root)
     free_bytes = shutil.disk_usage(config.repo_root).free
@@ -1359,6 +1510,7 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     except OSError as _ge:
         logger.warning("Could not update .gitignore: %s (non-fatal)", _ge)
 
+    _ensure_git_baseline_commit(config.repo_root, logger)
     logger.info("Pre-flight checks passed.")
 
 
@@ -1679,6 +1831,7 @@ def main() -> int:
                 aider_context=aider_context,
             )
             failed_task_id = None
+            _auto_commit_task_changes(repo_root, task, logger)
             completed_ids.add(task.id)
             save_checkpoint(repo_root, completed_ids)
             task_summary = (
