@@ -2,6 +2,67 @@
 
 ---
 
+## [2026-04-01] — Multi-page Web UI, Chat Feature, AI Relay Spec
+
+### Added — Web UI Rebuild (M1–M8, complete)
+- **Multi-page Flask app** replacing the single-file `index.html`:
+  - `/dashboard` — live SVG progress ring, task feed, pause/resume, review panel with diff viewer
+  - `/run` — full config form, supervisor selector, live log terminal, command preview
+  - `/knowledge` — AI_UNDERSTANDING.md viewer, file registry with sort/filter/pagination
+  - `/history` — searchable/filterable run table, log modal, re-run
+  - `/tokens` — token analytics, savings bar, session chart and detail panel
+  - `/setup` — dependency check cards, Aider install terminal, Ollama model manager
+- **Design system** — CSS custom properties in `tokens.css`, dark default, light mode toggle persisted in `localStorage`
+- **Sidebar navigation** — fixed 220px sidebar, active state, run status chip, issue badge on Setup
+- **SSE infrastructure** — `SSEClient` class with auto-reconnect, reactive `store.js`, `api.js` fetch wrapper
+- **Inline markdown renderer** — ~80-line vanilla JS renderer in `knowledge.js` (no external library)
+- **Keyboard shortcuts** — `g+d/r/k/h/t/s/c` navigation chords, `?` help overlay, `Ctrl+Enter` to launch run
+- `/legacy` route removed; `/` redirects to `/dashboard`
+
+### Added — Chat Page (`/chat`, shortcut `g+c`)
+- Conversational AI interface powered by local Ollama model
+- Token-by-token streaming via `fetch` ReadableStream + SSE
+- Project-aware system prompt: file roles, patterns, language, type injected from last bridge scan
+- Inline markdown renderer for assistant replies (headings, bold/italic, code blocks, lists)
+- Welcome screen with 4 suggestion chips; auto-resizing textarea
+- Enter to send / Shift+Enter for newline
+- Limitations banner always visible: no file editing, no internet, history not persisted on refresh
+- Blocks gracefully when a non-Ollama model is configured (API keys not managed by UI)
+
+### Added — Run Page Compatibility Warnings
+- **Supervisor warnings** — live banner per selected supervisor tile:
+  - Codex: warns `OPENAI_API_KEY` required — ChatGPT Plus/Pro does NOT include API access
+  - Claude: confirms Claude Pro works via `claude login` (OAuth, no separate API key)
+  - Cursor / Windsurf: confirms IDE subscription required, IDE must be installed
+  - Manual: no account or API key needed
+- **Aider model warnings** — live banner per model input:
+  - `gpt-*` models: warns OpenAI API key required (separate from ChatGPT Plus)
+  - `claude-*` models: warns Anthropic API key required (separate from Claude Pro)
+  - `ollama/*` models: no warning — fully local and free
+
+### Added — Onboarding Scanner
+- `utils/onboarding_scanner.py` — one-time source scan on first run against an existing project
+- Extracts file roles from docstrings / class names / function names (Python via `ast`, JS/TS/C#/Go via regex)
+- Detects dominant language, project type (unity/node/python/go/dotnet), architectural patterns
+- 500-file cap with fair depth-based sampling
+- `--skip-onboarding-scan` flag; `BridgeConfig.skip_onboarding_scan` field
+
+### Added — Project Understanding Bootstrap
+- `context/project_understanding.py` — discovers markdown docs, writes `bridge_progress/AI_UNDERSTANDING.md`
+- `understanding_confirmed` field in project knowledge schema
+- `docs[]` and `clarifications[]` fields in project knowledge
+
+### Fixed — UnicodeEncodeError on Windows cp1252 consoles
+- `main.py` — `_fix_windows_encoding()` reconfigures stdout/stderr to UTF-8 with `errors='replace'` at startup
+- `utils/project_type_prompt.py` — replaced `─`, emoji chars with ASCII fallbacks
+- `launch_ui.py` — replaced `…` with `...`
+
+### Documented — AI Relay Supervisor
+- `AI_RELAY_SPEC.md` — full implementation spec for the upcoming AI Relay supervisor mode
+  (use any web AI as supervisor via copy-paste — no API key required)
+
+---
+
 ## [2026-04-01] — Git Readiness and Auto-Commit
 
 ### Added

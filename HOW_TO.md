@@ -11,17 +11,58 @@ This bridge is designed for a three-part workflow:
 - **Aider** acts as the developer
 - **The bridge** only executes, validates, records, and waits for the next decision
 
-It also keeps a persistent memory of the external project under `bridge_progress/` so the supervising AI can resume from structured state instead of rebuilding context manually.
+It keeps a persistent memory of the external project under `bridge_progress/` so the supervising AI can resume from structured state instead of rebuilding context from scratch.
 
-The recommended mode is:
-- `--manual-supervisor`
-- `--workflow-profile micro`
+---
 
-That means:
-- the AI writes the plan
-- the bridge does not call another AI CLI
-- Aider performs the file changes
-- the bridge pauses after each task for review
+## Using the Web UI (Recommended for Most Users)
+
+The easiest way — no terminal required after initial setup.
+
+```bash
+python launch_ui.py
+```
+
+Or double-click **`launch_ui.bat`** on Windows. Opens at `http://127.0.0.1:7823`.
+
+### Pages at a glance
+
+| Page | What it does |
+|---|---|
+| **Dashboard** | Live progress ring, task feed, pause/resume, review panel with diff viewer |
+| **Run** | Configure and launch a run — goal, repo, model, supervisor, advanced options |
+| **Chat** | Ask your local Ollama model questions about the project (no API key needed) |
+| **Knowledge** | View AI_UNDERSTANDING.md and the scanned file registry |
+| **History** | Browse past runs, re-run with same settings, view full logs |
+| **Tokens** | Token usage analytics with savings bar and session detail |
+| **Setup** | Install/check Aider, Ollama, and supervisor tools |
+
+### Choosing a supervisor
+
+| Supervisor | What you need |
+|---|---|
+| **Claude Code** | Run `claude login` once — Claude Pro subscription works |
+| **Cursor** | Cursor IDE installed with active subscription |
+| **Windsurf** | Windsurf IDE installed with active subscription |
+| **Manual** | Nothing — you write decision files yourself (see below) |
+| **AI Relay** *(coming soon)* | Nothing — use any web AI via copy-paste, no API key |
+| **Codex CLI** | `OPENAI_API_KEY` env var + API credits (ChatGPT Plus does NOT cover this) |
+
+The Run page shows a live compatibility banner per supervisor and model selection.
+
+### Using the Chat page
+
+Chat lets you talk about your project using the local Ollama model.
+It **cannot edit files** — for code changes, use the Run tab.
+
+Good uses for Chat:
+- "What does PlayerController.cs do?"
+- "Why is the QuickPlay scene not working?"
+- "Plan the tasks I would need to add multiplayer"
+- "What's the best way to structure a save system?"
+
+Chat is blocked when a non-Ollama model (e.g. `gpt-4o`) is configured — switch to an
+`ollama/…` model in Run settings first.
 
 ---
 

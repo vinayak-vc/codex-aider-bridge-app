@@ -486,3 +486,90 @@ This document lists the currently implemented features of `codex-aider-bridge-ap
 - Diff review is compact and truncated, not a full semantic analysis layer.
 - Validation coverage is strongest for Unity, C#, Python, JavaScript, and TypeScript. Other project types mostly fall back to generic behavior.
 - The UI manages one local run at a time through a singleton run manager.
+
+---
+
+## 16. Web UI — Multi-Page Application
+
+The UI was fully rebuilt from a single `index.html` into a multi-page Flask application.
+
+### Pages
+- `/dashboard` — live SVG progress ring (r=58, circumference 364.42), task feed with per-status border colours (running / approved / rework / retrying / failure / dry-run), pause/resume buttons, manual review panel with unified diff viewer and radio decision
+- `/run` — full config form mirroring all CLI flags, 6 supervisor tiles, dry-run toggle, command preview (mirrors `bridge_runner.py build_command()`), advanced accordion, live log terminal with auto-scroll
+- `/chat` — conversational AI (see section 17)
+- `/knowledge` — three-tab layout: Overview (project badges, stat chips, pattern/feature lists), AI Understanding (markdown viewer), File Registry (search, type filter, sortable table, 50-row pagination)
+- `/history` — searchable + filterable run table, inline delete confirmation (no `window.confirm()`), clear-all warning panel, log viewer modal with stats row + full terminal, re-run (saves settings then navigates to `/run`), relative timestamps
+- `/tokens` — 5 stat chips, savings bar with gradient fill, CSS horizontal bar chart, clickable session rows, 4-section detail panel (Supervisor / Savings / Aider / Interactive)
+- `/setup` — 5 dependency check cards with animated status dot, Aider install SSE terminal, Ollama model manager with pull input
+
+### Frontend Infrastructure
+- CSS custom properties design system (`tokens.css`) — dark default, `[data-theme="light"]` override, persisted in `localStorage`
+- Vanilla ES modules only — no npm, no bundler, no framework
+- `SSEClient` class: auto-reconnects every 3 s, dispatches typed events (`start`, `task_update`, `progress`, `complete`, `paused`, `resumed`, `review_required`, etc.)
+- Reactive `store.js`: key-based subscription pattern, `get/set/subscribe/snapshot`
+- `api.js`: `apiFetch`, `apiPost`, `apiDelete` with normalised error handling
+- `toast.js`: non-blocking notifications (success / error / info / warning)
+- `shortcuts.js`: `g+d/r/k/h/t/s/c` navigation chords with 1.5 s timeout, `?` help overlay, ignored inside inputs/textareas
+- All icons: heroicons-style inline SVG — no emoji, no icon font
+
+### Supervisor & Model Compatibility Warnings (Run page)
+- Live banner per supervisor tile: Codex warns API key required; Claude confirms Pro works via OAuth; Cursor/Windsurf confirm subscription required; Manual confirms no account needed
+- Live banner per model input: `gpt-*` and `claude-*` models warn that web subscriptions (Plus/Pro) do not include API access; `ollama/*` models show no warning
+
+---
+
+## 17. Chat Feature
+
+Local conversational AI integrated directly into the web UI at `/chat` (shortcut `g+c`).
+
+- Powered by the configured Ollama model — fully local, no API key
+- Project-aware system prompt: file roles, patterns, language, type injected from `project_knowledge.json`
+- Token-by-token streaming via `fetch` ReadableStream parsing SSE chunks
+- Inline markdown renderer (no library): h1–h3, bold/italic, inline code, fenced code blocks, unordered/ordered lists, blank-line spacing
+- Conversation history maintained in JS memory (cleared on page refresh — intentional, disclosed)
+- Welcome screen with 4 suggestion chips; Enter to send / Shift+Enter for newline; auto-resizing textarea
+- Dismissible limitations banner always shown on first load
+- Gracefully blocks and explains when a non-Ollama model is configured (API keys not managed)
+- `/api/chat` POST endpoint: validates Ollama prefix, builds system prompt with knowledge context, proxies to `http://localhost:11434/api/chat` via `urllib.request`, streams tokens as SSE
+
+### What Chat can do
+- Answer questions about project architecture and file structure
+- Help plan a feature before committing to a Run
+- Debug issues by discussing codebase patterns
+- Suggest what goal text to enter in the Run tab
+
+### What Chat cannot do
+- Edit files (use the Run tab)
+- Browse the internet
+- Persist conversation history across page refreshes
+- Use `gpt-*` or `claude-*` models without an external API key
+
+---
+
+## 18. AI Relay Supervisor (Planned)
+
+> Status: Spec complete — see `AI_RELAY_SPEC.md`. Implementation pending.
+
+Enables using any web-based AI subscription (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok, Cursor chat, Windsurf chat) as the supervisor brain with **no API key**, by making the user the relay between the web AI and the bridge.
+
+### Flow
+1. Bridge generates a formatted "plan prompt" including project context → user copies into web AI chat
+2. Web AI returns a structured JSON task plan → user pastes back into bridge
+3. Bridge runs tasks one-by-one through Aider + Ollama (local, free)
+4. After each task, bridge generates a formatted "review packet" (diff + context + decision choices) → user copies into web AI
+5. Web AI responds: `APPROVED` / `REWORK: [instruction]` / `FAILED: [reason]`
+6. User pastes decision back → bridge continues, re-runs task, or generates a replan prompt
+
+### Key properties
+- Works with any web AI — ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok, Cursor/Windsurf chat panels
+- No API key required — web subscriptions are sufficient
+- Reuses existing manual supervisor infrastructure (decision file mechanism in `bridge_progress/manual_supervisor/`)
+- ~2–3 copy-pastes per task; ~20–30 interactions for a 10-task run
+- Full AI intelligence for planning and review; Ollama handles all code changes locally
+
+### Files to build (see `AI_RELAY_SPEC.md` for full details)
+- `utils/relay_formatter.py` — plan prompt, review packet, decision parser, replan prompt
+- `ui/templates/relay.html` + `relay.css` + `relay.js` — 3-step wizard (Generate Plan → Confirm → Run+Review)
+- `ui/app.py` — 6 new relay API routes
+- `ui/bridge_runner.py` — `ai_relay` supervisor type (~30 lines, reuses manual supervisor infrastructure)
+- `ui/templates/base.html` — Relay nav item; `shortcuts.js` — `g+a` chord

@@ -148,11 +148,28 @@ python launch_ui.py
 
 Or on Windows, just double-click **`launch_ui.bat`**.
 
-A browser window opens at `http://127.0.0.1:7823` with:
+A browser window opens at `http://127.0.0.1:7823`:
 
-- **Setup tab** — detects Python, Aider, Ollama, Codex CLI, Claude CLI. Shows install hints and one-click install buttons for missing tools.
-- **Run tab** — fill in your goal, repo path, model, and workflow settings. For the recommended setup, choose **Manual** supervisor and **Micro-task / high-accuracy** workflow profile.
-- **History tab** — every run is saved. Re-run, view logs, or delete entries.
+| Page | What it does |
+|---|---|
+| **Dashboard** | Live progress ring, task feed with status badges, pause/resume, review panel |
+| **Run** | Configure and launch a run — goal, repo, model, supervisor, advanced options |
+| **Chat** | Ask your local Ollama model questions about the project (no API key needed) |
+| **Knowledge** | View AI_UNDERSTANDING.md and the scanned file registry |
+| **History** | Browse past runs, re-run with same settings, view full logs |
+| **Tokens** | Token usage analytics with savings bar and session detail |
+| **Setup** | Install/check Aider, Ollama, and supervisor tools |
+
+### Supervisor compatibility
+
+| Supervisor | Requirement | Works with subscription? |
+|---|---|---|
+| **Claude Code** | Run `claude login` once | Yes — Claude Pro |
+| **Cursor** | Cursor IDE installed | Yes — Cursor subscription |
+| **Windsurf** | Windsurf IDE installed | Yes — Windsurf subscription |
+| **Manual** | Nothing | Always — fully offline |
+| **AI Relay** *(coming soon)* | Nothing | Yes — any web AI (ChatGPT Plus, Claude.ai Pro, Gemini…) |
+| **Codex CLI** | `OPENAI_API_KEY` env var | No — separate API account needed |
 
 Flask is installed automatically if it is not present.
 
@@ -207,31 +224,29 @@ Before task execution starts, the bridge now logs a git-readiness preview for th
 
 ## Features
 
-- **Web UI** with setup wizard, live task progress, run history, and persisted settings
+### Web UI
+- Multi-page Flask app — Dashboard, Run, **Chat**, Knowledge, History, Tokens, Setup
+- Live SVG progress ring, task feed, pause/resume, review panel with diff viewer
+- **Chat page** — conversational AI using local Ollama model with project knowledge context
+- Supervisor and model API-key compatibility warnings on the Run page
+- Dark/light theme, keyboard shortcuts (`g+d/r/k/h/t/s/c`, `?` help, `Ctrl+Enter`)
+- Onboarding scanner: one-time static scan pre-populates `project_knowledge.json` on first run
+- AI Understanding: auto-generated `AI_UNDERSTANDING.md` with doc discovery
+
+### CLI & Orchestration
 - Supervisor agent produces atomic sequential plans from the live repo tree — no hardcoded file lists
 - Supervisor reviews each task's git diff before the next task is allowed to start
 - Git-readiness pre-flight preview before Aider runs
-- The bridge refuses to work on non-git target repos unless the operator lets it initialize one interactively
-- Manual supervisor mode for in-session agents such as Codex — no external supervisor CLI required
-- Filesystem-based review handoff for manual supervision:
-  - `bridge_progress/manual_supervisor/requests/`
-  - `bridge_progress/manual_supervisor/decisions/`
-- Persistent project intelligence in the target repo:
-  - `project_knowledge.json`
-  - `project_snapshot.json`
-  - `task_metrics.json`
-  - `token_log.json`
-  - `LATEST_REPORT.md`
-- Aider runs on a local LLM (`--aider-model ollama/mistral`, `ollama/codellama`, etc.)
+- Refuses to work on non-git target repos unless the operator initialises one interactively
+- Manual supervisor mode — filesystem-based review, no external CLI calls
+- **AI Relay mode** *(coming soon)* — use any web AI subscription as supervisor via copy-paste
 - Approved tasks are auto-committed as small local git commits in the target repo
-- Mechanical validation (file existence, Python syntax, optional CI gate) runs without supervisor tokens
-- Delete tasks as first-class plan items
-- Task assertions via `must_exist` and `must_not_exist`
-- Unexpected file creation outside a task's allowed scope is detected and failed
-- Micro-task workflow profile: one file per task, one concern per task, assertions required
-- Supervisor tokens are only spent on planning and quality review — never on mechanical retries
-- No fallback planner — if the supervisor fails, use `--plan-file` to supply a plan manually
-- Dry-run mode generates and parses the plan without invoking Aider
+- Mechanical validation (file existence, Python syntax, optional CI gate) — zero supervisor tokens
+- Scope enforcement: unexpected file creation outside task scope is detected and failed
+- Micro-task workflow profile: one file per task, one concern, assertions required
+- Supervisor tokens spent on planning and review only — never on mechanical retries
+- Dry-run, resume, auto-approve modes; `--skip-onboarding-scan` flag
+- Persistent project intelligence: `project_knowledge.json`, `project_snapshot.json`, `token_log.json`, `LATEST_REPORT.md`
 - Persistent file and console logging
 
 ---
@@ -307,13 +322,31 @@ bridge-app/
 │
 ├── ui/                           Web UI package
 │   ├── __init__.py
-│   ├── app.py                    Flask server (18 API routes)
+│   ├── app.py                    Flask server (routes, SSE, chat + relay endpoints)
 │   ├── bridge_runner.py          Subprocess manager + SSE event broadcaster
 │   ├── setup_checker.py          Detects Python, Aider, Ollama, Codex, Claude
 │   ├── state_store.py            JSON persistence for settings and run history
 │   ├── data/                     Runtime data (settings.json, history.json)
-│   └── templates/
-│       └── index.html            Single-page app (Setup / Run / History tabs)
+│   ├── templates/
+│   │   ├── base.html             Layout shell (sidebar nav, theme, shortcuts, toasts)
+│   │   ├── dashboard.html        Live progress ring, task feed, review panel
+│   │   ├── run.html              Config form, supervisor selector, live log
+│   │   ├── chat.html             Conversational AI (Ollama-powered)
+│   │   ├── knowledge.html        AI_UNDERSTANDING.md viewer, file registry
+│   │   ├── history.html          Searchable run table, log modal
+│   │   ├── tokens.html           Token analytics and session detail
+│   │   └── setup.html            Dependency checks, Aider install, Ollama manager
+│   └── static/
+│       ├── css/
+│       │   ├── tokens.css        CSS custom properties (design tokens)
+│       │   ├── base.css          Reset, typography, layout utilities
+│       │   ├── components.css    btn, card, badge, input, modal, toast
+│       │   ├── nav.css           Fixed sidebar navigation
+│       │   ├── progress-ring.css SVG ring animations
+│       │   └── pages/            Per-page stylesheets
+│       └── js/
+│           ├── core/             api.js, sse.js, store.js, toast.js, theme.js, shortcuts.js
+│           └── pages/            Per-page controllers (dashboard, run, chat, …)
 │
 ├── supervisor/
 │   ├── __init__.py
