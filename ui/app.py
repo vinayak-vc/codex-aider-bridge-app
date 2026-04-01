@@ -57,12 +57,7 @@ def index():
     return redirect("/dashboard")
 
 
-@app.route("/legacy")
-def legacy():
-    return render_template("index.html")
-
-
-# ── New multi-page routes ───────────────────────────────────────────────────────
+# ── Page routes ────────────────────────────────────────────────────────────────
 
 @app.route("/dashboard")
 def page_dashboard():

@@ -1,6 +1,6 @@
 # Bridge App UI Rebuild — Implementation Plan
 
-> **Status:** M1 in progress
+> **Status:** COMPLETE — all milestones M1–M8 shipped
 > **Branch:** `chatbot_llm`
 > **Start from:** `H:/Vinayak_Project/codex-aider-bridge-app/.claude/worktrees/elastic-lamarr/`
 > **Resumption rule:** Read this file, check git log for latest milestone commit, continue from next milestone.

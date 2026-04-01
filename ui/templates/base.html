@@ -97,6 +97,11 @@
     <div class="nav-footer">
       <span class="text-subtle" style="font-size:var(--font-size-xs)">Bridge v0.1</span>
       <div class="nav-footer-actions">
+        <button class="btn-icon-sm" id="kb-help-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/>
+          </svg>
+        </button>
         <button class="btn-icon-sm" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
           <!-- filled by theme.js -->
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -118,8 +123,17 @@
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <script type="module">
-  import { initTheme } from '/static/js/core/theme.js';
+  import { initTheme }     from '/static/js/core/theme.js';
+  import { initShortcuts } from '/static/js/core/shortcuts.js';
+
   initTheme();
+  initShortcuts();
+
+  // Wire ? button in nav footer
+  document.getElementById('kb-help-btn')?.addEventListener('click', () => {
+    const overlay = document.getElementById('kb-help-overlay');
+    if (overlay) overlay.style.display = overlay.style.display === 'none' ? '' : 'none';
+  });
 
   // Keep nav status chip in sync (poll /api/run/status every 5s)
   async function updateNavStatus() {
@@ -127,7 +141,7 @@
       const r = await fetch('/api/run/status');
       if (!r.ok) return;
       const d = await r.json();
-      const chip = document.getElementById('nav-status-chip');
+      const chip  = document.getElementById('nav-status-chip');
       const label = document.getElementById('nav-status-label');
       if (!chip || !label) return;
       const status = d.status || 'idle';
@@ -137,6 +151,18 @@
   }
   updateNavStatus();
   setInterval(updateNavStatus, 5000);
+
+  // Setup issues badge — poll /api/check on load, update badge once
+  (async () => {
+    try {
+      const checks = await fetch('/api/check').then(r => r.json());
+      const issues = Object.values(checks).filter(c => !c.installed || c.hint || c.ok === false).length;
+      const badge  = document.getElementById('setup-issues-badge');
+      if (!badge) return;
+      if (issues > 0) { badge.textContent = issues; badge.style.display = ''; }
+      else              badge.style.display = 'none';
+    } catch (_) {}
+  })();
 </script>
 
 {% block page_script %}{% endblock %}
