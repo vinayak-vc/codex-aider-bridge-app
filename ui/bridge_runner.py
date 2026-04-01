@@ -92,6 +92,9 @@ class BridgeRun:
             cmd.append("--dry-run")
         if settings.get("task_timeout"):
             cmd.extend(["--task-timeout", str(int(settings["task_timeout"]))])
+        for c in settings.get("clarifications", []):
+            if str(c).strip():
+                cmd.extend(["--clarification", str(c).strip()])
 
         cmd.extend(["--log-level", "INFO"])
         return cmd

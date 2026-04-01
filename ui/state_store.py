@@ -34,6 +34,7 @@ DEFAULT_SETTINGS: dict = {
     "plan_output_file": "",
     "plan_file": "",
     "dry_run": False,
+    "clarifications": [],
 }
 
 
