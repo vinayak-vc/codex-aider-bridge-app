@@ -1362,7 +1362,29 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     logger.info("Pre-flight checks passed.")
 
 
+def _fix_windows_encoding() -> None:
+    """Reconfigure stdout/stderr to UTF-8 on Windows.
+
+    The default Windows console codec (cp1252 / cp850) cannot encode box-drawing
+    characters, emoji, or many other Unicode symbols used in bridge output.
+    Reconfiguring to UTF-8 with errors='replace' means any unencodable character
+    becomes '?' instead of raising UnicodeEncodeError.
+
+    Safe to call on all platforms — reconfigure() is a no-op when the stream
+    already uses UTF-8 or when it is not a real text stream (e.g. subprocess pipe).
+    """
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+
 def main() -> int:
+    _fix_windows_encoding()
     arg_parser = build_argument_parser()
     args = arg_parser.parse_args()
 

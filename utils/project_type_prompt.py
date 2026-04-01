@@ -69,7 +69,7 @@ def prompt_project_type() -> Optional[str]:
                 _confirm(chosen)
                 return chosen
             else:
-                print(f"  ✗  Please enter a number between 1 and {len(_ORDERED_KEYS)}.")
+                print(f"  [x]Please enter a number between 1 and {len(_ORDERED_KEYS)}.")
                 continue
 
         # Accept key input directly
@@ -83,7 +83,7 @@ def prompt_project_type() -> Optional[str]:
             _confirm(matches[0])
             return matches[0]
 
-        print(f"  ✗  '{raw}' not recognised. Try a number or one of: {', '.join(_ORDERED_KEYS)}")
+        print(f"  [x]'{raw}' not recognised. Try a number or one of: {', '.join(_ORDERED_KEYS)}")
 
 
 def describe(type_key: str) -> str:
@@ -98,25 +98,26 @@ def describe(type_key: str) -> str:
 
 def _print_banner() -> None:
     width = 62
-    print("\n" + "─" * width)
-    print("  🔍  What type of project is this?")
-    print("─" * width)
+    sep = "-" * width
+    print("\n" + sep)
+    print("  [?]  What type of project is this?")
+    print(sep)
     print("  The bridge uses this to pick the right validator, ignore")
     print("  the right files, and generate better task plans.")
-    print("─" * width)
+    print(sep)
 
     for i, key in enumerate(_ORDERED_KEYS, start=1):
         name, desc, hint = PROJECT_TYPES[key]
         print(f"  {i:>2}.  {name:<22} {desc}")
 
-    print("─" * width)
+    print(sep)
     print("  This is saved and won't be asked again for this repo.")
     print("  Override any time with:  --project-type <key>")
-    print("─" * width)
+    print(sep)
 
 
 def _confirm(key: str) -> None:
     name, desc, hint = PROJECT_TYPES[key]
-    print(f"\n  ✔  Selected: {name} — {desc}")
+    print(f"\n  [v]  Selected: {name} - {desc}")
     if hint:
-        print(f"     Bridge hint: {hint}")
+        print(f"       Bridge hint: {hint}")
