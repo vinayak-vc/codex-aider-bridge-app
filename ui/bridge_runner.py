@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -16,6 +17,11 @@ BRIDGE_ROOT = Path(__file__).parent.parent
 # When running as a PyInstaller bundle, sys.executable is the .exe itself,
 # not the Python interpreter.  We detect this once at import time.
 _FROZEN = getattr(sys, "frozen", False)
+
+# Capture the real working directory at import time — before PyInstaller can
+# change it.  Used as a safe fallback cwd for the bridge subprocess when the
+# user has not yet configured a repo root.
+_STARTUP_CWD: str = os.getcwd()
 
 
 class BridgeRun:
@@ -130,21 +136,30 @@ class BridgeRun:
             self._relay_mode = settings.get("supervisor") == "ai_relay"
             cmd = self.build_command(settings)
             self.command_preview = " ".join(cmd)
+            # Determine a safe working directory for the subprocess.
+            # When frozen, BRIDGE_ROOT is the PyInstaller temp extraction dir —
+            # useless as a cwd.  Prefer the configured repo root; fall back to
+            # the directory the exe was launched from.
+            _repo = settings.get("repo_root", "").strip()
+            if _FROZEN:
+                subprocess_cwd = _repo or _STARTUP_CWD or str(Path.home())
+            else:
+                subprocess_cwd = str(BRIDGE_ROOT)
             thread = threading.Thread(
-                target=self._run_process, args=(cmd,), daemon=True
+                target=self._run_process, args=(cmd, subprocess_cwd), daemon=True
             )
             thread.start()
 
         self._emit("start", {"command": self.command_preview, "run_id": run_id})
 
-    def _run_process(self, cmd: list[str]) -> None:
+    def _run_process(self, cmd: list[str], subprocess_cwd: str) -> None:
         start_time = time.time()
         final_json: Optional[dict] = None
 
         try:
             self._process = subprocess.Popen(
                 cmd,
-                cwd=str(BRIDGE_ROOT),
+                cwd=subprocess_cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.PIPE,

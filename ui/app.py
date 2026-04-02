@@ -204,10 +204,23 @@ def api_start_run():
         return jsonify({"error": "A run is already in progress."}), 409
 
     settings = request.json or {}
+
+    # Validate repo_root before doing anything — without it the bridge
+    # subprocess would default to the PyInstaller temp dir (frozen) or the
+    # source tree CWD (dev mode), neither of which is a user project.
+    _repo = settings.get("repo_root", "").strip()
+    if not _repo:
+        return jsonify({
+            "error": (
+                "No project folder configured. "
+                "Open the Run settings panel, set 'Repo Root' to your project directory, "
+                "and try again."
+            )
+        }), 400
+
     state_store.save_settings(settings)
 
     # Auto-register the repo as a known project
-    _repo = settings.get("repo_root", "").strip()
     if _repo:
         state_store.add_project(_repo)
 
