@@ -268,8 +268,10 @@ async function checkModelCompat() {
     const chip  = $('chat-model-chip');
     if (chip) chip.textContent = model || 'no model configured';
 
-    const warning = $('chat-model-warning');
-    const warnText = $('chat-model-warning-text');
+    const warning     = $('chat-model-warning');
+    const warnText    = $('chat-model-warning-text');
+    const ollamaWarn  = $('chat-ollama-warning');
+    const ollamaText  = $('chat-ollama-warning-text');
 
     if (!model.startsWith('ollama/')) {
       // Non-Ollama model — chat won't work
@@ -279,10 +281,34 @@ async function checkModelCompat() {
           `requires an external API key — go to Run settings and switch to an <strong>ollama/…</strong> model first.`;
       }
       if (warning) warning.style.display = '';
+      if (ollamaWarn) ollamaWarn.style.display = 'none';
       setSendState(false);
     } else {
       if (warning) warning.style.display = 'none';
-      setSendState(true);
+
+      // Check Ollama is actually running and the model is pulled
+      try {
+        const status = await fetch('/api/chat/status').then(r => r.json());
+        if (!status.ollama_running) {
+          if (ollamaText) ollamaText.innerHTML =
+            `Ollama is not running. Start it with <code>ollama serve</code>, then retry.`;
+          if (ollamaWarn) ollamaWarn.style.display = '';
+          setSendState(false);
+        } else if (!status.model_available) {
+          const bare = model.replace('ollama/', '');
+          if (ollamaText) ollamaText.innerHTML =
+            `Model <strong>${esc(bare)}</strong> is not pulled. Run <code>ollama pull ${esc(bare)}</code> to download it, then retry.`;
+          if (ollamaWarn) ollamaWarn.style.display = '';
+          setSendState(false);
+        } else {
+          if (ollamaWarn) ollamaWarn.style.display = 'none';
+          setSendState(true);
+        }
+      } catch (_) {
+        // Status check failed — don't block chat; Ollama might still work
+        if (ollamaWarn) ollamaWarn.style.display = 'none';
+        setSendState(true);
+      }
     }
 
     // Update context status in limits banner
@@ -290,7 +316,7 @@ async function checkModelCompat() {
     if (ctxStatus) {
       const repo = settings.repo_root || '';
       ctxStatus.textContent = repo
-        ? `using repo: ${repo.split(/[/\\]/).pop()}`
+        ? `using repo: ${repo.replace(/\\/g, '/').split('/').pop()}`
         : 'no repo configured (set in Run tab)';
     }
   } catch (_) {}
@@ -338,6 +364,9 @@ function init() {
       sendMessage(btn.textContent);
     });
   });
+
+  // Ollama retry button
+  $('btn-ollama-recheck')?.addEventListener('click', checkModelCompat);
 
   // Check model compat on load
   checkModelCompat();

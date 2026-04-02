@@ -202,6 +202,11 @@ def api_start_run():
     settings = request.json or {}
     state_store.save_settings(settings)
 
+    # Auto-register the repo as a known project
+    _repo = settings.get("repo_root", "").strip()
+    if _repo:
+        state_store.add_project(_repo)
+
     run_id = state_store.add_history_entry({
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "goal": settings.get("goal", ""),
@@ -630,6 +635,13 @@ When the user is ready to execute, suggest they go to the Run tab with a clear g
                             yield f"data: {json.dumps({'done': True})}\n\n"
                     except json.JSONDecodeError:
                         pass
+        except urllib.error.HTTPError as exc:
+            try:
+                body = json.loads(exc.read().decode("utf-8", errors="replace"))
+                detail = body.get("error") or f"HTTP {exc.code}"
+            except Exception:
+                detail = f"HTTP {exc.code}: {exc.reason}"
+            yield f"data: {json.dumps({'error': f'Ollama error: {detail}'})}\n\n"
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", str(exc))
             yield f"data: {json.dumps({'error': f'Ollama not reachable: {reason}. Is Ollama running?'})}\n\n"
@@ -641,6 +653,82 @@ When the user is ready to execute, suggest they go to the Run tab with a clear g
         content_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/chat/status")
+def api_chat_status():
+    """Check if Ollama is running and the configured model is available."""
+    import urllib.request, urllib.error
+    settings = state_store.load_settings()
+    raw_model = settings.get("aider_model", "")
+    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
+
+    result = {"ollama_running": False, "model_available": False, "model": ollama_model, "error": None}
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            result["ollama_running"] = True
+            models = [m.get("name", "") for m in data.get("models", [])]
+            # Match if model name starts with the configured name (handles tags like :latest)
+            result["model_available"] = any(
+                m == ollama_model or m.startswith(ollama_model.split(":")[0])
+                for m in models
+            )
+            result["available_models"] = models
+    except urllib.error.URLError:
+        result["error"] = "Ollama is not running"
+    except Exception as exc:
+        result["error"] = str(exc)
+    return jsonify(result)
+
+
+# ── Project routes ───────────────────────────────────────────────────────────
+
+@app.route("/api/projects", methods=["GET"])
+def api_projects_list():
+    return jsonify(state_store.load_projects())
+
+
+@app.route("/api/projects", methods=["POST"])
+def api_projects_add():
+    data = request.get_json(force=True) or {}
+    path = (data.get("path") or "").strip()
+    name = (data.get("name") or "").strip()
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+    state_store.add_project(path, name)
+    return jsonify({"ok": True, "projects": state_store.load_projects()})
+
+
+@app.route("/api/projects/switch", methods=["POST"])
+def api_projects_switch():
+    """Switch active project — updates repo_root in settings and promotes to top of list."""
+    data = request.get_json(force=True) or {}
+    path = (data.get("path") or "").strip()
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+    settings = state_store.load_settings()
+    settings["repo_root"] = path
+    state_store.save_settings(settings)
+    state_store.add_project(path)          # promote to front
+    return jsonify({"ok": True, "repo_root": path})
+
+
+@app.route("/api/projects/<path:proj_path>", methods=["DELETE"])
+def api_projects_delete(proj_path):
+    state_store.remove_project(proj_path)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/projects/rename", methods=["POST"])
+def api_projects_rename():
+    data = request.get_json(force=True) or {}
+    path = (data.get("path") or "").strip()
+    name = (data.get("name") or "").strip()
+    if not path or not name:
+        return jsonify({"error": "path and name are required"}), 400
+    state_store.rename_project(path, name)
+    return jsonify({"ok": True})
 
 
 # ── AI Relay routes ───────────────────────────────────────────────────────────

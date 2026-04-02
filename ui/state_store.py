@@ -155,3 +155,52 @@ def clear_relay_tasks() -> None:
     _ensure()
     if RELAY_TASKS_FILE.exists():
         RELAY_TASKS_FILE.unlink()
+
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+
+PROJECTS_FILE = DATA_DIR / "projects.json"
+MAX_PROJECTS  = 20
+
+
+def load_projects() -> list[dict]:
+    """Return list of saved projects: [{name, path}, …] most-recent first."""
+    _ensure()
+    if PROJECTS_FILE.exists():
+        try:
+            return json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_projects(projects: list[dict]) -> None:
+    _ensure()
+    PROJECTS_FILE.write_text(json.dumps(projects, indent=2), encoding="utf-8")
+
+
+def add_project(path: str, name: str = "") -> None:
+    """Add or promote a project to the front of the list."""
+    path = str(path).strip()
+    if not path:
+        return
+    if not name:
+        name = Path(path).name or path
+    projects = [p for p in load_projects() if p.get("path") != path]
+    projects.insert(0, {"name": name, "path": path})
+    _save_projects(projects[:MAX_PROJECTS])
+
+
+def remove_project(path: str) -> None:
+    """Remove a project by path."""
+    projects = [p for p in load_projects() if p.get("path") != path]
+    _save_projects(projects)
+
+
+def rename_project(path: str, new_name: str) -> None:
+    """Rename a project by path."""
+    projects = load_projects()
+    for p in projects:
+        if p.get("path") == path:
+            p["name"] = new_name.strip() or Path(path).name
+    _save_projects(projects)

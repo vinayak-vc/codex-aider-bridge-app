@@ -32,22 +32,22 @@ body {
   height: 100vh;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 28px 32px;
+  padding: 80px 32px 28px; /* 80px = 52px project-bar + 28px original top */
   transition: margin-left var(--transition);
 }
 
 @media (max-width: 900px) {
   .main-content {
     margin-left: var(--nav-width-collapsed);
-    padding: 20px 16px;
+    padding: 72px 16px 20px;
   }
 }
 
 @media (max-width: 600px) {
   .main-content {
     margin-left: 0;
-    padding: 16px 12px 72px;
-    height: 100dvh; /* use dvh on mobile to account for address bar */
+    padding: 72px 12px 80px;
+    height: 100dvh;
   }
 }
 

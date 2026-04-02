@@ -132,6 +132,40 @@
     </div>
   </nav>
 
+  <!-- ── Project top-bar ── -->
+  <header class="project-bar" id="project-bar" aria-label="Active project">
+    <div class="project-bar-inner">
+      <button class="project-switcher" id="project-switcher" aria-haspopup="listbox" aria-expanded="false">
+        <span class="project-switcher-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0v.243a2.25 2.25 0 0 1-2.25 2.25H4.5a2.25 2.25 0 0 1-2.25-2.25V6.75"/>
+          </svg>
+        </span>
+        <span class="project-name" id="project-name">No project selected</span>
+        <span class="project-switcher-caret" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+          </svg>
+        </span>
+      </button>
+
+      <!-- Dropdown -->
+      <div class="project-dropdown" id="project-dropdown" role="listbox" hidden>
+        <div class="project-dropdown-list" id="project-dropdown-list">
+          <!-- filled by project.js -->
+        </div>
+        <div class="project-dropdown-footer">
+          <button class="project-dropdown-add" id="btn-project-add">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+            </svg>
+            Add project…
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
   <!-- ── Main Content ── -->
   <main class="main-content">
     {% block content %}{% endblock %}
@@ -143,13 +177,15 @@
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <script type="module">
-  import { initTheme }     from '/static/js/core/theme.js';
+  import { initTheme }    from '/static/js/core/theme.js';
   import { initShortcuts } from '/static/js/core/shortcuts.js';
   import { initWallpaper } from '/static/js/core/wallpaper.js';
+  import { initProjectBar } from '/static/js/core/project.js';
 
   initTheme();
   initShortcuts();
   initWallpaper();
+  initProjectBar();
 
   // Wire ? button in nav footer
   document.getElementById('kb-help-btn')?.addEventListener('click', () => {
