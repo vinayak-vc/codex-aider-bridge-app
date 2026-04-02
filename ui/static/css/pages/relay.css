@@ -169,7 +169,16 @@
   flex-direction: column;
   gap: 8px;
   margin-bottom: 20px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+  /* thin scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
 }
+.relay-task-list::-webkit-scrollbar { width: 5px; }
+.relay-task-list::-webkit-scrollbar-track { background: transparent; }
+.relay-task-list::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
 
 .relay-task-item {
   display: grid;
@@ -202,7 +211,25 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
+
+.relay-task-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+.relay-task-type-badge[data-type="create"]   { background: rgba(34,197,94,.15);  color: #22c55e; border: 1px solid rgba(34,197,94,.3);  }
+.relay-task-type-badge[data-type="modify"]   { background: rgba(225,29,72,.12);  color: var(--color-accent); border: 1px solid rgba(225,29,72,.3); }
+.relay-task-type-badge[data-type="delete"]   { background: rgba(251,113,133,.12); color: var(--color-danger); border: 1px solid rgba(251,113,133,.3); }
+.relay-task-type-badge[data-type="validate"] { background: rgba(249,115,22,.12); color: var(--color-info);   border: 1px solid rgba(249,115,22,.3);  }
 
 .relay-task-instruction {
   font-size: var(--font-size-xs);

@@ -107,15 +107,21 @@ function renderTaskList(tasks) {
     list.innerHTML = '<p class="text-subtle" style="font-size:var(--font-size-sm)">No tasks found.</p>';
     return;
   }
-  list.innerHTML = tasks.map(t => `
+  list.innerHTML = tasks.map(t => {
+    const type = (t.type || 'modify').toLowerCase();
+    return `
     <div class="relay-task-item">
       <div class="relay-task-num">${t.id}</div>
       <div class="relay-task-body">
-        <div class="relay-task-title">${escHtml(t.title || '')}</div>
+        <div class="relay-task-title">
+          <span>${escHtml(t.title || '')}</span>
+          <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
+        </div>
         <div class="relay-task-instruction">${escHtml(t.instruction || '')}</div>
         ${t.files && t.files.length ? `<div class="relay-task-files">${t.files.map(escHtml).join(', ')}</div>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ── Step 3 helpers ────────────────────────────────────────────────────────────
@@ -353,10 +359,9 @@ function resetWizard() {
   _completedTasks = 0; _totalTasks = 0;
   _sse?.disconnect(); _sse = null;
 
-  // Clear fields
-  const fields = ['relay-goal','relay-repo-root','relay-aider-model',
-                  'plan-paste','relay-decision-paste','relay-replan-paste'];
-  fields.forEach(id => { const el = $(id); if (el) el.value = ''; });
+  // Clear paste / transient fields only
+  const clearFields = ['plan-paste','relay-decision-paste','relay-replan-paste'];
+  clearFields.forEach(id => { const el = $(id); if (el) el.value = ''; });
 
   // Hide output sections
   ['prompt-output-wrap','plan-paste-wrap','relay-review-panel','relay-done-panel',
@@ -367,6 +372,20 @@ function resetWizard() {
   const log = $('relay-log'); if (log) log.textContent = '';
 
   goToStep(1);
+
+  // Re-populate config fields from saved settings so user doesn't start blank
+  prefillFromSettings();
+}
+
+function prefillFromSettings() {
+  fetch('/api/settings').then(r => r.json()).then(s => {
+    if ($('relay-goal') && !$('relay-goal').value && s.goal)
+      $('relay-goal').value = s.goal;
+    if ($('relay-repo-root'))
+      $('relay-repo-root').value = s.repo_root || '';
+    if ($('relay-aider-model'))
+      $('relay-aider-model').value = s.aider_model || 'ollama/mistral';
+  }).catch(() => {});
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -385,11 +404,7 @@ function init() {
   goToStep(1);
 
   // Pre-fill from saved settings
-  fetch('/api/settings').then(r => r.json()).then(s => {
-    if (s.goal      && $('relay-goal'))       $('relay-goal').value       = s.goal;
-    if (s.repo_root && $('relay-repo-root'))  $('relay-repo-root').value  = s.repo_root;
-    if (s.aider_model && $('relay-aider-model')) $('relay-aider-model').value = s.aider_model;
-  }).catch(() => {});
+  prefillFromSettings();
 
   // Step 1
   $('btn-generate-prompt')?.addEventListener('click', generatePrompt);

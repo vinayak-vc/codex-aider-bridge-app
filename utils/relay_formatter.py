@@ -58,6 +58,7 @@ Use exactly this structure:
     {{
       "id": 1,
       "title": "Short task title (max 60 chars)",
+      "type": "create",
       "files": ["relative/path/to/file.ext"],
       "instruction": "Exact instruction for the code editor — specific and technical",
       "context": "Why this task exists / what it connects to"
@@ -70,6 +71,11 @@ RULES:
 - Order tasks so dependencies come first
 - "instruction" is sent directly to Aider (a local code editor) — no ambiguity
 - "files" must be relative paths from the repo root
+- "type" MUST be one of exactly: create | modify | delete | validate
+  - create   = new file that does not yet exist
+  - modify   = change an existing file
+  - delete   = remove a file
+  - validate = run a check / test, no file edit
 - Maximum 15 tasks total
 - If the goal is unclear, make reasonable assumptions and note them in plan_summary
 {_DIVIDER}"""
@@ -137,9 +143,20 @@ def parse_plan(raw_text: str) -> list[dict]:
         if not isinstance(t.get("instruction"), str) or not t["instruction"].strip():
             raise ValueError(f'Task #{i} (id={t.get("id")}) is missing an "instruction" string.')
 
+        # Normalise and default the "type" field.
+        # Valid values expected by task_parser.TaskParser.
+        _VALID_TYPES = {"create", "modify", "delete", "validate"}
+        raw_type = str(t.get("type", "")).strip().lower()
+        if raw_type not in _VALID_TYPES:
+            # Best-effort inference: if files list is empty → validate,
+            # otherwise default to modify (safe for most AI-generated plans).
+            files_raw = t.get("files", [])
+            raw_type = "validate" if not files_raw else "modify"
+
         tasks.append({
             "id":          int(t["id"]),
             "title":       t["title"].strip()[:80],
+            "type":        raw_type,
             "files":       [str(f) for f in t.get("files", [])] if isinstance(t.get("files"), list) else [],
             "instruction": t["instruction"].strip(),
             "context":     str(t.get("context", "")).strip(),
