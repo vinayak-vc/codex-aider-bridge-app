@@ -69,7 +69,22 @@ code {
   border-radius: var(--radius-sm);
 }
 
-/* Scrollbar */
+/* ── Page wallpaper ── */
+#page-wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: -1;              /* behind everything */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0;               /* starts invisible; JS sets it after image loads */
+  transition: opacity 1.2s ease, background-image 0.6s ease;
+  pointer-events: none;
+  /* Dim the image: dark overlay baked in via brightness + a colour tint */
+  filter: brightness(0.18) saturate(0.8);
+}
+
+/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: var(--radius-pill); }

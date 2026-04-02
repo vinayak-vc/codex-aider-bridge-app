@@ -19,7 +19,9 @@
     })();
   </script>
 </head>
-<body>
+<body data-page="{{ active_page | default('') }}">
+<!-- Per-page space wallpaper — sits behind all content -->
+<div id="page-wallpaper" aria-hidden="true"></div>
 <div class="page-shell">
 
   <!-- ── Sidebar Navigation ── -->
@@ -143,9 +145,11 @@
 <script type="module">
   import { initTheme }     from '/static/js/core/theme.js';
   import { initShortcuts } from '/static/js/core/shortcuts.js';
+  import { initWallpaper } from '/static/js/core/wallpaper.js';
 
   initTheme();
   initShortcuts();
+  initWallpaper();
 
   // Wire ? button in nav footer
   document.getElementById('kb-help-btn')?.addEventListener('click', () => {
