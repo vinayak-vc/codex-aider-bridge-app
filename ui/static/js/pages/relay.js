@@ -412,6 +412,24 @@ function init() {
 
   // Reset button (header)
   $('btn-relay-reset')?.addEventListener('click', resetWizard);
+
+  // Explainer toggle
+  $('relay-explainer-toggle')?.addEventListener('click', () => {
+    const body = $('relay-explainer-body');
+    const btn  = $('relay-explainer-toggle');
+    if (!body || !btn) return;
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    btn.textContent    = hidden ? 'Hide guide' : 'Show guide';
+    localStorage.setItem('relay-guide-hidden', hidden ? 'false' : 'true');
+  });
+  // Restore collapsed state
+  if (localStorage.getItem('relay-guide-hidden') === 'true') {
+    const body = $('relay-explainer-body');
+    const btn  = $('relay-explainer-toggle');
+    if (body) body.style.display = 'none';
+    if (btn)  btn.textContent = 'Show guide';
+  }
 }
 
 init();

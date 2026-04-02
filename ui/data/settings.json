@@ -6,11 +6,14 @@
   "supervisor": "manual",
   "supervisor_command": "",
   "manual_supervisor": true,
+  "manual_review_poll_seconds": 2,
+  "workflow_profile": "standard",
   "validation_command": "",
   "max_plan_attempts": 3,
   "max_task_retries": 2,
   "task_timeout": 300,
   "plan_output_file": "",
+  "plan_file": "",
   "dry_run": false,
   "clarifications": []
 }

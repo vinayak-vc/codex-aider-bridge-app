@@ -29,6 +29,7 @@ const SHORTCUTS = [
   { keys: ['g', 's'],     desc: 'Go to Setup'       },
   { keys: ['g', 'c'],     desc: 'Go to Chat'        },
   { keys: ['g', 'a'],     desc: 'Go to AI Relay'    },
+  { keys: ['H'],          desc: 'Help for this page' },
   { keys: ['Ctrl', '↵'],  desc: 'Launch run (Run page)' },
   { keys: ['Esc'],        desc: 'Close modal / overlay' },
   { keys: ['?'],          desc: 'Show this help'    },
@@ -123,6 +124,13 @@ function onKeyDown(e) {
   if (key === 'Escape') {
     if (isHelpVisible()) { e.preventDefault(); hideHelp(); }
     cancelChord();
+    return;
+  }
+
+  // H — open page help
+  if (key === 'H' && !_waitingForChord) {
+    e.preventDefault();
+    document.getElementById('page-help-btn')?.click();
     return;
   }
 

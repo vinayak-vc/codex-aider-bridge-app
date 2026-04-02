@@ -1,11 +1,14 @@
 // pages/chat.js — Chat page controller
 
 import { toast } from '/static/js/core/toast.js';
+import { play } from '/static/js/core/sounds.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const history = [];   // [{role: 'user'|'assistant', content: string}]
 let _streaming = false;
+let _projectKey = '';     // localStorage key prefix for this project's history
+let _selectedModel = '';  // model chosen via the dropdown
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
 
@@ -79,6 +82,109 @@ function esc(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+// ── Per-project history persistence ──────────────────────────────────────────
+
+function historyKey() { return 'chat_history_' + (_projectKey || 'default'); }
+
+function loadPersistedHistory() {
+  try {
+    const raw = localStorage.getItem(historyKey());
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (_) {}
+  return [];
+}
+
+function saveHistory() {
+  try {
+    // Keep last 100 messages to avoid localStorage bloat
+    localStorage.setItem(historyKey(), JSON.stringify(history.slice(-100)));
+  } catch (_) {}
+}
+
+// ── History count badge ───────────────────────────────────────────────────────
+
+function updateHistoryBadge() {
+  const badge = $('chat-history-count');
+  if (!badge) return;
+  if (history.length > 0) {
+    badge.textContent = history.length + ' msgs';
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// ── Render persisted history on load ─────────────────────────────────────────
+
+function renderHistoryOnLoad() {
+  const saved = loadPersistedHistory();
+  if (!saved.length) return;
+
+  const msgs = $('chat-messages');
+  const welcome = $('chat-welcome');
+  if (welcome) welcome.style.display = 'none';
+
+  for (const entry of saved) {
+    history.push(entry);
+    if (entry.role === 'user') {
+      const div = document.createElement('div');
+      div.className = 'chat-msg chat-msg--user';
+      div.innerHTML =
+        '<div class="chat-bubble">' + esc(entry.content) + '</div>' +
+        '<span class="chat-meta">You</span>';
+      msgs.appendChild(div);
+    } else if (entry.role === 'assistant') {
+      const div = document.createElement('div');
+      div.className = 'chat-msg chat-msg--assistant';
+      div.innerHTML =
+        '<div class="chat-bubble">' + renderMarkdown(entry.content) + '</div>' +
+        '<span class="chat-meta">Assistant</span>';
+      msgs.appendChild(div);
+    }
+  }
+
+  msgs.scrollTop = msgs.scrollHeight;
+
+  // Show a subtle "history loaded" indicator that auto-removes
+  const indicator = document.createElement('div');
+  indicator.className = 'chat-msg chat-msg--assistant';
+  indicator.innerHTML =
+    '<div class="chat-bubble" style="font-style:italic;opacity:0.6;font-size:var(--font-size-xs)">' +
+    'Chat history loaded (' + saved.length + ' messages)</div>';
+  msgs.appendChild(indicator);
+  setTimeout(() => indicator.remove(), 4000);
+}
+
+// ── Model selector ────────────────────────────────────────────────────────────
+
+async function loadModels() {
+  const sel = $('chat-model-select');
+  if (!sel) return;
+  try {
+    const status = await fetch('/api/chat/status').then(r => r.json());
+    const models = status.available_models || [];
+    const settings = await fetch('/api/settings').then(r => r.json());
+    const configured = (settings.aider_model || '').replace('ollama/', '');
+
+    if (models.length === 0) {
+      sel.innerHTML = '<option value="">No Ollama models found</option>';
+      return;
+    }
+    sel.innerHTML = models.map(function(m) {
+      const sel_ = (m === _selectedModel || m.startsWith(configured.split(':')[0])) ? ' selected' : '';
+      return '<option value="' + esc(m) + '"' + sel_ + '>' + esc(m) + '</option>';
+    }).join('');
+    // Set _selectedModel from selection
+    _selectedModel = sel.value;
+  } catch (_) {
+    const sel2 = $('chat-model-select');
+    if (sel2) sel2.innerHTML = '<option value="">Could not load models</option>';
+  }
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────────
@@ -167,6 +273,7 @@ async function sendMessage(text) {
   const msg = appendAssistantMessage();
 
   try {
+    play('messageSent');
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -175,6 +282,7 @@ async function sendMessage(text) {
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+      play('error');
       msg.error(err.error || `Request failed (${resp.status})`);
       history.pop(); // remove failed user message
       _streaming = false;
@@ -203,6 +311,7 @@ async function sendMessage(text) {
         try {
           const chunk = JSON.parse(raw);
           if (chunk.error) {
+            play('error');
             msg.error(chunk.error);
             history.pop();
             _streaming = false;
@@ -215,10 +324,12 @@ async function sendMessage(text) {
       }
     }
 
+    play('chatDone');
     const finalContent = msg.finalize();
     history.push({ role: 'assistant', content: finalContent });
 
   } catch (err) {
+    play('error');
     msg.error(`Network error: ${err.message}`);
     history.pop();
   }

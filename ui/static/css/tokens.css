@@ -5,6 +5,7 @@
   --color-surface:      #0d1117;
   --color-surface-2:    #161b22;
   --color-surface-3:    #21262d;
+  --color-surface-raised: #1c2128;
   --color-border:       #30363d;
   --color-border-muted: #21262d;
 
@@ -57,6 +58,7 @@
   --color-surface:      #ffffff;
   --color-surface-2:    #f1f5f9;
   --color-surface-3:    #e2e8f0;
+  --color-surface-raised: #ffffff;
   --color-border:       #cbd5e1;
   --color-border-muted: #e2e8f0;
   --color-text:         #0f172a;

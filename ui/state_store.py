@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import sys
 import uuid
@@ -7,10 +8,21 @@ from pathlib import Path
 
 # In a PyInstaller bundle, store persistent data next to the .exe so it
 # survives across updates (sys._MEIPASS is a temp dir that changes each run).
-if getattr(sys, "frozen", False):
-    DATA_DIR = Path(sys.executable).parent / "data"
+#if getattr(sys, "frozen", False):
+#    DATA_DIR = Path(sys.executable).parent / "data"#
+#else:
+#    DATA_DIR = Path(__file__).parent / "data"
+
+APP_NAME = "AiderBridge"
+
+if os.name == "nt":
+    base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
 else:
-    DATA_DIR = Path(__file__).parent / "data"
+    base = os.path.expanduser("~/.local/share")
+
+DATA_DIR = Path(base) / APP_NAME
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+    
 SETTINGS_FILE    = DATA_DIR / "settings.json"
 HISTORY_FILE     = DATA_DIR / "history.json"
 TOKEN_LOG_FILE   = DATA_DIR / "token_log.json"

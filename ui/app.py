@@ -570,7 +570,11 @@ def api_chat():
         return jsonify({"error": "message is required"}), 400
 
     settings = state_store.load_settings()
-    raw_model = settings.get("aider_model", "ollama/qwen2.5-coder:14b")
+    # Allow per-request model override from the chat model selector
+    request_model = (data.get("model") or "").strip()
+    if request_model and not request_model.startswith("ollama/"):
+        request_model = "ollama/" + request_model
+    raw_model = request_model or settings.get("aider_model", "ollama/qwen2.5-coder:14b")
     # Ollama API wants the bare model name (no "ollama/" prefix)
     ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
 

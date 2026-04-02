@@ -3,6 +3,7 @@
 import { SSEClient } from '/static/js/core/sse.js';
 import { apiPost }   from '/static/js/core/api.js';
 import { toast }     from '/static/js/core/toast.js';
+import { play }      from '/static/js/core/sounds.js';
 
 // ── Supervisor presets ────────────────────────────────────────────────────────
 
@@ -354,9 +355,11 @@ function connectSSE() {
       const n = d.task_count || d.total_tasks || '?';
       appendLog(`[bridge] Plan ready — ${n} tasks`);
     })
+    .on('bridge_started', () => play('bridgeStarted'))
     .on('complete', d => {
       const ok  = d.status === 'success';
       const sec = d.elapsed ? ` in ${d.elapsed}s` : '';
+      play(ok ? 'success' : 'failed');
       showBanner(ok ? 'success' : 'failure',
         ok ? `Run completed successfully${sec}.` : `Run finished with failures${sec}.`);
       setRunning(false);
@@ -364,16 +367,23 @@ function connectSSE() {
       _sse.disconnect();
     })
     .on('error', d => {
+      play('error');
       showBanner('failure', `Error: ${d.message || 'unknown error'}`);
       setRunning(false);
       toast(d.message || 'Run error.', 'error', 8000, 'Run Error');
       _sse.disconnect();
     })
     .on('stopped', () => {
+      play('stopped');
       showBanner('stopped', 'Run stopped.');
       setRunning(false);
       _sse.disconnect();
     })
+    .on('task_update', d => {
+      if (d.status === 'approved') play('approved');
+      else if (d.status === 'rework') play('rework');
+    })
+    .on('review_required', () => play('reviewRequired'))
     .connect();
 }
 
@@ -393,6 +403,7 @@ async function launchRun() {
   connectSSE();
 
   try {
+    play('launch');
     await apiPost('/api/run', s);
   } catch (err) {
     showBanner('failure', err.message || 'Failed to start run.');
@@ -500,6 +511,7 @@ function bindControls() {
     try {
       await apiPost('/api/run/input', { text });
       if (stdinInput) stdinInput.value = '';
+      play('inputSent');
     } catch (err) {
       toast(err.message || 'Could not send input.', 'error');
     }

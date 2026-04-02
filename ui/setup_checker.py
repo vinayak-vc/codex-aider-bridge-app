@@ -5,15 +5,25 @@ import subprocess
 import sys
 from pathlib import Path
 
+_cache = None
+_cache_time = 0
 
-def check_all() -> dict:
-    return {
+def check_all():
+    global _cache, _cache_time
+    import time
+
+    if _cache and (time.time() - _cache_time < 5):
+        return _cache
+
+    _cache = {
         "python": check_python(),
         "aider": check_aider(),
         "ollama": check_ollama(),
         "codex": check_codex(),
         "claude": check_claude(),
     }
+    _cache_time = time.time()
+    return _cache
 
 
 def check_python() -> dict:
@@ -50,7 +60,11 @@ def check_aider() -> dict:
     try:
         result = subprocess.run(
             [path, "--version"],
-            capture_output=True, text=True, timeout=8, encoding="utf-8",
+            capture_output=True,
+            text=True,
+            timeout=8,
+            encoding="utf-8",
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         version = (result.stdout.strip() or result.stderr.strip()).splitlines()[0]
     except Exception:
@@ -72,7 +86,11 @@ def check_ollama() -> dict:
     try:
         result = subprocess.run(
             ["ollama", "list"],
-            capture_output=True, text=True, timeout=10, encoding="utf-8",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         models: list[str] = []
         for line in result.stdout.splitlines()[1:]:  # skip header row
