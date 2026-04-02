@@ -11,9 +11,10 @@ if getattr(sys, "frozen", False):
     DATA_DIR = Path(sys.executable).parent / "data"
 else:
     DATA_DIR = Path(__file__).parent / "data"
-SETTINGS_FILE = DATA_DIR / "settings.json"
-HISTORY_FILE = DATA_DIR / "history.json"
-TOKEN_LOG_FILE = DATA_DIR / "token_log.json"
+SETTINGS_FILE    = DATA_DIR / "settings.json"
+HISTORY_FILE     = DATA_DIR / "history.json"
+TOKEN_LOG_FILE   = DATA_DIR / "token_log.json"
+RELAY_TASKS_FILE = DATA_DIR / "relay_tasks.json"
 MAX_HISTORY = 50
 MAX_LOG_LINES = 500
 
@@ -128,3 +129,29 @@ def _empty_token_totals() -> dict:
         "savings_percent_avg": 0.0,
         "last_updated": None,
     }
+
+
+# ── Relay tasks ───────────────────────────────────────────────────────────────
+
+def load_relay_tasks() -> list[dict]:
+    """Return the currently imported relay task list (empty list if none)."""
+    _ensure()
+    if RELAY_TASKS_FILE.exists():
+        try:
+            return json.loads(RELAY_TASKS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def save_relay_tasks(tasks: list[dict]) -> None:
+    """Persist the relay task list."""
+    _ensure()
+    RELAY_TASKS_FILE.write_text(json.dumps(tasks, indent=2), encoding="utf-8")
+
+
+def clear_relay_tasks() -> None:
+    """Remove any previously imported relay tasks."""
+    _ensure()
+    if RELAY_TASKS_FILE.exists():
+        RELAY_TASKS_FILE.unlink()
