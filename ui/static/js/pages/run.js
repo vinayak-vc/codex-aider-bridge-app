@@ -355,35 +355,24 @@ function connectSSE() {
       const n = d.task_count || d.total_tasks || '?';
       appendLog(`[bridge] Plan ready — ${n} tasks`);
     })
-    .on('bridge_started', () => play('bridgeStarted'))
     .on('complete', d => {
       const ok  = d.status === 'success';
       const sec = d.elapsed ? ` in ${d.elapsed}s` : '';
-      play(ok ? 'success' : 'failed');
       showBanner(ok ? 'success' : 'failure',
         ok ? `Run completed successfully${sec}.` : `Run finished with failures${sec}.`);
       setRunning(false);
-      toast(ok ? 'Run completed.' : 'Run finished with failures.', ok ? 'success' : 'error');
       _sse.disconnect();
     })
     .on('error', d => {
-      play('error');
       showBanner('failure', `Error: ${d.message || 'unknown error'}`);
       setRunning(false);
-      toast(d.message || 'Run error.', 'error', 8000, 'Run Error');
       _sse.disconnect();
     })
     .on('stopped', () => {
-      play('stopped');
       showBanner('stopped', 'Run stopped.');
       setRunning(false);
       _sse.disconnect();
     })
-    .on('task_update', d => {
-      if (d.status === 'approved') play('approved');
-      else if (d.status === 'rework') play('rework');
-    })
-    .on('review_required', () => play('reviewRequired'))
     .connect();
 }
 

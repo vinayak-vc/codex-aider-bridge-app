@@ -1,5 +1,7 @@
 // toast.js — lightweight notification toasts
 
+import { play } from '/static/js/core/sounds.js';
+
 const ICONS = {
   success: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>`,
   error:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>`,
@@ -29,8 +31,9 @@ function getContainer() {
  * @param {'success'|'error'|'warning'|'info'} [type='info']
  * @param {number} [duration=4000] - Auto-dismiss after ms (0 = no auto-dismiss)
  * @param {string} [title] - Optional bold title
+ * @param {{ silent?: boolean, sound?: string }} [options]
  */
-export function toast(message, type = 'info', duration = 4000, title = '') {
+export function toast(message, type = 'info', duration = 4000, title = '', options = {}) {
   const container = getContainer();
   const el = document.createElement('div');
   el.className = `toast toast--${type}`;
@@ -52,6 +55,16 @@ export function toast(message, type = 'info', duration = 4000, title = '') {
 
   el.querySelector('.toast-close').addEventListener('click', dismiss);
   container.appendChild(el);
+
+  if (!options.silent) {
+    const fallbackSound = {
+      success: 'success',
+      error: 'error',
+      warning: 'reviewRequired',
+      info: 'bridgeStarted',
+    };
+    play(options.sound || fallbackSound[type] || 'bridgeStarted');
+  }
 
   if (duration > 0) setTimeout(dismiss, duration);
   return dismiss;

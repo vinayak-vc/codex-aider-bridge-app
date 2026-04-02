@@ -271,23 +271,17 @@ function handleComplete(data) {
   store.set('isPaused', false);
   syncStats();
   hideReview();
-  toast(
-    status === 'failure' ? 'Run finished with failures.' : status === 'stopped' ? 'Run stopped.' : 'Run completed successfully.',
-    status === 'failure' ? 'error' : status === 'stopped' ? 'warning' : 'success',
-  );
 }
 
 function handlePaused() {
   store.set('isPaused', true);
   syncStats();
-  toast('Run paused — waiting for resume.', 'info');
 }
 
 function handleResumed() {
   store.set('isPaused', false);
   store.set('runStatus', 'running');
   syncStats();
-  toast('Run resumed.', 'success');
 }
 
 function handleStopped() {
@@ -295,14 +289,12 @@ function handleStopped() {
   store.set('isPaused', false);
   syncStats();
   hideReview();
-  toast('Run stopped.', 'warning');
 }
 
 function handleError(data) {
   store.set('runStatus', 'failure');
   store.set('isPaused', false);
   syncStats();
-  toast(data.message || 'An error occurred.', 'error', 8000, 'Run Error');
 }
 
 function handleReviewRequired(data) {
@@ -311,7 +303,6 @@ function handleReviewRequired(data) {
   const msg    = els.reviewBannerMsg();
   if (msg) msg.textContent = data.validation_message || 'A task needs your approval before the run continues.';
   if (banner) banner.style.display = '';
-  toast('Human review required — check the dashboard.', 'warning', 0, 'Review Required');
 }
 
 // ── Review panel ──────────────────────────────────────────────────────────────
