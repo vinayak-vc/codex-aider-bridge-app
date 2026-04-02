@@ -198,3 +198,17 @@
   align-items: start;
 }
 @media (max-width: 960px) { .tokens-layout { grid-template-columns: 1fr; } }
+
+/* ── Viewport-locked layout ── */
+.tokens-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 16px;
+}
+.tokens-sessions-section {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}

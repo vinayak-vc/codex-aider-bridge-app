@@ -147,6 +147,7 @@ class BridgeRun:
                 cwd=str(BRIDGE_ROOT),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -353,6 +354,20 @@ class BridgeRun:
             self.is_running = False
             self.status = "stopped"
         self._emit("stopped", {})
+
+    def send_input(self, text: str) -> bool:
+        """Write a line of text to the running subprocess stdin. Returns True if sent."""
+        with self._lock:
+            proc = self._process
+        if proc and proc.stdin:
+            try:
+                proc.stdin.write(text + "\n")
+                proc.stdin.flush()
+                self._emit("log", {"line": f"[user input] {text}"})
+                return True
+            except Exception:
+                pass
+        return False
 
 
 # Module-level singleton — one run at a time (local tool)

@@ -9,6 +9,7 @@
 {% endblock %}
 
 {% block content %}
+<div class="dashboard-page">
 <div class="page-header">
   <div>
     <h1 class="page-title">Dashboard</h1>
@@ -114,7 +115,7 @@
   </div>
 
   <!-- Right: task feed -->
-  <div>
+  <div class="dashboard-task-col">
     <div class="section-header" style="margin-bottom:12px">
       <span class="section-title">Tasks</span>
       <span class="badge badge--muted" id="task-count-badge">0</span>
@@ -169,6 +170,7 @@
       <button class="btn btn--primary" id="btn-submit-review">Submit Decision</button>
     </div>
   </div>
+</div>
 </div>
 {% endblock %}
 

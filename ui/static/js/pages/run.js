@@ -490,6 +490,26 @@ function bindControls() {
   // Clear log
   $('btn-clear-log')?.addEventListener('click', clearLog);
 
+  // Stdin input — send text to running process
+  const stdinInput = $('log-stdin-input');
+  const btnSend    = $('btn-log-send');
+
+  async function sendStdin() {
+    const text = stdinInput?.value?.trim();
+    if (!text) return;
+    try {
+      await apiPost('/api/run/input', { text });
+      if (stdinInput) stdinInput.value = '';
+    } catch (err) {
+      toast(err.message || 'Could not send input.', 'error');
+    }
+  }
+
+  stdinInput?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); sendStdin(); }
+  });
+  btnSend?.addEventListener('click', sendStdin);
+
   // Advanced accordion
   const trigger = $('adv-trigger');
   const body    = $('adv-body');

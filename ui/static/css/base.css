@@ -30,24 +30,38 @@ body {
   flex: 1;
   margin-left: var(--nav-width);
   height: 100vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 80px 32px 28px; /* 80px = 52px project-bar + 28px original top */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-top: 52px; /* reserve space for project-bar */
   transition: margin-left var(--transition);
+}
+
+.page-body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 32px;
 }
 
 @media (max-width: 900px) {
   .main-content {
     margin-left: var(--nav-width-collapsed);
-    padding: 72px 16px 20px;
+  }
+  .page-body {
+    padding: 20px 16px;
   }
 }
 
 @media (max-width: 600px) {
   .main-content {
     margin-left: 0;
-    padding: 72px 12px 80px;
     height: 100dvh;
+  }
+  .page-body {
+    padding: 16px 12px 72px;
   }
 }
 

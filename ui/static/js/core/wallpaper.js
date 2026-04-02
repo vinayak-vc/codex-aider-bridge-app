@@ -46,7 +46,11 @@ async function fetchWallpaperUrl(page) {
     const res  = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
-    return data?.urls?.regular || null;
+    // Use raw URL with explicit 4K params (w=3840, q=85, fm=jpg, fit=crop)
+    const raw = data?.urls?.raw;
+    if (!raw) return null;
+    const sep = raw.includes('?') ? '&' : '?';
+    return `${raw}${sep}w=3840&q=85&fm=jpg&fit=crop&crop=entropy`;
   } catch (_) {
     return null;
   }

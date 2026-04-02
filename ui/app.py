@@ -317,6 +317,19 @@ def api_resume_run():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/run/input", methods=["POST"])
+def api_run_input():
+    """Send a line of text to the running subprocess stdin."""
+    data = request.get_json(force=True) or {}
+    text = (data.get("text") or "").rstrip("\n")
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    sent = get_run().send_input(text)
+    if not sent:
+        return jsonify({"error": "No process running or stdin not available"}), 409
+    return jsonify({"ok": True})
+
+
 def _manual_supervisor_dir() -> Optional[Path]:
     settings = state_store.load_settings()
     repo_root = settings.get("repo_root", "").strip()
