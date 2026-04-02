@@ -5,9 +5,13 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+# On Windows, prevent spawned subprocesses from opening a visible CMD window.
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 from models.task import AiderContext, ExecutionResult, Task
 from utils.command_resolution import resolve_command_arguments
@@ -250,6 +254,7 @@ class AiderRunner:
                 check=False,
                 timeout=self._timeout,
                 env=_subprocess_env,
+                creationflags=_WIN_NO_WINDOW,
             )
         except subprocess.TimeoutExpired as ex:
             # ex.process is not always set (Python 3.11 bug on Windows)
@@ -346,6 +351,7 @@ class AiderRunner:
                 encoding="utf-8",
                 errors="replace",
                 timeout=30,
+                creationflags=_WIN_NO_WINDOW,
             )
             if proc.returncode != 0:
                 return  # not a git repo or git unavailable — skip quietly
@@ -385,6 +391,7 @@ class AiderRunner:
                     cwd=self._repo_root,
                     capture_output=True,
                     timeout=15,
+                    creationflags=_WIN_NO_WINDOW,
                 )
                 if revert.returncode != 0:
                     self._logger.debug(

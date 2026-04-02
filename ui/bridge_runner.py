@@ -23,6 +23,9 @@ _FROZEN = getattr(sys, "frozen", False)
 # user has not yet configured a repo root.
 _STARTUP_CWD: str = os.getcwd()
 
+# On Windows, prevent the bridge subprocess from opening a visible CMD window.
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 
 class BridgeRun:
     """Manages one bridge subprocess, parses its log output into structured
@@ -167,6 +170,7 @@ class BridgeRun:
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                creationflags=_WIN_NO_WINDOW,
             )
 
             for raw_line in self._process.stdout:  # type: ignore[union-attr]

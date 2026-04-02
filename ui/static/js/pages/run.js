@@ -537,14 +537,27 @@ function bindControls() {
 async function hydrateExistingRun() {
   try {
     const status = await fetch('/api/run/status').then(r => r.json());
-    if (status.is_running || status.status === 'running') {
+    const alive    = status.is_running || status.status === 'running' || status.status === 'paused';
+    const finished = ['success', 'failure', 'stopped'].includes(status.status);
+
+    if (!alive && !finished) return;
+
+    // Always replay logged lines so the terminal is populated
+    const log = await fetch('/api/run/log').then(r => r.json());
+    if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
+
+    if (alive) {
       setRunning(true);
       showBanner('running', 'Run in progress…');
       connectSSE();
-
-      // Replay log lines already captured
-      const log = await fetch('/api/run/log').then(r => r.json());
-      if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
+    } else {
+      // Run already finished — show the final banner so user sees result on return
+      setRunning(false);
+      showBanner(
+        status.status,
+        status.status === 'success' ? 'Run completed successfully.' :
+        status.status === 'stopped' ? 'Run was stopped.'            : 'Run finished with errors.'
+      );
     }
   } catch (_) {}
 }

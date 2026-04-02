@@ -20,6 +20,37 @@ let _sse           = null;
 let _completedTasks = 0;
 let _totalTasks    = 0;
 
+// ── Persistence helpers ───────────────────────────────────────────────────────
+
+const RELAY_STORE_KEY = 'relay_wizard_state';
+
+function saveRelayState() {
+  try {
+    const state = {
+      step:        _step,
+      goal:        $('relay-goal')?.value        || _goal,
+      repoRoot:    $('relay-repo-root')?.value   || _repoRoot,
+      aiderModel:  $('relay-aider-model')?.value || _aiderModel,
+      tasks:       _tasks,
+      promptOutput: $('prompt-output')?.textContent || '',
+      planPaste:   $('plan-paste')?.value        || '',
+    };
+    localStorage.setItem(RELAY_STORE_KEY, JSON.stringify(state));
+  } catch (_) {}
+}
+
+function loadRelayState() {
+  try {
+    const raw = localStorage.getItem(RELAY_STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  return null;
+}
+
+function clearRelayState() {
+  try { localStorage.removeItem(RELAY_STORE_KEY); } catch (_) {}
+}
+
 // ── Step navigation ───────────────────────────────────────────────────────────
 
 function goToStep(n) {
@@ -64,6 +95,7 @@ async function generatePrompt() {
     if (wrap) wrap.style.display = '';
     const pasteWrap = $('plan-paste-wrap');
     if (pasteWrap) pasteWrap.style.display = '';
+    saveRelayState();
   } catch (err) {
     toast(err.message || 'Failed to generate prompt.', 'error');
   } finally {
@@ -89,6 +121,7 @@ async function importPlan() {
     _tasks = data.tasks || [];
     renderTaskList(_tasks);
     goToStep(2);
+    saveRelayState();
   } catch (err) {
     const msg = err.message || 'Failed to parse plan.';
     if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
@@ -371,6 +404,7 @@ function resetWizard() {
   // Clear log
   const log = $('relay-log'); if (log) log.textContent = '';
 
+  clearRelayState();
   goToStep(1);
 
   // Re-populate config fields from saved settings so user doesn't start blank
@@ -401,10 +435,44 @@ function escHtml(s) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function init() {
-  goToStep(1);
+  // ── Restore saved wizard state if any ────────────────────────────────────
+  const saved = loadRelayState();
+  if (saved) {
+    _tasks      = saved.tasks      || [];
+    _goal       = saved.goal       || '';
+    _repoRoot   = saved.repoRoot   || '';
+    _aiderModel = saved.aiderModel || '';
 
-  // Pre-fill from saved settings
-  prefillFromSettings();
+    // Restore form field values
+    if ($('relay-goal')       && saved.goal)       $('relay-goal').value       = saved.goal;
+    if ($('relay-repo-root'))                       $('relay-repo-root').value  = saved.repoRoot || '';
+    if ($('relay-aider-model'))                     $('relay-aider-model').value= saved.aiderModel || '';
+
+    // Restore generated prompt if present
+    if (saved.promptOutput && $('prompt-output')) {
+      $('prompt-output').textContent = saved.promptOutput;
+      const wrap = $('prompt-output-wrap');
+      if (wrap) wrap.style.display = '';
+      const pasteWrap = $('plan-paste-wrap');
+      if (pasteWrap) pasteWrap.style.display = '';
+    }
+    if (saved.planPaste && $('plan-paste')) {
+      $('plan-paste').value = saved.planPaste;
+    }
+
+    // Restore step and task list
+    const step = saved.step || 1;
+    if (step === 2 && _tasks.length > 0) {
+      renderTaskList(_tasks);
+      goToStep(2);
+    } else {
+      goToStep(1);
+    }
+  } else {
+    goToStep(1);
+    // Pre-fill from saved settings only when there's no saved wizard state
+    prefillFromSettings();
+  }
 
   // Step 1
   $('btn-generate-prompt')?.addEventListener('click', generatePrompt);

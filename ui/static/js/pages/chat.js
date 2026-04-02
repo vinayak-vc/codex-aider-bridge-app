@@ -435,7 +435,7 @@ async function checkModelCompat() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-function init() {
+async function init() {
   const input  = $('chat-input');
   const btnSend = $('btn-send-chat');
 
@@ -478,6 +478,24 @@ function init() {
 
   // Ollama retry button
   $('btn-ollama-recheck')?.addEventListener('click', checkModelCompat);
+
+  // ── Set project key then restore history ─────────────────────────────────
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    _projectKey = (settings.repo_root || '').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  } catch (_) {
+    _projectKey = 'default';
+  }
+  renderHistoryOnLoad();
+  updateHistoryBadge();
+
+  // ── Load available models into the per-chat dropdown ─────────────────────
+  loadModels();
+
+  // Model change — update _selectedModel
+  $('chat-model-select')?.addEventListener('change', e => {
+    _selectedModel = e.target.value;
+  });
 
   // Check model compat on load
   checkModelCompat();
