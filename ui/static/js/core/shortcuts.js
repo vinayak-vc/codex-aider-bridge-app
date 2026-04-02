@@ -11,6 +11,7 @@ const NAV_CHORDS = {
   t: '/tokens',
   s: '/setup',
   c: '/chat',
+  a: '/relay',
 };
 
 const CHORD_TIMEOUT_MS = 1500;
@@ -27,6 +28,7 @@ const SHORTCUTS = [
   { keys: ['g', 't'],     desc: 'Go to Tokens'      },
   { keys: ['g', 's'],     desc: 'Go to Setup'       },
   { keys: ['g', 'c'],     desc: 'Go to Chat'        },
+  { keys: ['g', 'a'],     desc: 'Go to AI Relay'    },
   { keys: ['Ctrl', '↵'],  desc: 'Launch run (Run page)' },
   { keys: ['Esc'],        desc: 'Close modal / overlay' },
   { keys: ['?'],          desc: 'Show this help'    },
