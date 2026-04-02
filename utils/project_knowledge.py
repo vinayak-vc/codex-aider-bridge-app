@@ -68,6 +68,7 @@ def load_knowledge(repo_root: Path) -> dict:
         return _empty_knowledge(repo_root)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        data = _normalize_knowledge_shape(data, repo_root)
         _logger.debug("Loaded project knowledge (%d files)", len(data.get("files", {})))
         return data
     except Exception as ex:
@@ -259,3 +260,77 @@ def _empty_knowledge(repo_root: Path) -> dict:
         "clarifications": [],
         "runs": [],
     }
+
+
+def _normalize_knowledge_shape(data: object, repo_root: Path) -> dict:
+    """Accept both the bridge-native schema and summary-style external schemas."""
+    if not isinstance(data, dict):
+        return _empty_knowledge(repo_root)
+
+    if "project" in data and "files" in data:
+        return data
+
+    normalized = _empty_knowledge(repo_root)
+    normalized["project"].update({
+        "name": str(data.get("project_name") or repo_root.name),
+        "type": str(data.get("project_type") or ""),
+        "language": ", ".join(
+            str(item).strip()
+            for item in data.get("primary_languages", [])
+            if str(item).strip()
+        ),
+        "summary": str(data.get("summary") or ""),
+        "scanned": True,
+        "understanding_confirmed": True,
+    })
+
+    file_registry = data.get("file_registry", [])
+    if isinstance(file_registry, list):
+        for item in file_registry:
+            if not isinstance(item, dict):
+                continue
+            file_path = str(item.get("path") or "").strip()
+            if not file_path:
+                continue
+            normalized["files"][file_path] = {
+                "role": str(item.get("role") or "No description").strip(),
+                "task_type": "scan",
+                "last_modified": _today(),
+                "created": _today(),
+            }
+
+    architecture = data.get("architecture", {})
+    if isinstance(architecture, dict):
+        patterns = architecture.get("patterns", [])
+        if isinstance(patterns, list):
+            normalized["patterns"] = [
+                str(item).strip() for item in patterns if str(item).strip()
+            ]
+
+    generated_dirs = data.get("generated_directories", [])
+    if isinstance(generated_dirs, list):
+        normalized["features_done"] = [
+            str(item.get("role") or "").strip()
+            for item in generated_dirs
+            if isinstance(item, dict) and str(item.get("role") or "").strip()
+        ]
+
+    constraints = data.get("constraints", [])
+    if isinstance(constraints, list):
+        normalized["clarifications"] = [
+            str(item).strip() for item in constraints if str(item).strip()
+        ]
+
+    docs: list[dict] = []
+    for rel_path in ("README.md", "AGENT_CONTEXT.md", "AI_UNDERSTANDING.md"):
+        doc_path = repo_root / rel_path
+        if doc_path.exists():
+            docs.append({
+                "path": rel_path,
+                "title": doc_path.stem,
+                "summary": f"Detected in {repo_root.name}.",
+                "score": 0,
+            })
+    normalized["docs"] = docs
+
+    return normalized

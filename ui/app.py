@@ -912,15 +912,98 @@ def api_get_tokens_current():
 
 # ── Project-scoped reports (reads from <repo_root>/bridge_progress/) ─────────
 
-def _project_progress_dir(request_args) -> Optional[Path]:
-    """Return the bridge_progress/ path for the given repo_root query param."""
+def _project_repo_root(request_args) -> Optional[Path]:
+    """Return the selected repo root from query args or saved settings."""
     repo_root = request_args.get("repo_root", "").strip()
     if not repo_root:
         # Fall back to the saved settings repo_root
         repo_root = state_store.load_settings().get("repo_root", "").strip()
     if not repo_root:
         return None
-    return Path(repo_root) / "bridge_progress"
+    return Path(repo_root)
+
+
+def _project_progress_dir(request_args) -> Optional[Path]:
+    """Return the bridge_progress/ path for the given repo_root query param."""
+    repo_root = _project_repo_root(request_args)
+    if repo_root is None:
+        return None
+    return repo_root / "bridge_progress"
+
+
+def _normalize_knowledge_payload(raw: dict, repo_root: Path) -> dict:
+    """Normalize multiple knowledge-file shapes to the UI's expected schema."""
+    if not isinstance(raw, dict):
+        return {}
+
+    # Native bridge shape already matches what the Knowledge page expects.
+    if "project" in raw and "files" in raw:
+        return raw
+
+    project_name = str(raw.get("project_name") or repo_root.name)
+    project_type = str(raw.get("project_type") or "")
+    primary_languages = raw.get("primary_languages") or []
+    language = ", ".join(str(item) for item in primary_languages if str(item).strip())
+    summary = str(raw.get("summary") or "")
+
+    files: dict[str, dict] = {}
+    for item in raw.get("file_registry", []) if isinstance(raw.get("file_registry"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        files[path] = {
+            "role": str(item.get("role") or "No description").strip(),
+            "task_type": "scan",
+            "last_modified": str(item.get("last_modified") or raw.get("generated_at") or "").strip(),
+        }
+
+    docs: list[dict] = []
+    for rel_path in ("README.md", "AGENT_CONTEXT.md", "AI_UNDERSTANDING.md"):
+        doc_path = repo_root / rel_path
+        if doc_path.exists():
+            docs.append({
+                "path": rel_path,
+                "summary": f"Detected in {repo_root.name}.",
+            })
+
+    patterns = []
+    architecture = raw.get("architecture")
+    if isinstance(architecture, dict):
+        for pattern in architecture.get("patterns", []) if isinstance(architecture.get("patterns"), list) else []:
+            pattern_text = str(pattern).strip()
+            if pattern_text:
+                patterns.append(pattern_text)
+
+    features_done = []
+    for item in raw.get("generated_directories", []) if isinstance(raw.get("generated_directories"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        if role:
+            features_done.append(role)
+
+    constraints = raw.get("constraints") if isinstance(raw.get("constraints"), list) else []
+
+    return {
+        "project": {
+            "name": project_name,
+            "type": project_type,
+            "language": language,
+            "summary": summary,
+            "repo_root": str(repo_root),
+            "scanned": bool(files),
+            "understanding_confirmed": True,
+        },
+        "files": files,
+        "docs": docs,
+        "patterns": patterns,
+        "features_done": features_done,
+        "suggested_next": [],
+        "clarifications": [str(item) for item in constraints if str(item).strip()],
+        "runs": [],
+    }
 
 
 @app.route("/api/reports/tokens")
@@ -941,14 +1024,16 @@ def api_reports_tokens():
 @app.route("/api/reports/knowledge")
 def api_reports_knowledge():
     """Project knowledge cache (reads bridge_progress/project_knowledge.json)."""
+    repo_root = _project_repo_root(request.args)
     progress_dir = _project_progress_dir(request.args)
-    if progress_dir is None:
+    if progress_dir is None or repo_root is None:
         return jsonify({"error": "repo_root not set"}), 400
     knowledge_file = progress_dir / "project_knowledge.json"
     if not knowledge_file.exists():
         return jsonify({})
     try:
-        return jsonify(json.loads(knowledge_file.read_text(encoding="utf-8")))
+        raw = json.loads(knowledge_file.read_text(encoding="utf-8"))
+        return jsonify(_normalize_knowledge_payload(raw, repo_root))
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
 
@@ -970,16 +1055,19 @@ def api_reports_last_run():
 
 @app.route("/api/reports/understanding")
 def api_reports_understanding():
-    """AI_UNDERSTANDING.md content (reads bridge_progress/AI_UNDERSTANDING.md)."""
+    """AI_UNDERSTANDING.md content for the selected project."""
+    repo_root = _project_repo_root(request.args)
     progress_dir = _project_progress_dir(request.args)
-    if progress_dir is None:
+    if progress_dir is None or repo_root is None:
         return jsonify({"content": "", "exists": False, "error": "repo_root not set"})
     understanding_file = progress_dir / "AI_UNDERSTANDING.md"
+    if not understanding_file.exists():
+        understanding_file = repo_root / "AI_UNDERSTANDING.md"
     if not understanding_file.exists():
         return jsonify({"content": "", "exists": False})
     try:
         content = understanding_file.read_text(encoding="utf-8")
-        return jsonify({"content": content, "exists": True})
+        return jsonify({"content": content, "exists": True, "path": str(understanding_file)})
     except Exception as ex:
         return jsonify({"content": "", "exists": False, "error": str(ex)})
 
@@ -1011,16 +1099,6 @@ def api_chat():
     raw_model = request_model or settings.get("aider_model", "ollama/qwen2.5-coder:14b")
     # Ollama API wants the bare model name (no "ollama/" prefix)
     ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
-
-    # --- Reject non-Ollama models (no API key in the UI) ---
-    if not raw_model.startswith("ollama/"):
-        return jsonify({
-            "error": (
-                f"Chat only works with local Ollama models (e.g. ollama/qwen2.5-coder:14b). "
-                f"Your configured model '{raw_model}' requires an API key which the chat "
-                f"endpoint does not manage. Switch to an Ollama model in Run settings first."
-            )
-        }), 400
 
     repo_root = settings.get("repo_root", "").strip()
     messages = _build_chat_prompt_messages(repo_root, history, message, raw_model)
@@ -1095,8 +1173,8 @@ def api_chat_start():
     if request_model and not request_model.startswith("ollama/"):
         request_model = "ollama/" + request_model
     raw_model = request_model or settings.get("aider_model", "ollama/qwen2.5-coder:14b")
-    if not raw_model.startswith("ollama/"):
-        return jsonify({"error": "Chat only works with local Ollama models."}), 400
+    #if not raw_model.startswith("ollama/"):
+    #    return jsonify({"error": "Chat only works with local Ollama models."}), 400
 
     runtime = _get_chat_runtime(repo_root)
     if runtime.is_generating:

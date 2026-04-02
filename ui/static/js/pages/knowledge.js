@@ -219,6 +219,9 @@ function renderUnderstanding(data, knowledge) {
   const mdEl = $('understanding-md');
   if (mdEl) mdEl.innerHTML = renderMarkdown(data.content);
 
+  const pathEl = $('understanding-path');
+  if (pathEl) pathEl.textContent = data.path || '';
+
   // Confirmed badge
   const badge = $('understanding-confirmed-badge');
   if (badge) {
