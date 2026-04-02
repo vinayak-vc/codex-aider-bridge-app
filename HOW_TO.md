@@ -31,7 +31,7 @@ Or double-click **`launch_ui.bat`** on Windows. Opens at `http://127.0.0.1:7823`
 |---|---|
 | **Dashboard** | Live progress ring, task feed, pause/resume, review panel with diff viewer |
 | **Run** | Configure and launch a run — goal, repo, model, supervisor, advanced options |
-| **Chat** | Ask your local Ollama model questions about the project (no API key needed) |
+| **Chat Drawer** | Persistent right-side Ollama chat for project questions, new chat, and stop |
 | **Knowledge** | View AI_UNDERSTANDING.md and the scanned file registry |
 | **History** | Browse past runs, re-run with same settings, view full logs |
 | **Tokens** | Token usage analytics with savings bar and session detail |
@@ -45,14 +45,14 @@ Or double-click **`launch_ui.bat`** on Windows. Opens at `http://127.0.0.1:7823`
 | **Cursor** | Cursor IDE installed with active subscription |
 | **Windsurf** | Windsurf IDE installed with active subscription |
 | **Manual** | Nothing — you write decision files yourself (see below) |
-| **AI Relay** *(coming soon)* | Nothing — use any web AI via copy-paste, no API key |
+| **AI Relay** | Nothing — use any web AI via copy-paste, no API key |
 | **Codex CLI** | `OPENAI_API_KEY` env var + API credits (ChatGPT Plus does NOT cover this) |
 
 The Run page shows a live compatibility banner per supervisor and model selection.
 
-### Using the Chat page
+### Using the Chat drawer
 
-Chat lets you talk about your project using the local Ollama model.
+Chat opens from the floating button on the right side of the UI and uses the local Ollama model.
 It **cannot edit files** — for code changes, use the Run tab.
 
 Good uses for Chat:
@@ -63,6 +63,23 @@ Good uses for Chat:
 
 Chat is blocked when a non-Ollama model (e.g. `gpt-4o`) is configured — switch to an
 `ollama/…` model in Run settings first.
+
+Chat behavior:
+- You can leave the current page and reopen chat without losing the thread
+- Assistant replies can continue while another page is open
+- `New Chat` starts a fresh thread for the selected project
+- `Stop` interrupts the current response
+- Closing and reopening the app restores the old chat when you select the same project again
+
+### Using AI Relay
+
+AI Relay lets you import or generate a task plan and then run review decisions through copy-paste with a web AI.
+
+AI Relay behavior:
+- Imported or generated tasks are restored after app restart
+- The task list shows status badges such as `Not started`, `Done`, and `Failed`
+- If the previous run is no longer active, AI Relay reopens on **Confirm Tasks**
+- **Run & Review** only opens automatically when there is still a live bridge session to reconnect to
 
 ---
 

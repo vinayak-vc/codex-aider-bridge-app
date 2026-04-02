@@ -231,6 +231,26 @@
 .relay-task-type-badge[data-type="delete"]   { background: rgba(251,113,133,.12); color: var(--color-danger); border: 1px solid rgba(251,113,133,.3); }
 .relay-task-type-badge[data-type="validate"] { background: rgba(249,115,22,.12); color: var(--color-info);   border: 1px solid rgba(249,115,22,.3);  }
 
+.relay-task-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.relay-task-status-badge[data-status="not_started"]   { background: rgba(148,163,184,.10); color: var(--color-text-muted); border-color: rgba(148,163,184,.22); }
+.relay-task-status-badge[data-status="running"]       { background: rgba(225,29,72,.12);  color: var(--color-accent);    border-color: rgba(225,29,72,.30); }
+.relay-task-status-badge[data-status="waiting_review"]{ background: rgba(245,158,11,.10); color: var(--color-warning);   border-color: rgba(245,158,11,.30); }
+.relay-task-status-badge[data-status="approved"]      { background: rgba(34,197,94,.15);  color: #22c55e;               border-color: rgba(34,197,94,.30); }
+.relay-task-status-badge[data-status="failed"]        { background: rgba(251,113,133,.12); color: var(--color-danger);   border-color: rgba(251,113,133,.30); }
+.relay-task-status-badge[data-status="rework"]        { background: rgba(249,115,22,.12); color: var(--color-info);      border-color: rgba(249,115,22,.30); }
+.relay-task-status-badge[data-status="retrying"]      { background: rgba(245,158,11,.10); color: var(--color-warning);   border-color: rgba(245,158,11,.30); }
+.relay-task-status-badge[data-status="stopped"]       { background: rgba(148,163,184,.10); color: var(--color-text-subtle); border-color: rgba(148,163,184,.22); }
+
 .relay-task-instruction {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);

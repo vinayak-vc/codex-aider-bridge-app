@@ -43,6 +43,339 @@ _knowledge_cache: dict[str, tuple[str, float]] = {}
 _KNOWLEDGE_CACHE_TTL = 60.0  # seconds
 
 
+def _chat_project_key(repo_root: str) -> str:
+    return str(repo_root or "").strip()
+
+
+def _relay_task_status_label(status: str) -> str:
+    mapping = {
+        "not_started": "Not started",
+        "running": "Running",
+        "waiting_review": "Waiting review",
+        "approved": "Done",
+        "success": "Done",
+        "failed": "Failed",
+        "failure": "Failed",
+        "rework": "Rework",
+        "retrying": "Retrying",
+        "stopped": "Stopped",
+        "dry-run": "Dry run",
+    }
+    return mapping.get(status, status.replace("_", " ").title())
+
+
+def _relay_task_statuses(repo_root: str) -> dict[int, dict]:
+    statuses: dict[int, dict] = {}
+
+    run = get_run()
+    for task_id, task in run.tasks.items():
+        task_status = str(task.get("status", "not_started")).strip() or "not_started"
+        statuses[int(task_id)] = {
+            "code": task_status,
+            "label": _relay_task_status_label(task_status),
+        }
+
+    if not repo_root:
+        return statuses
+
+    decisions_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
+    if decisions_dir.exists():
+        for decision_file in sorted(decisions_dir.glob("task_*_decision.json")):
+            try:
+                payload = json.loads(decision_file.read_text(encoding="utf-8"))
+                task_id = int(payload.get("task_id", 0))
+                if task_id <= 0 or task_id in statuses:
+                    continue
+                decision = str(payload.get("decision", "")).strip().lower()
+                if decision == "pass":
+                    code = "approved"
+                elif decision == "fail":
+                    code = "failed"
+                elif decision == "rework":
+                    code = "rework"
+                else:
+                    continue
+                statuses[task_id] = {
+                    "code": code,
+                    "label": _relay_task_status_label(code),
+                }
+            except Exception:
+                pass
+
+    requests_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
+    if requests_dir.exists():
+        for request_file in sorted(requests_dir.glob("task_*_request.json")):
+            try:
+                payload = json.loads(request_file.read_text(encoding="utf-8"))
+                task_id = int(payload.get("task_id", 0))
+                if task_id <= 0:
+                    continue
+                if task_id not in statuses:
+                    statuses[task_id] = {
+                        "code": "waiting_review",
+                        "label": _relay_task_status_label("waiting_review"),
+                    }
+            except Exception:
+                pass
+
+    return statuses
+
+
+def _relay_state_payload() -> dict:
+    ui_state = state_store.load_relay_ui_state()
+    tasks = state_store.load_relay_tasks()
+    settings = state_store.load_settings()
+    repo_root = str(ui_state.get("repo_root") or settings.get("repo_root") or "").strip()
+    task_statuses = _relay_task_statuses(repo_root)
+
+    decorated_tasks: list[dict] = []
+    completed = 0
+    for task in tasks:
+        task_copy = dict(task)
+        task_id = int(task_copy.get("id", 0))
+        status_info = task_statuses.get(task_id, {
+            "code": "not_started",
+            "label": _relay_task_status_label("not_started"),
+        })
+        task_copy["status"] = status_info["code"]
+        task_copy["status_label"] = status_info["label"]
+        decorated_tasks.append(task_copy)
+        if status_info["code"] in ("approved", "success"):
+            completed += 1
+
+    run = get_run()
+    run_status = run.status
+    live_run_active = run.is_running or run_status in ("running", "waiting_review", "paused")
+    if decorated_tasks:
+        if live_run_active:
+            step = 3
+        else:
+            step = 2
+    else:
+        step = int(ui_state.get("step", 1) or 1)
+
+    current_review: dict | None = None
+    if live_run_active:
+        try:
+            manual_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests" if repo_root else None
+            if manual_dir and manual_dir.exists():
+                request_files = sorted(manual_dir.glob("task_*_request.json"))
+                if request_files:
+                    current_review = json.loads(request_files[0].read_text(encoding="utf-8"))
+        except Exception:
+            current_review = None
+
+    return {
+        "step": step,
+        "goal": str(ui_state.get("goal") or settings.get("goal") or ""),
+        "repo_root": repo_root,
+        "aider_model": str(ui_state.get("aider_model") or settings.get("aider_model") or "ollama/mistral"),
+        "prompt_output": str(ui_state.get("prompt_output") or ""),
+        "plan_paste": str(ui_state.get("plan_paste") or ""),
+        "tasks": decorated_tasks,
+        "run_status": run_status,
+        "is_running": run.is_running,
+        "live_run_active": live_run_active,
+        "completed_tasks": completed if decorated_tasks else run.completed_tasks,
+        "total_tasks": len(decorated_tasks),
+        "current_review": current_review,
+    }
+
+
+class _ChatRuntime:
+    def __init__(self) -> None:
+        self.is_generating = False
+        self.stop_event = threading.Event()
+        self.model = ""
+        self.error = ""
+        self.updated_at = time.time()
+
+
+_chat_runtime_lock = threading.Lock()
+_chat_runtimes: dict[str, _ChatRuntime] = {}
+
+
+def _sanitize_chat_messages(messages_raw: object) -> list[dict]:
+    if not isinstance(messages_raw, list):
+        return []
+
+    messages: list[dict] = []
+    for entry in messages_raw[-100:]:
+        if not isinstance(entry, dict):
+            continue
+        role = str(entry.get("role", "")).strip()
+        content = str(entry.get("content", ""))
+        if role not in ("user", "assistant"):
+            continue
+        messages.append({
+            "role": role,
+            "content": content,
+        })
+    return messages
+
+
+def _get_chat_runtime(repo_root: str) -> _ChatRuntime:
+    project_key = _chat_project_key(repo_root)
+    with _chat_runtime_lock:
+        runtime = _chat_runtimes.get(project_key)
+        if runtime is None:
+            runtime = _ChatRuntime()
+            _chat_runtimes[project_key] = runtime
+        return runtime
+
+
+def _set_chat_runtime_idle(repo_root: str, error: str = "") -> None:
+    runtime = _get_chat_runtime(repo_root)
+    runtime.is_generating = False
+    runtime.error = error
+    runtime.stop_event.clear()
+    runtime.updated_at = time.time()
+
+
+def _build_chat_context(repo_root: str) -> str:
+    knowledge_ctx = ""
+    if not repo_root:
+        return knowledge_ctx
+
+    cached = _knowledge_cache.get(repo_root)
+    if cached and (time.time() - cached[1]) < _KNOWLEDGE_CACHE_TTL:
+        return cached[0]
+
+    try:
+        _root = Path(__file__).parent.parent
+        if str(_root) not in sys.path:
+            sys.path.insert(0, str(_root))
+        from utils.project_knowledge import load_knowledge, to_context_text
+        knowledge = load_knowledge(Path(repo_root))
+        knowledge_ctx = to_context_text(knowledge)
+        _knowledge_cache[repo_root] = (knowledge_ctx, time.time())
+    except Exception:
+        pass
+
+    return knowledge_ctx
+
+
+def _build_chat_prompt_messages(
+    repo_root: str,
+    history: list[dict],
+    message: str,
+    raw_model: str,
+) -> list[dict]:
+    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
+    knowledge_ctx = _build_chat_context(repo_root)
+
+    system_prompt = f"""You are a helpful AI coding assistant integrated into the Codex-Aider Bridge tool.
+You help developers understand their codebase, plan features, debug issues, and discuss architecture.
+You are conversational, concise, and precise.
+
+IMPORTANT LIMITATIONS — disclose these when relevant:
+- You CANNOT edit files or run code directly. For actual code changes, use the Run tab.
+- Your project knowledge comes from a static scan and may not reflect the latest edits.
+- You have NO internet access.
+- Conversation history is saved per project and restored when that project is selected again.
+- You run on the locally-installed Ollama model: {ollama_model}
+
+{knowledge_ctx}
+
+When suggesting code changes, be specific: name the file, the function, and exactly what to change.
+When the user is ready to execute, suggest they go to the Run tab with a clear goal description."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for item in history[-20:]:
+        if item.get("role") in ("user", "assistant") and item.get("content"):
+            messages.append({"role": item["role"], "content": item["content"]})
+    messages.append({"role": "user", "content": message})
+    return messages
+
+
+def _run_chat_completion(
+    repo_root: str,
+    history: list[dict],
+    message: str,
+    raw_model: str,
+) -> None:
+    import urllib.request
+    import urllib.error
+
+    runtime = _get_chat_runtime(repo_root)
+    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
+    messages = _build_chat_prompt_messages(repo_root, history, message, raw_model)
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": messages,
+        "stream": True,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    final_content = ""
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for raw_line in resp:
+                if runtime.stop_event.is_set():
+                    break
+
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    final_content += token
+                    current = state_store.load_chat_history(_chat_project_key(repo_root))
+                    if current and current[-1].get("role") == "assistant":
+                        current[-1]["content"] = final_content
+                        state_store.save_chat_history(_chat_project_key(repo_root), current)
+                if chunk.get("done"):
+                    break
+
+        if runtime.stop_event.is_set():
+            current = state_store.load_chat_history(_chat_project_key(repo_root))
+            if current and current[-1].get("role") == "assistant" and not str(current[-1].get("content", "")).strip():
+                current.pop()
+                state_store.save_chat_history(_chat_project_key(repo_root), current)
+            _set_chat_runtime_idle(repo_root)
+            return
+
+        _set_chat_runtime_idle(repo_root)
+    except urllib.error.HTTPError as exc:
+        try:
+            body_json = json.loads(exc.read().decode("utf-8", errors="replace"))
+            detail = body_json.get("error") or f"HTTP {exc.code}"
+        except Exception:
+            detail = f"HTTP {exc.code}: {exc.reason}"
+        history_now = state_store.load_chat_history(_chat_project_key(repo_root))
+        if history_now and history_now[-1].get("role") == "assistant":
+            history_now[-1]["content"] = f"Ollama error: {detail}"
+            state_store.save_chat_history(_chat_project_key(repo_root), history_now)
+        _set_chat_runtime_idle(repo_root, f"Ollama error: {detail}")
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", str(exc))
+        detail = f"Ollama not reachable: {reason}. Is Ollama running?"
+        history_now = state_store.load_chat_history(_chat_project_key(repo_root))
+        if history_now and history_now[-1].get("role") == "assistant":
+            history_now[-1]["content"] = detail
+            state_store.save_chat_history(_chat_project_key(repo_root), history_now)
+        _set_chat_runtime_idle(repo_root, detail)
+    except Exception as exc:
+        detail = str(exc)
+        history_now = state_store.load_chat_history(_chat_project_key(repo_root))
+        if history_now and history_now[-1].get("role") == "assistant":
+            history_now[-1]["content"] = detail
+            state_store.save_chat_history(_chat_project_key(repo_root), history_now)
+        _set_chat_runtime_idle(repo_root, detail)
+
+
 def _broadcast(event_type: str, data: dict) -> None:
     payload = json.dumps({"type": event_type, **data})
     with _sse_lock:
@@ -605,46 +938,8 @@ def api_chat():
             )
         }), 400
 
-    # --- Build project context from knowledge file (cached 60 s) ---
     repo_root = settings.get("repo_root", "").strip()
-    knowledge_ctx = ""
-    if repo_root:
-        cached = _knowledge_cache.get(repo_root)
-        if cached and (time.time() - cached[1]) < _KNOWLEDGE_CACHE_TTL:
-            knowledge_ctx = cached[0]
-        else:
-            try:
-                _root = Path(__file__).parent.parent
-                if str(_root) not in sys.path:
-                    sys.path.insert(0, str(_root))
-                from utils.project_knowledge import load_knowledge, to_context_text
-                knowledge = load_knowledge(Path(repo_root))
-                knowledge_ctx = to_context_text(knowledge)
-                _knowledge_cache[repo_root] = (knowledge_ctx, time.time())
-            except Exception:
-                pass
-
-    system_prompt = f"""You are a helpful AI coding assistant integrated into the Codex-Aider Bridge tool.
-You help developers understand their codebase, plan features, debug issues, and discuss architecture.
-You are conversational, concise, and precise.
-
-IMPORTANT LIMITATIONS — disclose these when relevant:
-- You CANNOT edit files or run code directly. For actual code changes, use the Run tab.
-- Your project knowledge comes from a static scan and may not reflect the latest edits.
-- You have NO internet access.
-- Conversation history is NOT saved after the page is refreshed.
-- You run on the locally-installed Ollama model: {ollama_model}
-
-{knowledge_ctx}
-
-When suggesting code changes, be specific: name the file, the function, and exactly what to change.
-When the user is ready to execute, suggest they go to the Run tab with a clear goal description."""
-
-    messages = [{"role": "system", "content": system_prompt}]
-    for h in history[-20:]:
-        if h.get("role") in ("user", "assistant") and h.get("content"):
-            messages.append({"role": h["role"], "content": h["content"]})
-    messages.append({"role": "user", "content": message})
+    messages = _build_chat_prompt_messages(repo_root, history, message, raw_model)
 
     def generate():
         body = json.dumps({
@@ -692,6 +987,147 @@ When the user is ready to execute, suggest they go to the Run tab with a clear g
         content_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/chat/start", methods=["POST"])
+def api_chat_start():
+    data = request.get_json(force=True) or {}
+    message = str(data.get("message", "")).strip()
+    history = _sanitize_chat_messages(data.get("history", []))
+    repo_root = str(data.get("repo_root", "")).strip()
+
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+
+    settings = state_store.load_settings()
+    request_model = str(data.get("model", "")).strip()
+    if request_model and not request_model.startswith("ollama/"):
+        request_model = "ollama/" + request_model
+    raw_model = request_model or settings.get("aider_model", "ollama/qwen2.5-coder:14b")
+    if not raw_model.startswith("ollama/"):
+        return jsonify({"error": "Chat only works with local Ollama models."}), 400
+
+    runtime = _get_chat_runtime(repo_root)
+    if runtime.is_generating:
+        return jsonify({"error": "A chat response is already running for this project."}), 409
+
+    persisted = history + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": ""},
+    ]
+    state_store.save_chat_history(_chat_project_key(repo_root), persisted)
+
+    runtime.is_generating = True
+    runtime.stop_event.clear()
+    runtime.model = raw_model
+    runtime.error = ""
+    runtime.updated_at = time.time()
+
+    worker = threading.Thread(
+        target=_run_chat_completion,
+        args=(repo_root, history, message, raw_model),
+        daemon=True,
+    )
+    worker.start()
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/chat/stop", methods=["POST"])
+def api_chat_stop():
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+
+    runtime = _get_chat_runtime(repo_root)
+    runtime.stop_event.set()
+    runtime.updated_at = time.time()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/chat/state", methods=["GET"])
+def api_chat_state():
+    repo_root = (request.args.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    runtime = _get_chat_runtime(repo_root)
+    return jsonify({
+        "repo_root": repo_root,
+        "messages": state_store.load_chat_history(_chat_project_key(repo_root)),
+        "is_generating": runtime.is_generating,
+        "model": runtime.model,
+        "error": runtime.error,
+        "updated_at": runtime.updated_at,
+    })
+
+
+@app.route("/api/chat/history", methods=["GET"])
+def api_chat_history():
+    repo_root = (request.args.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    return jsonify({
+        "repo_root": repo_root,
+        "messages": state_store.load_chat_history(_chat_project_key(repo_root)),
+    })
+
+
+@app.route("/api/chat/history", methods=["POST"])
+def api_chat_history_save():
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    messages_raw = data.get("messages", [])
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+    if not isinstance(messages_raw, list):
+        return jsonify({"error": "messages must be a list"}), 400
+
+    messages: list[dict] = []
+    for entry in messages_raw[-100:]:
+        if not isinstance(entry, dict):
+            continue
+        role = str(entry.get("role", "")).strip()
+        content = str(entry.get("content", ""))
+        if role not in ("user", "assistant"):
+            continue
+        messages.append({
+            "role": role,
+            "content": content,
+        })
+
+    state_store.save_chat_history(_chat_project_key(repo_root), messages)
+    return jsonify({"ok": True, "count": len(messages)})
+
+
+@app.route("/api/chat/history", methods=["DELETE"])
+def api_chat_history_delete():
+    repo_root = (request.args.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+
+    state_store.clear_chat_history(_chat_project_key(repo_root))
+    return jsonify({"ok": True})
 
 
 @app.route("/api/chat/status")
@@ -828,7 +1264,29 @@ def api_relay_import_plan():
         return jsonify({"error": str(exc)}), 422
 
     state_store.save_relay_tasks(tasks)
+    ui_state = state_store.load_relay_ui_state()
+    ui_state["step"] = 2
+    state_store.save_relay_ui_state(ui_state)
     return jsonify({"tasks": tasks, "count": len(tasks)})
+
+
+@app.route("/api/relay/state", methods=["GET"])
+def api_relay_state():
+    return jsonify(_relay_state_payload())
+
+
+@app.route("/api/relay/state", methods=["POST"])
+def api_relay_state_save():
+    data = request.get_json(force=True) or {}
+    state_store.save_relay_ui_state(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/relay/state", methods=["DELETE"])
+def api_relay_state_clear():
+    state_store.clear_relay_ui_state()
+    state_store.clear_relay_tasks()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/relay/review-packet", methods=["GET"])

@@ -2,6 +2,25 @@
 
 ---
 
+## [2026-04-02] - Chat Drawer Persistence and AI Relay Restore
+
+### Added
+- Global right-side chat drawer available across the UI instead of a page-only chat flow
+- Per-project chat persistence so old conversations restore after app restart when the same project is selected
+- Chat controls for `New Chat` and `Stop`
+- Server-backed AI Relay UI state persistence for generated or imported task plans
+- Relay task status badges for `Not started`, `Running`, `Waiting review`, `Done`, `Failed`, `Rework`, `Retrying`, and `Stopped`
+
+### Changed
+- Chat now continues while the user navigates to other pages and reconnects when the drawer is reopened
+- AI Relay now restores imported tasks and task statuses after restart
+- AI Relay reopens on **Confirm Tasks** after restart unless there is a live run that can resume into **Run & Review**
+- Left sidebar Chat navigation removed in favor of the persistent drawer
+
+### Fixed
+- Chat no longer resets when the user changes panels
+- Relay restore no longer traps the UI on stale **Run & Review** state after app restart
+
 ## [2026-04-01] — Multi-page Web UI, Chat Feature, AI Relay Spec
 
 ### Added — Web UI Rebuild (M1–M8, complete)

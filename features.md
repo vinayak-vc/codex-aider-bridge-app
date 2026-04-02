@@ -520,6 +520,13 @@ The UI was fully rebuilt from a single `index.html` into a multi-page Flask appl
 
 ## 17. Chat Feature
 
+Current behavior update:
+- Chat now opens from a persistent right-side drawer instead of behaving like a page-local conversation
+- Chat history is stored per project and restored after app restart when the same project is selected
+- Active assistant responses can continue while the user changes pages and reconnect when the drawer is reopened
+- `New Chat` clears the selected project's thread
+- `Stop` interrupts the active response
+
 Local conversational AI integrated directly into the web UI at `/chat` (shortcut `g+c`).
 
 - Powered by the configured Ollama model — fully local, no API key
@@ -547,6 +554,13 @@ Local conversational AI integrated directly into the web UI at `/chat` (shortcut
 ---
 
 ## 18. AI Relay Supervisor (Planned)
+
+Current behavior update:
+- AI Relay is implemented in the web UI
+- Imported or generated tasks are persisted per project and restored after app restart
+- Task cards show status badges such as `Not started`, `Running`, `Waiting review`, `Done`, and `Failed`
+- If tasks exist but there is no live run, AI Relay reopens on **Confirm Tasks**
+- **Run & Review** only restores automatically when there is still a live session to reconnect to
 
 > Status: Spec complete — see `AI_RELAY_SPEC.md`. Implementation pending.
 

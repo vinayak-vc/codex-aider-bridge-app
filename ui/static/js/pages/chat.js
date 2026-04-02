@@ -1,21 +1,15 @@
-// pages/chat.js — Chat page controller
+// pages/chat.js - Chat page controller
 
 import { toast } from '/static/js/core/toast.js';
 import { play } from '/static/js/core/sounds.js';
 
-// ── State ─────────────────────────────────────────────────────────────────────
-
-const history = [];   // [{role: 'user'|'assistant', content: string}]
+const history = [];
 let _streaming = false;
-let _projectKey = '';     // localStorage key prefix for this project's history
-let _selectedModel = '';  // model chosen via the dropdown
-
-// ── DOM helpers ───────────────────────────────────────────────────────────────
+let _projectKey = '';
+let _selectedModel = '';
+let _abortController = null;
 
 const $ = id => document.getElementById(id);
-
-// ── Simple inline markdown renderer ──────────────────────────────────────────
-// Converts streamed assistant text to safe HTML
 
 function renderMarkdown(raw) {
   const lines = raw.split('\n');
@@ -26,8 +20,6 @@ function renderMarkdown(raw) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    // Fenced code block
     const fenceMatch = line.match(/^```(\w*)$/);
     if (fenceMatch) {
       if (!inFence) {
@@ -41,26 +33,39 @@ function renderMarkdown(raw) {
       }
       continue;
     }
-    if (inFence) { fenceLines.push(line); continue; }
+    if (inFence) {
+      fenceLines.push(line);
+      continue;
+    }
 
-    // Headings
-    if (/^### /.test(line)) { html += `<p><strong>${inlineFormat(line.slice(4))}</strong></p>`; continue; }
-    if (/^## /.test(line))  { html += `<p><strong>${inlineFormat(line.slice(3))}</strong></p>`; continue; }
-    if (/^# /.test(line))   { html += `<p><strong>${inlineFormat(line.slice(2))}</strong></p>`; continue; }
-
-    // List items
-    if (/^[*\-] /.test(line)) { html += `<p style="margin-left:12px">• ${inlineFormat(line.slice(2))}</p>`; continue; }
-    if (/^\d+\. /.test(line)) { html += `<p style="margin-left:12px">${inlineFormat(line)}</p>`; continue; }
-
-    // Blank line
-    if (!line.trim()) { html += '<br>'; continue; }
-
-    // Normal paragraph
+    if (/^### /.test(line)) {
+      html += `<p><strong>${inlineFormat(line.slice(4))}</strong></p>`;
+      continue;
+    }
+    if (/^## /.test(line)) {
+      html += `<p><strong>${inlineFormat(line.slice(3))}</strong></p>`;
+      continue;
+    }
+    if (/^# /.test(line)) {
+      html += `<p><strong>${inlineFormat(line.slice(2))}</strong></p>`;
+      continue;
+    }
+    if (/^[*\-] /.test(line)) {
+      html += `<p style="margin-left:12px">• ${inlineFormat(line.slice(2))}</p>`;
+      continue;
+    }
+    if (/^\d+\. /.test(line)) {
+      html += `<p style="margin-left:12px">${inlineFormat(line)}</p>`;
+      continue;
+    }
+    if (!line.trim()) {
+      html += '<br>';
+      continue;
+    }
     html += `<p>${inlineFormat(line)}</p>`;
   }
 
-  // Close unclosed fence
-  if (inFence && fenceLines.length) {
+  if (inFence && fenceLines.length > 0) {
     html += `<pre><code>${esc(fenceLines.join('\n'))}</code></pre>`;
   }
 
@@ -69,11 +74,8 @@ function renderMarkdown(raw) {
 
 function inlineFormat(s) {
   return esc(s)
-    // **bold**
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    // *italic*
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // `code`
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
@@ -84,33 +86,11 @@ function esc(s) {
     .replace(/>/g, '&gt;');
 }
 
-// ── Per-project history persistence ──────────────────────────────────────────
-
-function historyKey() { return 'chat_history_' + (_projectKey || 'default'); }
-
-function loadPersistedHistory() {
-  try {
-    const raw = localStorage.getItem(historyKey());
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch (_) {}
-  return [];
-}
-
-function saveHistory() {
-  try {
-    // Keep last 100 messages to avoid localStorage bloat
-    localStorage.setItem(historyKey(), JSON.stringify(history.slice(-100)));
-  } catch (_) {}
-}
-
-// ── History count badge ───────────────────────────────────────────────────────
-
 function updateHistoryBadge() {
   const badge = $('chat-history-count');
-  if (!badge) return;
+  if (!badge) {
+    return;
+  }
   if (history.length > 0) {
     badge.textContent = history.length + ' msgs';
     badge.style.display = '';
@@ -119,310 +99,454 @@ function updateHistoryBadge() {
   }
 }
 
-// ── Render persisted history on load ─────────────────────────────────────────
+function setStreamingState(streaming) {
+  _streaming = streaming;
 
-function renderHistoryOnLoad() {
-  const saved = loadPersistedHistory();
-  if (!saved.length) return;
+  const sendButton = $('btn-send-chat');
+  const stopButton = $('btn-stop-chat');
+  const input = $('chat-input');
 
-  const msgs = $('chat-messages');
-  const welcome = $('chat-welcome');
-  if (welcome) welcome.style.display = 'none';
-
-  for (const entry of saved) {
-    history.push(entry);
-    if (entry.role === 'user') {
-      const div = document.createElement('div');
-      div.className = 'chat-msg chat-msg--user';
-      div.innerHTML =
-        '<div class="chat-bubble">' + esc(entry.content) + '</div>' +
-        '<span class="chat-meta">You</span>';
-      msgs.appendChild(div);
-    } else if (entry.role === 'assistant') {
-      const div = document.createElement('div');
-      div.className = 'chat-msg chat-msg--assistant';
-      div.innerHTML =
-        '<div class="chat-bubble">' + renderMarkdown(entry.content) + '</div>' +
-        '<span class="chat-meta">Assistant</span>';
-      msgs.appendChild(div);
-    }
+  if (sendButton && streaming) {
+    sendButton.disabled = true;
   }
-
-  msgs.scrollTop = msgs.scrollHeight;
-
-  // Show a subtle "history loaded" indicator that auto-removes
-  const indicator = document.createElement('div');
-  indicator.className = 'chat-msg chat-msg--assistant';
-  indicator.innerHTML =
-    '<div class="chat-bubble" style="font-style:italic;opacity:0.6;font-size:var(--font-size-xs)">' +
-    'Chat history loaded (' + saved.length + ' messages)</div>';
-  msgs.appendChild(indicator);
-  setTimeout(() => indicator.remove(), 4000);
+  if (stopButton) {
+    stopButton.style.display = streaming ? '' : 'none';
+    stopButton.disabled = !streaming;
+  }
+  if (input) {
+    input.disabled = false;
+  }
 }
 
-// ── Model selector ────────────────────────────────────────────────────────────
+async function persistHistory() {
+  if (!_projectKey) {
+    return;
+  }
 
-async function loadModels() {
-  const sel = $('chat-model-select');
-  if (!sel) return;
   try {
-    const status = await fetch('/api/chat/status').then(r => r.json());
-    const models = status.available_models || [];
-    const settings = await fetch('/api/settings').then(r => r.json());
-    const configured = (settings.aider_model || '').replace('ollama/', '');
-
-    if (models.length === 0) {
-      sel.innerHTML = '<option value="">No Ollama models found</option>';
-      return;
-    }
-    sel.innerHTML = models.map(function(m) {
-      const sel_ = (m === _selectedModel || m.startsWith(configured.split(':')[0])) ? ' selected' : '';
-      return '<option value="' + esc(m) + '"' + sel_ + '>' + esc(m) + '</option>';
-    }).join('');
-    // Set _selectedModel from selection
-    _selectedModel = sel.value;
-  } catch (_) {
-    const sel2 = $('chat-model-select');
-    if (sel2) sel2.innerHTML = '<option value="">Could not load models</option>';
-  }
+    await fetch('/api/chat/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo_root: _projectKey,
+        messages: history.slice(-100),
+      }),
+    });
+  } catch (_) {}
 }
 
-// ── Message rendering ─────────────────────────────────────────────────────────
-
-function appendUserMessage(text) {
+function clearRenderedMessages() {
   const msgs = $('chat-messages');
+  if (!msgs) {
+    return;
+  }
+  msgs.querySelectorAll('.chat-msg').forEach(el => el.remove());
+}
+
+function showWelcomeIfEmpty() {
   const welcome = $('chat-welcome');
-  if (welcome) welcome.style.display = 'none';
+  if (!welcome) {
+    return;
+  }
+  welcome.style.display = history.length > 0 ? 'none' : '';
+}
+
+function renderUserMessage(text) {
+  const msgs = $('chat-messages');
+  if (!msgs) {
+    return;
+  }
 
   const div = document.createElement('div');
   div.className = 'chat-msg chat-msg--user';
-  div.innerHTML = `
-    <div class="chat-bubble">${esc(text)}</div>
-    <span class="chat-meta">You</span>`;
+  div.innerHTML =
+    '<div class="chat-bubble">' + esc(text) + '</div>' +
+    '<span class="chat-meta">You</span>';
   msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
 }
 
-function appendAssistantMessage() {
-  // Returns { bubble, wrapper, setContent, finalize }
+function renderAssistantMessage(text, isStreaming) {
   const msgs = $('chat-messages');
+  if (!msgs) {
+    return;
+  }
 
   const div = document.createElement('div');
   div.className = 'chat-msg chat-msg--assistant';
 
   const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble chat-bubble--streaming';
-  bubble.innerHTML = '';
+  bubble.className = isStreaming ? 'chat-bubble chat-bubble--streaming' : 'chat-bubble';
+  bubble.innerHTML = renderMarkdown(text || '');
 
   const meta = document.createElement('span');
   meta.className = 'chat-meta';
-  meta.textContent = 'Assistant';
+  meta.textContent = isStreaming ? 'Assistant is typing…' : 'Assistant';
 
   div.appendChild(bubble);
   div.appendChild(meta);
   msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+}
 
-  let rawContent = '';
+function renderConversation() {
+  clearRenderedMessages();
+  showWelcomeIfEmpty();
+
+  const msgs = $('chat-messages');
+  if (!msgs) {
+    return;
+  }
+
+  for (let i = 0; i < history.length; i++) {
+    const entry = history[i];
+    const isLastStreaming = _streaming && i === history.length - 1 && entry.role === 'assistant';
+    if (entry.role === 'user') {
+      renderUserMessage(entry.content);
+    } else if (entry.role === 'assistant') {
+      renderAssistantMessage(entry.content, isLastStreaming);
+    }
+  }
+
+  msgs.scrollTop = msgs.scrollHeight;
+  updateHistoryBadge();
+}
+
+function appendUserMessage(text) {
+  history.push({ role: 'user', content: text });
+  renderConversation();
+}
+
+function createAssistantStreamHandle() {
+  history.push({ role: 'assistant', content: '' });
+  renderConversation();
+  void persistHistory();
 
   return {
     append(token) {
-      rawContent += token;
-      bubble.innerHTML = renderMarkdown(rawContent);
-      msgs.scrollTop = msgs.scrollHeight;
+      const last = history[history.length - 1];
+      if (!last || last.role !== 'assistant') {
+        return;
+      }
+      last.content += token;
+      renderConversation();
+      void persistHistory();
     },
-    error(msg) {
-      bubble.className = 'chat-bubble chat-bubble--error';
-      bubble.innerHTML = esc(msg);
-      bubble.classList.remove('chat-bubble--streaming');
+    error(message) {
+      const last = history[history.length - 1];
+      if (!last || last.role !== 'assistant') {
+        return;
+      }
+      last.content = message;
+      renderConversation();
+      void persistHistory();
     },
     finalize() {
-      bubble.classList.remove('chat-bubble--streaming');
-      return rawContent;
+      renderConversation();
+      void persistHistory();
+      return history.length > 0 ? history[history.length - 1].content : '';
     },
   };
 }
 
 function appendErrorMessage(msg) {
-  const msgs = $('chat-messages');
-  const div = document.createElement('div');
-  div.className = 'chat-msg chat-msg--assistant';
-  div.innerHTML = `<div class="chat-bubble chat-bubble--error">${esc(msg)}</div>`;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+  history.push({ role: 'assistant', content: msg });
+  renderConversation();
+  void persistHistory();
 }
 
-// ── Send message ──────────────────────────────────────────────────────────────
+async function loadConversation(repoRoot) {
+  const targetProject = String(repoRoot || '').trim();
+  await stopStreaming(false);
+  _projectKey = targetProject;
+
+  history.length = 0;
+  setStreamingState(false);
+  clearRenderedMessages();
+
+  try {
+    const query = targetProject ? '?repo_root=' + encodeURIComponent(targetProject) : '';
+    const data = await fetch('/api/chat/history' + query).then(r => r.json());
+    const saved = Array.isArray(data.messages) ? data.messages : [];
+    for (const entry of saved) {
+      if (!entry || (entry.role !== 'user' && entry.role !== 'assistant')) {
+        continue;
+      }
+      history.push({
+        role: entry.role,
+        content: String(entry.content || ''),
+      });
+    }
+  } catch (_) {}
+
+  renderConversation();
+}
+
+async function loadCurrentProjectConversation() {
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    await loadConversation((settings.repo_root || '').trim());
+  } catch (_) {
+    await loadConversation('');
+  }
+}
+
+async function stopStreaming(showToast) {
+  if (!_streaming) {
+    return;
+  }
+
+  if (_abortController) {
+    _abortController.abort();
+    _abortController = null;
+  }
+
+  const last = history.length > 0 ? history[history.length - 1] : null;
+  if (last && last.role === 'assistant' && !String(last.content || '').trim()) {
+    history.pop();
+    renderConversation();
+  }
+
+  setStreamingState(false);
+  await persistHistory();
+  await checkModelCompat();
+
+  if (showToast) {
+    toast('Chat response stopped.', 'info', 2000);
+  }
+}
 
 async function sendMessage(text) {
-  text = text.trim();
-  if (!text || _streaming) return;
+  const trimmed = String(text || '').trim();
+  if (!trimmed || _streaming) {
+    return;
+  }
 
-  _streaming = true;
-  setSendState(false);
+  appendUserMessage(trimmed);
+  await persistHistory();
 
-  // Add to history and render user bubble
-  history.push({ role: 'user', content: text });
-  appendUserMessage(text);
-
-  // Clear input
   const input = $('chat-input');
-  if (input) { input.value = ''; autoResize(input); }
+  if (input) {
+    input.value = '';
+    autoResize(input);
+  }
 
-  // Create streaming bubble
-  const msg = appendAssistantMessage();
+  const requestHistory = history.slice(0, -1);
+  const msg = createAssistantStreamHandle();
+  const requestBody = {
+    message: trimmed,
+    history: requestHistory,
+    model: _selectedModel,
+  };
+
+  _abortController = new AbortController();
+  setStreamingState(true);
 
   try {
     play('messageSent');
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, history: history.slice(0, -1) }),
+      body: JSON.stringify(requestBody),
+      signal: _abortController.signal,
     });
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
       play('error');
-      msg.error(err.error || `Request failed (${resp.status})`);
-      history.pop(); // remove failed user message
-      _streaming = false;
-      setSendState(true);
+      history.pop();
+      history.pop();
+      renderConversation();
+      appendErrorMessage(err.error || `Request failed (${resp.status})`);
+      setStreamingState(false);
+      _abortController = null;
+      await checkModelCompat();
       return;
     }
 
-    // Stream SSE tokens from response body
+    if (!resp.body) {
+      throw new Error('Empty response body');
+    }
+
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
+    let doneStream = false;
 
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
 
+      buf += decoder.decode(result.value, { stream: true });
       const parts = buf.split('\n\n');
-      buf = parts.pop(); // keep partial trailing chunk
+      buf = parts.pop() || '';
 
       for (const part of parts) {
         const line = part.trim();
-        if (!line.startsWith('data:')) continue;
+        if (!line.startsWith('data:')) {
+          continue;
+        }
+
         const raw = line.slice(5).trim();
-        if (!raw) continue;
+        if (!raw) {
+          continue;
+        }
+
         try {
           const chunk = JSON.parse(raw);
           if (chunk.error) {
             play('error');
-            msg.error(chunk.error);
             history.pop();
-            _streaming = false;
-            setSendState(true);
-            return;
+            renderConversation();
+            appendErrorMessage(chunk.error);
+            doneStream = true;
+            break;
           }
-          if (chunk.token) msg.append(chunk.token);
-          if (chunk.done) break;
+          if (chunk.token) {
+            msg.append(chunk.token);
+          }
+          if (chunk.done) {
+            doneStream = true;
+            break;
+          }
         } catch (_) {}
+      }
+
+      if (doneStream) {
+        break;
       }
     }
 
-    play('chatDone');
-    const finalContent = msg.finalize();
-    history.push({ role: 'assistant', content: finalContent });
-
+    if (_streaming) {
+      play('chatDone');
+      msg.finalize();
+    }
   } catch (err) {
-    play('error');
-    msg.error(`Network error: ${err.message}`);
-    history.pop();
+    if (err && err.name === 'AbortError') {
+      msg.finalize();
+    } else {
+      play('error');
+      history.pop();
+      renderConversation();
+      appendErrorMessage(`Network error: ${err.message}`);
+    }
   }
 
-  _streaming = false;
-  setSendState(true);
+  _abortController = null;
+  setStreamingState(false);
+  await checkModelCompat();
 }
 
-// ── Input auto-resize ─────────────────────────────────────────────────────────
-
 function autoResize(el) {
+  if (!el) {
+    return;
+  }
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
 }
 
-// ── Send button state ─────────────────────────────────────────────────────────
-
-function setSendState(enabled) {
-  const btn = $('btn-send-chat');
-  if (btn) btn.disabled = !enabled;
-}
-
-// ── Clear conversation ────────────────────────────────────────────────────────
-
-function clearChat() {
+async function clearChat() {
+  await stopStreaming(false);
   history.length = 0;
-  _streaming = false;
-  setSendState(true);
+  renderConversation();
 
-  const msgs = $('chat-messages');
-  if (!msgs) return;
+  if (_projectKey) {
+    try {
+      await fetch('/api/chat/history?repo_root=' + encodeURIComponent(_projectKey), {
+        method: 'DELETE',
+      });
+    } catch (_) {}
+  }
 
-  // Remove all message divs (keep welcome)
-  msgs.querySelectorAll('.chat-msg').forEach(el => el.remove());
-
-  // Show welcome again
-  const welcome = $('chat-welcome');
-  if (welcome) welcome.style.display = '';
+  toast('Started a new chat.', 'info', 2000);
 }
-
-// ── Check model compatibility ─────────────────────────────────────────────────
 
 async function checkModelCompat() {
   try {
     const settings = await fetch('/api/settings').then(r => r.json());
     const model = settings.aider_model || '';
-    const chip  = $('chat-model-chip');
-    if (chip) chip.textContent = model || 'no model configured';
+    const chip = $('chat-model-chip');
+    if (chip) {
+      chip.textContent = model || 'no model configured';
+    }
 
-    const warning     = $('chat-model-warning');
-    const warnText    = $('chat-model-warning-text');
-    const ollamaWarn  = $('chat-ollama-warning');
-    const ollamaText  = $('chat-ollama-warning-text');
+    const warning = $('chat-model-warning');
+    const warnText = $('chat-model-warning-text');
+    const ollamaWarn = $('chat-ollama-warning');
+    const ollamaText = $('chat-ollama-warning-text');
 
     if (!model.startsWith('ollama/')) {
-      // Non-Ollama model — chat won't work
       if (warnText) {
         warnText.innerHTML =
           `Chat requires a local Ollama model. Your configured model <strong>${esc(model || '(none)')}</strong> ` +
           `requires an external API key — go to Run settings and switch to an <strong>ollama/…</strong> model first.`;
       }
-      if (warning) warning.style.display = '';
-      if (ollamaWarn) ollamaWarn.style.display = 'none';
-      setSendState(false);
+      if (warning) {
+        warning.style.display = '';
+      }
+      if (ollamaWarn) {
+        ollamaWarn.style.display = 'none';
+      }
+      setStreamingState(false);
     } else {
-      if (warning) warning.style.display = 'none';
+      if (warning) {
+        warning.style.display = 'none';
+      }
 
-      // Check Ollama is actually running and the model is pulled
       try {
         const status = await fetch('/api/chat/status').then(r => r.json());
         if (!status.ollama_running) {
-          if (ollamaText) ollamaText.innerHTML =
-            `Ollama is not running. Start it with <code>ollama serve</code>, then retry.`;
-          if (ollamaWarn) ollamaWarn.style.display = '';
-          setSendState(false);
+          if (ollamaText) {
+            ollamaText.innerHTML = 'Ollama is not running. Start it with <code>ollama serve</code>, then retry.';
+          }
+          if (ollamaWarn) {
+            ollamaWarn.style.display = '';
+          }
+          if (!_streaming) {
+            const sendButton = $('btn-send-chat');
+            if (sendButton) {
+              sendButton.disabled = true;
+            }
+          }
         } else if (!status.model_available) {
           const bare = model.replace('ollama/', '');
-          if (ollamaText) ollamaText.innerHTML =
-            `Model <strong>${esc(bare)}</strong> is not pulled. Run <code>ollama pull ${esc(bare)}</code> to download it, then retry.`;
-          if (ollamaWarn) ollamaWarn.style.display = '';
-          setSendState(false);
+          if (ollamaText) {
+            ollamaText.innerHTML =
+              `Model <strong>${esc(bare)}</strong> is not pulled. Run <code>ollama pull ${esc(bare)}</code> to download it, then retry.`;
+          }
+          if (ollamaWarn) {
+            ollamaWarn.style.display = '';
+          }
+          if (!_streaming) {
+            const sendButton = $('btn-send-chat');
+            if (sendButton) {
+              sendButton.disabled = true;
+            }
+          }
         } else {
-          if (ollamaWarn) ollamaWarn.style.display = 'none';
-          setSendState(true);
+          if (ollamaWarn) {
+            ollamaWarn.style.display = 'none';
+          }
+          if (!_streaming) {
+            const sendButton = $('btn-send-chat');
+            if (sendButton) {
+              sendButton.disabled = false;
+            }
+          }
         }
       } catch (_) {
-        // Status check failed — don't block chat; Ollama might still work
-        if (ollamaWarn) ollamaWarn.style.display = 'none';
-        setSendState(true);
+        if (ollamaWarn) {
+          ollamaWarn.style.display = 'none';
+        }
+        if (!_streaming) {
+          const sendButton = $('btn-send-chat');
+          if (sendButton) {
+            sendButton.disabled = false;
+          }
+        }
       }
     }
 
-    // Update context status in limits banner
     const ctxStatus = $('chat-context-status');
     if (ctxStatus) {
       const repo = settings.repo_root || '';
@@ -433,72 +557,95 @@ async function checkModelCompat() {
   } catch (_) {}
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-
 async function init() {
-  const input  = $('chat-input');
+  const input = $('chat-input');
   const btnSend = $('btn-send-chat');
 
-  // Auto-resize textarea
-  input?.addEventListener('input', () => autoResize(input));
+  if (input) {
+    input.addEventListener('input', () => autoResize(input));
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void sendMessage(input.value);
+      }
+    });
+  }
 
-  // Enter to send, Shift+Enter for newline
-  input?.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(input.value);
+  if (btnSend) {
+    btnSend.addEventListener('click', () => void sendMessage(input ? input.value : ''));
+  }
+
+  $('btn-clear-chat')?.addEventListener('click', () => {
+    void clearChat();
+  });
+
+  $('btn-stop-chat')?.addEventListener('click', () => {
+    void stopStreaming(true);
+  });
+
+  $('btn-limits-close')?.addEventListener('click', () => {
+    const el = $('chat-limits');
+    if (el) {
+      el.style.display = 'none';
     }
   });
 
-  // Send button
-  btnSend?.addEventListener('click', () => sendMessage(input?.value || ''));
-
-  // Clear button
-  $('btn-clear-chat')?.addEventListener('click', () => {
-    clearChat();
-    toast('Conversation cleared.', 'info', 2000);
-  });
-
-  // Dismiss limits banner
-  $('btn-limits-close')?.addEventListener('click', () => {
-    const el = $('chat-limits');
-    if (el) el.style.display = 'none';
-  });
-
-  // Suggestion chips
   document.querySelectorAll('.chat-suggestion').forEach(btn => {
     btn.addEventListener('click', () => {
+      const text = btn.textContent || '';
       if (input) {
-        input.value = btn.textContent;
+        input.value = text;
         autoResize(input);
       }
-      sendMessage(btn.textContent);
+      void sendMessage(text);
     });
   });
 
-  // Ollama retry button
-  $('btn-ollama-recheck')?.addEventListener('click', checkModelCompat);
+  $('btn-ollama-recheck')?.addEventListener('click', () => {
+    void checkModelCompat();
+  });
 
-  // ── Set project key then restore history ─────────────────────────────────
-  try {
-    const settings = await fetch('/api/settings').then(r => r.json());
-    _projectKey = (settings.repo_root || '').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
-  } catch (_) {
-    _projectKey = 'default';
-  }
-  renderHistoryOnLoad();
-  updateHistoryBadge();
-
-  // ── Load available models into the per-chat dropdown ─────────────────────
-  loadModels();
-
-  // Model change — update _selectedModel
   $('chat-model-select')?.addEventListener('change', e => {
     _selectedModel = e.target.value;
   });
 
-  // Check model compat on load
-  checkModelCompat();
+  window.addEventListener('bridge:project-switched', e => {
+    const path = e.detail && e.detail.path ? String(e.detail.path) : '';
+    void loadConversation(path).then(() => checkModelCompat());
+  });
+
+  await loadCurrentProjectConversation();
+  await loadModels();
+  await checkModelCompat();
+  setStreamingState(false);
+}
+
+async function loadModels() {
+  const sel = $('chat-model-select');
+  if (!sel) {
+    return;
+  }
+
+  try {
+    const status = await fetch('/api/chat/status').then(r => r.json());
+    const models = status.available_models || [];
+    const settings = await fetch('/api/settings').then(r => r.json());
+    const configured = (settings.aider_model || '').replace('ollama/', '');
+
+    if (models.length === 0) {
+      sel.innerHTML = '<option value="">No Ollama models found</option>';
+      return;
+    }
+
+    sel.innerHTML = models.map(function(m) {
+      const selected = (m === _selectedModel || m.startsWith(configured.split(':')[0])) ? ' selected' : '';
+      return '<option value="' + esc(m) + '"' + selected + '>' + esc(m) + '</option>';
+    }).join('');
+
+    _selectedModel = sel.value;
+  } catch (_) {
+    sel.innerHTML = '<option value="">Could not load models</option>';
+  }
 }
 
 init();

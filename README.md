@@ -154,7 +154,7 @@ A browser window opens at `http://127.0.0.1:7823`:
 |---|---|
 | **Dashboard** | Live progress ring, task feed with status badges, pause/resume, review panel |
 | **Run** | Configure and launch a run — goal, repo, model, supervisor, advanced options |
-| **Chat** | Ask your local Ollama model questions about the project (no API key needed) |
+| **Chat Drawer** | Persistent right-side Ollama chat for project Q&A, new chat, and stop controls |
 | **Knowledge** | View AI_UNDERSTANDING.md and the scanned file registry |
 | **History** | Browse past runs, re-run with same settings, view full logs |
 | **Tokens** | Token usage analytics with savings bar and session detail |
@@ -168,7 +168,7 @@ A browser window opens at `http://127.0.0.1:7823`:
 | **Cursor** | Cursor IDE installed | Yes — Cursor subscription |
 | **Windsurf** | Windsurf IDE installed | Yes — Windsurf subscription |
 | **Manual** | Nothing | Always — fully offline |
-| **AI Relay** *(coming soon)* | Nothing | Yes — any web AI (ChatGPT Plus, Claude.ai Pro, Gemini…) |
+| **AI Relay** | Nothing | Yes — any web AI (ChatGPT Plus, Claude.ai Pro, Gemini…) |
 | **Codex CLI** | `OPENAI_API_KEY` env var | No — separate API account needed |
 
 Flask is installed automatically if it is not present.
@@ -225,9 +225,9 @@ Before task execution starts, the bridge now logs a git-readiness preview for th
 ## Features
 
 ### Web UI
-- Multi-page Flask app — Dashboard, Run, **Chat**, Knowledge, History, Tokens, Setup
+- Multi-page Flask app — Dashboard, Run, Knowledge, History, Tokens, Setup, plus a persistent **Chat Drawer**
 - Live SVG progress ring, task feed, pause/resume, review panel with diff viewer
-- **Chat page** — conversational AI using local Ollama model with project knowledge context
+- **Chat drawer** — conversational AI using a local Ollama model with project knowledge context, per-project history restore, `New Chat`, and `Stop`
 - Supervisor and model API-key compatibility warnings on the Run page
 - Dark/light theme, keyboard shortcuts (`g+d/r/k/h/t/s/c`, `?` help, `Ctrl+Enter`)
 - Onboarding scanner: one-time static scan pre-populates `project_knowledge.json` on first run
@@ -239,7 +239,7 @@ Before task execution starts, the bridge now logs a git-readiness preview for th
 - Git-readiness pre-flight preview before Aider runs
 - Refuses to work on non-git target repos unless the operator initialises one interactively
 - Manual supervisor mode — filesystem-based review, no external CLI calls
-- **AI Relay mode** *(coming soon)* — use any web AI subscription as supervisor via copy-paste
+- **AI Relay mode** — import task JSON, resume task status after restart, and continue runs through copy-paste review with any web AI subscription
 - Approved tasks are auto-committed as small local git commits in the target repo
 - Mechanical validation (file existence, Python syntax, optional CI gate) — zero supervisor tokens
 - Scope enforcement: unexpected file creation outside task scope is detected and failed
@@ -260,6 +260,22 @@ Before task execution starts, the bridge now logs a git-readiness preview for th
 - `flask>=3.0` for the web UI (auto-installed by `launch_ui.py`)
 
 No external Python packages are required for the CLI bridge itself.
+
+### Chat Drawer behavior
+
+- Open chat from the floating tab on the right side of the UI
+- Chat stays available while you move between pages
+- Assistant responses can continue while the drawer is collapsed or another page is open
+- History is stored per project and restored after app restart when that project is selected again
+- `New Chat` clears the current project's thread
+- `Stop` interrupts the active assistant response
+
+### AI Relay behavior
+
+- Importing or generating tasks saves the relay state for the selected project
+- After app restart, AI Relay restores the task list and task status badges such as `Not started`, `Done`, and `Failed`
+- If there is no live bridge session, AI Relay reopens on **Confirm Tasks** instead of **Run & Review**
+- **Run & Review** only restores automatically for an active live session
 
 ---
 

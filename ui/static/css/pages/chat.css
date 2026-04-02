@@ -19,6 +19,14 @@
   flex-shrink: 0;
 }
 
+.chat-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* ── Limitations banner ────────────────────────────────────────────────────── */
 
 .chat-limits {
@@ -343,6 +351,18 @@
 .chat-send-btn:disabled {
   opacity: .4;
   cursor: not-allowed;
+}
+
+@media (max-width: 920px) {
+  .chat-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .chat-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 /* ── Light mode overrides ──────────────────────────────────────────────────── */

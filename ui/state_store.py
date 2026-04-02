@@ -27,6 +27,8 @@ SETTINGS_FILE    = DATA_DIR / "settings.json"
 HISTORY_FILE     = DATA_DIR / "history.json"
 TOKEN_LOG_FILE   = DATA_DIR / "token_log.json"
 RELAY_TASKS_FILE = DATA_DIR / "relay_tasks.json"
+RELAY_UI_STATE_FILE = DATA_DIR / "relay_ui_state.json"
+CHAT_SESSIONS_FILE = DATA_DIR / "chat_sessions.json"
 MAX_HISTORY = 50
 MAX_LOG_LINES = 500
 
@@ -167,6 +169,85 @@ def clear_relay_tasks() -> None:
     _ensure()
     if RELAY_TASKS_FILE.exists():
         RELAY_TASKS_FILE.unlink()
+
+
+def load_relay_ui_state() -> dict:
+    _ensure()
+    if RELAY_UI_STATE_FILE.exists():
+        try:
+            raw = json.loads(RELAY_UI_STATE_FILE.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except Exception:
+            pass
+    return {}
+
+
+def save_relay_ui_state(state: dict) -> None:
+    _ensure()
+    allowed = {
+        "step",
+        "goal",
+        "repo_root",
+        "aider_model",
+        "prompt_output",
+        "plan_paste",
+    }
+    cleaned = {key: state.get(key) for key in allowed if key in state}
+    RELAY_UI_STATE_FILE.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
+
+
+def clear_relay_ui_state() -> None:
+    _ensure()
+    if RELAY_UI_STATE_FILE.exists():
+        RELAY_UI_STATE_FILE.unlink()
+
+
+# Chat sessions
+
+def load_chat_sessions() -> dict[str, list[dict]]:
+    _ensure()
+    if CHAT_SESSIONS_FILE.exists():
+        try:
+            raw = json.loads(CHAT_SESSIONS_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                cleaned: dict[str, list[dict]] = {}
+                for key, value in raw.items():
+                    if isinstance(key, str) and isinstance(value, list):
+                        cleaned[key] = value
+                return cleaned
+        except Exception:
+            pass
+    return {}
+
+
+def _save_chat_sessions(sessions: dict[str, list[dict]]) -> None:
+    _ensure()
+    CHAT_SESSIONS_FILE.write_text(json.dumps(sessions, indent=2), encoding="utf-8")
+
+
+def load_chat_history(project_key: str) -> list[dict]:
+    if not project_key:
+        return []
+    sessions = load_chat_sessions()
+    history = sessions.get(project_key, [])
+    return history if isinstance(history, list) else []
+
+
+def save_chat_history(project_key: str, messages: list[dict]) -> None:
+    if not project_key:
+        return
+    sessions = load_chat_sessions()
+    sessions[project_key] = messages[-100:]
+    _save_chat_sessions(sessions)
+
+
+def clear_chat_history(project_key: str) -> None:
+    if not project_key:
+        return
+    sessions = load_chat_sessions()
+    if project_key in sessions:
+        del sessions[project_key]
+        _save_chat_sessions(sessions)
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────

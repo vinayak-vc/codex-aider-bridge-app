@@ -122,6 +122,9 @@ async function switchProject(path) {
     _currentPath = path;
     renderProjectName();
     renderDropdown();
+    window.dispatchEvent(new CustomEvent('bridge:project-switched', {
+      detail: { path: path },
+    }));
   } catch (_) {}
 }
 

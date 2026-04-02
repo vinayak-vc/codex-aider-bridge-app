@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/nav.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/chat-drawer.css') }}">
   {% block extra_css %}{% endblock %}
   <script>
     // Theme is locked to dark-red — no toggle.
@@ -53,15 +54,6 @@
           </svg>
         </span>
         <span class="nav-item-label">Run</span>
-      </a>
-
-      <a href="/chat" class="nav-item {% if active_page == 'chat' %}--active{% endif %}" data-page="chat">
-        <span class="nav-item-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z"/>
-          </svg>
-        </span>
-        <span class="nav-item-label">Chat</span>
       </a>
 
       <a href="/knowledge" class="nav-item {% if active_page == 'knowledge' %}--active{% endif %}" data-page="knowledge">
@@ -192,16 +184,60 @@
 <!-- Toast container -->
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
+<button id="chat-drawer-toggle" class="chat-drawer-toggle" type="button" aria-label="Open chat">
+  <span class="chat-drawer-toggle__label">Chat</span>
+  <span class="chat-drawer-toggle__icon" aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="16" height="16">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z"/>
+    </svg>
+  </span>
+</button>
+
+<aside id="chat-drawer" class="chat-drawer" aria-label="Project chat">
+  <div class="chat-drawer__header">
+    <div>
+      <div class="chat-drawer__title">Project Chat</div>
+      <div id="chat-drawer-project" class="chat-drawer__project">No project selected</div>
+    </div>
+    <div class="chat-drawer__actions">
+      <button id="chat-drawer-new" class="btn btn--secondary btn--sm" type="button">New Chat</button>
+      <button id="chat-drawer-stop" class="btn btn--secondary btn--sm" type="button" style="display:none">Stop</button>
+      <button id="chat-drawer-close" class="btn-icon-sm" type="button" aria-label="Collapse chat">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="chat-drawer-status" class="chat-drawer__status" style="display:none"></div>
+
+  <div id="chat-drawer-messages" class="chat-drawer__messages">
+    <div id="chat-drawer-empty" class="chat-drawer__empty">
+      Ask about architecture, files, bugs, or how to implement a feature.
+    </div>
+  </div>
+
+  <div class="chat-drawer__footer">
+    <textarea id="chat-drawer-input" class="chat-drawer__input" rows="1" maxlength="8000" placeholder="Ask about the selected project…"></textarea>
+    <div class="chat-drawer__footer-actions">
+      <button id="chat-drawer-send" class="btn btn--primary" type="button">Send</button>
+    </div>
+  </div>
+</aside>
+
 <script type="module">
   import { initShortcuts }  from '/static/js/core/shortcuts.js';
   import { initWallpaper }  from '/static/js/core/wallpaper.js';
   import { initProjectBar } from '/static/js/core/project.js';
+  import { initChatDrawer } from '/static/js/core/chat-drawer.js';
   import { isMuted, toggleMute } from '/static/js/core/sounds.js';
   import { initHelp, openHelp }  from '/static/js/core/help.js';
 
   initShortcuts();
   initWallpaper();
   initProjectBar();
+  initChatDrawer();
   initHelp();
 
   // Page help button — opens contextual help for the current page
