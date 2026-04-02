@@ -80,6 +80,7 @@ AI Relay behavior:
 - The task list shows status badges such as `Not started`, `Done`, and `Failed`
 - If the previous run is no longer active, AI Relay reopens on **Confirm Tasks**
 - **Run & Review** only opens automatically when there is still a live bridge session to reconnect to
+- Each imported plan uses its own relay session id, so a new plan with task `1` does not inherit completed state from an older unrelated plan
 
 ---
 

@@ -16,6 +16,8 @@ let _sse = null;
 let _completedTasks = 0;
 let _totalTasks = 0;
 let _liveRunActive = false;
+let _maxTaskAttempts = 3;
+let _relaySessionId = '';
 
 const RELAY_STORE_KEY = 'relay_wizard_state';
 
@@ -25,6 +27,8 @@ function localRelaySnapshot() {
     goal: $('relay-goal')?.value || _goal,
     repo_root: $('relay-repo-root')?.value || _repoRoot,
     aider_model: $('relay-aider-model')?.value || _aiderModel,
+    max_task_attempts: parseInt($('relay-max-attempts')?.value || _maxTaskAttempts, 10) || 3,
+    relay_session_id: _relaySessionId,
     prompt_output: $('prompt-output')?.textContent || '',
     plan_paste: $('plan-paste')?.value || '',
   };
@@ -38,6 +42,8 @@ function saveRelayState() {
       goal: state.goal,
       repoRoot: state.repo_root,
       aiderModel: state.aider_model,
+      maxTaskAttempts: state.max_task_attempts,
+      relaySessionId: state.relay_session_id,
       promptOutput: state.prompt_output,
       planPaste: state.plan_paste,
       tasks: _tasks,
@@ -67,7 +73,24 @@ function clearRelayState() {
   } catch (_) {}
 }
 
-function goToStep(n) {
+function executableTaskCount(tasks = _tasks) {
+  return (tasks || []).filter(task => String(task?.status || '').toLowerCase() !== 'skipped').length;
+}
+
+function hasRelayTasks() {
+  return Array.isArray(_tasks) && _tasks.length > 0;
+}
+
+function canEditTaskPlan() {
+  return !_liveRunActive;
+}
+
+function goToStep(n, options = {}) {
+  const force = Boolean(options.force);
+  if (!force && n === 1 && hasRelayTasks()) {
+    toast('Tasks are already loaded. Use "Discard Tasks & Start New Plan" if you want to replace them.', 'warning');
+    return;
+  }
   _step = n;
   for (let i = 1; i <= 3; i++) {
     const panel = $(`relay-panel-${i}`);
@@ -89,6 +112,7 @@ function updateRunControls() {
   const stopBtn = $('btn-relay-stop');
   const submitBtn = $('btn-submit-relay-decision');
   const confirmBtn = $('btn-confirm-tasks');
+  const discardBtn = $('btn-back-to-step1');
 
   if (stopBtn) {
     stopBtn.disabled = !_liveRunActive;
@@ -97,14 +121,27 @@ function updateRunControls() {
     submitBtn.disabled = !_liveRunActive;
   }
   if (confirmBtn) {
-    confirmBtn.disabled = _liveRunActive;
+    confirmBtn.disabled = _liveRunActive || executableTaskCount() === 0;
   }
+  if (discardBtn) {
+    discardBtn.disabled = _liveRunActive;
+  }
+
+  document.querySelectorAll('[data-relay-task-action]').forEach(button => {
+    button.disabled = _liveRunActive;
+  });
 }
 
 async function generatePrompt() {
+  if (hasRelayTasks()) {
+    toast('Discard the current task list before generating a new plan prompt.', 'warning');
+    return;
+  }
+
   _goal = ($('relay-goal')?.value || '').trim();
   _repoRoot = ($('relay-repo-root')?.value || '').trim();
   _aiderModel = ($('relay-aider-model')?.value || 'ollama/mistral').trim();
+  _maxTaskAttempts = parseInt($('relay-max-attempts')?.value || _maxTaskAttempts, 10) || 3;
 
   if (!_goal) {
     toast('Please enter a goal.', 'warning');
@@ -147,6 +184,11 @@ async function generatePrompt() {
 }
 
 async function importPlan() {
+  if (hasRelayTasks()) {
+    toast('Discard the current task list before importing a different plan.', 'warning');
+    return;
+  }
+
   const raw = ($('plan-paste')?.value || '').trim();
   const errEl = $('import-plan-error');
   if (errEl) {
@@ -167,7 +209,11 @@ async function importPlan() {
   try {
     const data = await apiPost('/api/relay/import-plan', { raw_text: raw });
     _tasks = data.tasks || [];
+    _relaySessionId = data.relay_session_id || _relaySessionId;
+    _completedTasks = 0;
+    _totalTasks = executableTaskCount(_tasks);
     renderTaskList(_tasks);
+    updateProgress(_completedTasks, _totalTasks);
     goToStep(2);
     saveRelayState();
   } catch (err) {
@@ -199,23 +245,103 @@ function renderTaskList(tasks) {
     const type = String(t.type || 'modify').toLowerCase();
     const status = String(t.status || 'not_started').toLowerCase();
     const statusLabel = String(t.status_label || 'Not started');
+    const canSkip = !['running', 'waiting_review', 'approved', 'success', 'skipped'].includes(status);
+    const canRestore = status === 'skipped';
+    let actionHtml = '';
+
+    if (canSkip) {
+      actionHtml = `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="skip" data-task-id="${escHtml(t.id)}">Skip</button>`;
+    } else if (canRestore) {
+      actionHtml = `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="restore" data-task-id="${escHtml(t.id)}">Restore</button>`;
+    }
+
     return `
-    <div class="relay-task-item">
+    <div class="relay-task-item" data-status="${escHtml(status)}">
       <div class="relay-task-num">${t.id}</div>
       <div class="relay-task-body">
-        <div class="relay-task-title">
-          <span>${escHtml(t.title || '')}</span>
-          <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
-          <span class="relay-task-status-badge" data-status="${escHtml(status)}">${escHtml(statusLabel)}</span>
+        <div class="relay-task-head">
+          <div class="relay-task-title">
+            <span>${escHtml(t.title || '')}</span>
+            <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
+            <span class="relay-task-status-badge" data-status="${escHtml(status)}">${escHtml(statusLabel)}</span>
+          </div>
+          <div class="relay-task-actions">
+            ${actionHtml}
+          </div>
         </div>
         <div class="relay-task-instruction">${escHtml(t.instruction || '')}</div>
         ${t.files && t.files.length ? `<div class="relay-task-files">${t.files.map(escHtml).join(', ')}</div>` : ''}
       </div>
     </div>`;
   }).join('');
+
+  updateRunControls();
+}
+
+async function toggleTaskSkip(taskId, skip) {
+  if (_liveRunActive) {
+    toast('Stop the active run before changing skipped tasks.', 'warning');
+    return;
+  }
+
+  try {
+    const data = await apiPost('/api/relay/tasks/skip', {
+      task_id: taskId,
+      skip,
+    });
+    _tasks = data.tasks || [];
+    _relaySessionId = data.relay_session_id || _relaySessionId;
+    _completedTasks = data.completed_tasks || 0;
+    _totalTasks = data.total_tasks || executableTaskCount(_tasks);
+    renderTaskList(_tasks);
+    updateProgress(_completedTasks, _totalTasks);
+    saveRelayState();
+    toast(skip ? `Task ${taskId} skipped.` : `Task ${taskId} restored.`, 'success');
+  } catch (err) {
+    toast(err.message || 'Could not update task status.', 'error');
+  }
+}
+
+async function discardTasksAndReturnToPlan() {
+  if (_liveRunActive) {
+    toast('Stop the active run before starting a new plan.', 'warning');
+    return;
+  }
+
+  _goal = ($('relay-goal')?.value || _goal).trim();
+  _repoRoot = ($('relay-repo-root')?.value || _repoRoot).trim();
+  _aiderModel = ($('relay-aider-model')?.value || _aiderModel).trim();
+  _maxTaskAttempts = parseInt($('relay-max-attempts')?.value || _maxTaskAttempts, 10) || 3;
+  _relaySessionId = '';
+  _tasks = [];
+  _currentTaskId = null;
+  _completedTasks = 0;
+  _totalTasks = 0;
+
+  const taskList = $('relay-task-list');
+  if (taskList) {
+    taskList.innerHTML = '';
+  }
+  const done = $('relay-done-panel');
+  if (done) {
+    done.style.display = 'none';
+  }
+  const review = $('relay-review-panel');
+  if (review) {
+    review.style.display = 'none';
+  }
+
+  await fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
+  saveRelayState();
+  setRelayStatus('idle', 'Ready');
+  updateProgress(0, 0);
+  goToStep(1, { force: true });
+  updateRunControls();
+  toast('Current AI Relay tasks were discarded. You can generate a new plan now.', 'success');
 }
 
 async function launchRun() {
+  _maxTaskAttempts = parseInt($('relay-max-attempts')?.value || _maxTaskAttempts, 10) || 3;
   const settings = {
     goal: _goal,
     repo_root: _repoRoot,
@@ -223,6 +349,8 @@ async function launchRun() {
     supervisor: 'ai_relay',
     manual_supervisor: true,
     workflow_profile: 'standard',
+    max_task_retries: Math.max(0, _maxTaskAttempts - 1),
+    relay_session_id: _relaySessionId,
   };
 
   goToStep(3);
@@ -230,7 +358,7 @@ async function launchRun() {
   _liveRunActive = true;
   updateRunControls();
   setRelayStatus('running', 'Running...');
-  updateProgress(0, _tasks.length);
+  updateProgress(0, executableTaskCount());
 
   connectSSE();
 
@@ -323,6 +451,7 @@ async function onReviewNeeded(data) {
       task_id: _currentTaskId,
       repo_root: _repoRoot,
       goal: _goal,
+      relay_session_id: _relaySessionId,
     });
     const resp = await fetch(`/api/relay/review-packet?${params}`);
     const payload = await resp.json();
@@ -380,6 +509,7 @@ async function submitDecision() {
       raw_text: raw,
       task_id: _currentTaskId,
       repo_root: _repoRoot,
+      relay_session_id: _relaySessionId,
     });
 
     if (data.decision === 'fail') {
@@ -413,6 +543,7 @@ async function loadReplanPrompt() {
       task_id: _currentTaskId,
       repo_root: _repoRoot,
       goal: _goal,
+      relay_session_id: _relaySessionId,
       failed_reason: ($('relay-decision-paste')?.value || '').replace(/^FAILED:\s*/i, '').trim(),
     });
     const box = $('relay-replan-packet');
@@ -457,7 +588,9 @@ async function submitReplan() {
       task_id: _currentTaskId,
     });
     _tasks = data.tasks || [];
+    _totalTasks = executableTaskCount(_tasks);
     renderTaskList(_tasks);
+    updateProgress(_completedTasks, _totalTasks);
     saveRelayState();
     toast(`Replan imported: ${data.count} tasks remaining.`, 'success');
     const panel = $('relay-review-panel');
@@ -532,6 +665,8 @@ function resetWizard() {
   _goal = '';
   _repoRoot = '';
   _aiderModel = '';
+  _maxTaskAttempts = 3;
+  _relaySessionId = '';
   _tasks = [];
   _currentTaskId = null;
   _completedTasks = 0;
@@ -578,6 +713,9 @@ function prefillFromSettings() {
     if ($('relay-aider-model')) {
       $('relay-aider-model').value = s.aider_model || 'ollama/mistral';
     }
+    if ($('relay-max-attempts') && !_tasks.length) {
+      $('relay-max-attempts').value = String((parseInt(s.max_task_retries || 2, 10) || 2) + 1);
+    }
   }).catch(() => {});
 }
 
@@ -602,6 +740,8 @@ function applyRelayState(data) {
   _goal = data.goal || '';
   _repoRoot = data.repo_root || '';
   _aiderModel = data.aider_model || '';
+  _maxTaskAttempts = parseInt(data.max_task_attempts || 3, 10) || 3;
+  _relaySessionId = data.relay_session_id || '';
   _tasks = data.tasks || [];
   _completedTasks = data.completed_tasks || 0;
   _totalTasks = data.total_tasks || _tasks.length || 0;
@@ -610,6 +750,7 @@ function applyRelayState(data) {
   if ($('relay-goal')) $('relay-goal').value = _goal;
   if ($('relay-repo-root')) $('relay-repo-root').value = _repoRoot;
   if ($('relay-aider-model')) $('relay-aider-model').value = _aiderModel;
+  if ($('relay-max-attempts')) $('relay-max-attempts').value = String(_maxTaskAttempts);
   if ($('prompt-output')) $('prompt-output').textContent = data.prompt_output || '';
   if ($('plan-paste')) $('plan-paste').value = data.plan_paste || '';
 
@@ -674,11 +815,13 @@ async function restoreRelayState() {
     goal: saved.goal || '',
     repo_root: saved.repoRoot || '',
     aider_model: saved.aiderModel || '',
+    max_task_attempts: saved.maxTaskAttempts || 3,
+    relay_session_id: saved.relaySessionId || '',
     prompt_output: saved.promptOutput || '',
     plan_paste: saved.planPaste || '',
     tasks: saved.tasks || [],
     completed_tasks: 0,
-    total_tasks: (saved.tasks || []).length,
+    total_tasks: executableTaskCount(saved.tasks || []),
     run_status: 'idle',
     is_running: false,
     live_run_active: false,
@@ -698,8 +841,20 @@ async function init() {
   $('btn-copy-prompt')?.addEventListener('click', () => copyText('prompt-output', 'btn-copy-prompt'));
   $('btn-import-plan')?.addEventListener('click', importPlan);
 
-  $('btn-back-to-step1')?.addEventListener('click', () => goToStep(1));
+  $('btn-back-to-step1')?.addEventListener('click', discardTasksAndReturnToPlan);
   $('btn-confirm-tasks')?.addEventListener('click', launchRun);
+  $('relay-task-list')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-relay-task-action]');
+    if (!button) {
+      return;
+    }
+    const taskId = parseInt(button.dataset.taskId || '0', 10);
+    if (!taskId) {
+      return;
+    }
+    const action = button.dataset.relayTaskAction;
+    void toggleTaskSkip(taskId, action === 'skip');
+  });
 
   $('btn-relay-stop')?.addEventListener('click', async () => {
     if (!_liveRunActive) {
@@ -716,6 +871,11 @@ async function init() {
   $('btn-submit-replan')?.addEventListener('click', submitReplan);
   $('btn-relay-new-run')?.addEventListener('click', resetWizard);
   $('btn-relay-reset')?.addEventListener('click', resetWizard);
+  $('relay-goal')?.addEventListener('input', saveRelayState);
+  $('relay-repo-root')?.addEventListener('input', saveRelayState);
+  $('relay-aider-model')?.addEventListener('input', saveRelayState);
+  $('relay-max-attempts')?.addEventListener('input', saveRelayState);
+  $('plan-paste')?.addEventListener('input', saveRelayState);
 
   $('relay-explainer-toggle')?.addEventListener('click', () => {
     const body = $('relay-explainer-body');

@@ -276,6 +276,7 @@ No external Python packages are required for the CLI bridge itself.
 - After app restart, AI Relay restores the task list and task status badges such as `Not started`, `Done`, and `Failed`
 - If there is no live bridge session, AI Relay reopens on **Confirm Tasks** instead of **Run & Review**
 - **Run & Review** only restores automatically for an active live session
+- Each imported AI Relay plan now gets its own session id, so old manual-supervisor files from a previous plan cannot mark new tasks as completed just because the task ids match
 
 ---
 

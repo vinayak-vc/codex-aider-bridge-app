@@ -251,7 +251,7 @@ function handleTaskUpdate(data) {
 
   // Update completed count
   const done = Object.values(tasks).filter(t =>
-    t.status === 'approved' || t.status === 'failure'
+    t.status === 'approved' || t.status === 'success' || t.status === 'failed' || t.status === 'failure'
   ).length;
   store.set('completedTasks', done);
 
@@ -266,13 +266,14 @@ function handleProgress(data) {
 }
 
 function handleComplete(data) {
-  store.set('runStatus', data.status === 'failure' ? 'failure' : 'success');
+  const status = data.status || 'success';
+  store.set('runStatus', status);
   store.set('isPaused', false);
   syncStats();
   hideReview();
   toast(
-    data.status === 'failure' ? 'Run finished with failures.' : 'Run completed successfully.',
-    data.status === 'failure' ? 'error' : 'success',
+    status === 'failure' ? 'Run finished with failures.' : status === 'stopped' ? 'Run stopped.' : 'Run completed successfully.',
+    status === 'failure' ? 'error' : status === 'stopped' ? 'warning' : 'success',
   );
 }
 
@@ -343,7 +344,7 @@ async function openReviewPanel() {
       const res = await fetch('/api/run/review/current');
       if (res.ok) {
         const d = await res.json();
-        renderDiff(diffEl, d.diff || '');
+        renderDiff(diffEl, d.request?.diff || d.diff || '');
       } else {
         diffEl.textContent = '(no diff available)';
       }
@@ -399,7 +400,7 @@ async function hydrate() {
     store.set('runStatus',      s.status      || 'idle');
     store.set('isPaused',       s.paused      || false);
     store.set('totalTasks',     s.total_tasks || 0);
-    store.set('completedTasks', s.done_tasks  || 0);
+    store.set('completedTasks', s.completed_tasks ?? s.done_tasks ?? 0);
     store.set('driver',         s.driver      || '');
     store.set('repoRoot',       s.repo_root   || '');
     store.set('runId',          s.run_id      || null);
@@ -407,19 +408,29 @@ async function hydrate() {
 
   // Load existing tasks
   try {
-    const tasks = await fetch('/api/run/tasks').then(r => r.json());
-    if (Array.isArray(tasks)) {
+    const payload = await fetch('/api/run/tasks').then(r => r.json());
+    const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+    if (tasks.length) {
       const map = {};
       tasks.forEach(t => { map[t.id] = t; renderTaskRow(t); });
       store.set('tasks', map);
+      if (payload?.total != null) {
+        store.set('totalTasks', payload.total);
+      }
+      if (payload?.completed != null) {
+        store.set('completedTasks', payload.completed);
+      }
     }
   } catch (_) {}
 
   // Check pending review
   try {
     const rev = await fetch('/api/run/review/current').then(r => r.json());
-    if (rev && rev.task_id) {
-      handleReviewRequired(rev);
+    if (rev?.pending && rev.request?.task_id) {
+      handleReviewRequired({
+        task_id: rev.request.task_id,
+        validation_message: rev.request.validation_message || '',
+      });
     }
   } catch (_) {}
 

@@ -189,6 +189,8 @@ def save_relay_ui_state(state: dict) -> None:
         "goal",
         "repo_root",
         "aider_model",
+        "max_task_attempts",
+        "relay_session_id",
         "prompt_output",
         "plan_paste",
     }

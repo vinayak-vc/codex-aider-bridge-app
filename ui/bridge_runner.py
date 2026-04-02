@@ -45,6 +45,8 @@ class BridgeRun:
         self.completed_tasks: int = 0
         self.token_data: Optional[dict] = None
         self._relay_mode: bool = False
+        self.repo_root: str = ""
+        self.driver: str = ""
 
     # ── Listener management ────────────────────────────────────────────────
 
@@ -80,6 +82,8 @@ class BridgeRun:
 
         if settings.get("repo_root", "").strip():
             cmd.extend(["--repo-root", settings["repo_root"].strip()])
+        if settings.get("relay_session_id", "").strip():
+            cmd.extend(["--relay-session-id", settings["relay_session_id"].strip()])
         if settings.get("idea_file", "").strip():
             cmd.extend(["--idea-file", settings["idea_file"].strip()])
         if settings.get("aider_model", "").strip():
@@ -89,7 +93,10 @@ class BridgeRun:
             cmd.append("--manual-supervisor")
             # For AI Relay, write the pre-imported tasks to a temporary plan file
             if supervisor == "ai_relay" and not settings.get("plan_file", "").strip():
-                tasks = state_store.load_relay_tasks()
+                tasks = [
+                    task for task in state_store.load_relay_tasks()
+                    if str(task.get("status", "")).strip().lower() != "skipped"
+                ]
                 if tasks:
                     plan_path = state_store.DATA_DIR / "relay_active_plan.json"
                     plan_path.write_text(
@@ -137,6 +144,8 @@ class BridgeRun:
             self.completed_tasks = 0
             self.token_data = None
             self._relay_mode = settings.get("supervisor") == "ai_relay"
+            self.repo_root = str(settings.get("repo_root", "")).strip()
+            self.driver = str(settings.get("supervisor", "")).strip()
             cmd = self.build_command(settings)
             self.command_preview = " ".join(cmd)
             # Determine a safe working directory for the subprocess.
@@ -153,7 +162,12 @@ class BridgeRun:
             )
             thread.start()
 
-        self._emit("start", {"command": self.command_preview, "run_id": run_id})
+        self._emit("start", {
+            "command": self.command_preview,
+            "run_id": run_id,
+            "repo_root": self.repo_root,
+            "driver": self.driver,
+        })
 
     def _run_process(self, cmd: list[str], subprocess_cwd: str) -> None:
         start_time = time.time()

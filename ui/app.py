@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +51,7 @@ def _chat_project_key(repo_root: str) -> str:
 def _relay_task_status_label(status: str) -> str:
     mapping = {
         "not_started": "Not started",
+        "skipped": "Skipped",
         "running": "Running",
         "waiting_review": "Waiting review",
         "approved": "Done",
@@ -64,8 +66,58 @@ def _relay_task_status_label(status: str) -> str:
     return mapping.get(status, status.replace("_", " ").title())
 
 
-def _relay_task_statuses(repo_root: str) -> dict[int, dict]:
+def _relay_executable_task_count(tasks: list[dict]) -> int:
+    count = 0
+    for task in tasks:
+        status = str(task.get("status", "")).strip().lower()
+        if status == "skipped":
+            continue
+        count += 1
+    return count
+
+
+def _relay_current_session_id() -> str:
+    return str(state_store.load_relay_ui_state().get("relay_session_id") or "").strip()
+
+
+def _relay_task_matches_payload(task: dict, payload: dict) -> bool:
+    payload_instruction = str(payload.get("instruction", "")).strip()
+    payload_files = payload.get("files", [])
+    if not isinstance(payload_files, list):
+        return False
+
+    task_instruction = str(task.get("instruction", "")).strip()
+    task_files = [str(item) for item in task.get("files", [])]
+    return payload_instruction == task_instruction and [str(item) for item in payload_files] == task_files
+
+
+def _relay_matches_session(payload: dict, relay_session_id: str) -> bool:
+    if not relay_session_id:
+        return True
+    return str(payload.get("relay_session_id", "")).strip() == relay_session_id
+
+
+def _relay_request_file(repo_root: str, task_id: int, relay_session_id: str) -> Path:
+    req_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
+    if relay_session_id:
+        return req_dir / f"task_{task_id:04d}_{relay_session_id}_request.json"
+    return req_dir / f"task_{task_id:04d}_request.json"
+
+
+def _relay_decision_file(repo_root: str, task_id: int, relay_session_id: str) -> Path:
+    dec_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
+    if relay_session_id:
+        return dec_dir / f"task_{task_id:04d}_{relay_session_id}_decision.json"
+    return dec_dir / f"task_{task_id:04d}_decision.json"
+
+
+def _relay_task_statuses(repo_root: str, current_tasks: list[dict], relay_session_id: str) -> dict[int, dict]:
     statuses: dict[int, dict] = {}
+    current_by_id: dict[int, dict] = {}
+    for task in current_tasks:
+        task_id = int(task.get("id", 0))
+        if task_id > 0:
+            current_by_id[task_id] = task
 
     run = get_run()
     for task_id, task in run.tasks.items():
@@ -78,37 +130,40 @@ def _relay_task_statuses(repo_root: str) -> dict[int, dict]:
     if not repo_root:
         return statuses
 
-    decisions_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
-    if decisions_dir.exists():
-        for decision_file in sorted(decisions_dir.glob("task_*_decision.json")):
+    completed_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "completed"
+    if completed_dir.exists():
+        pattern = f"task_*_{relay_session_id}_completed.json" if relay_session_id else "task_*_completed.json"
+        for completed_file in sorted(completed_dir.glob(pattern)):
             try:
-                payload = json.loads(decision_file.read_text(encoding="utf-8"))
+                payload = json.loads(completed_file.read_text(encoding="utf-8"))
                 task_id = int(payload.get("task_id", 0))
                 if task_id <= 0 or task_id in statuses:
                     continue
-                decision = str(payload.get("decision", "")).strip().lower()
-                if decision == "pass":
-                    code = "approved"
-                elif decision == "fail":
-                    code = "failed"
-                elif decision == "rework":
-                    code = "rework"
-                else:
+                if not _relay_matches_session(payload, relay_session_id):
+                    continue
+                current_task = current_by_id.get(task_id)
+                if current_task is None or not _relay_task_matches_payload(current_task, payload):
                     continue
                 statuses[task_id] = {
-                    "code": code,
-                    "label": _relay_task_status_label(code),
+                    "code": "approved",
+                    "label": _relay_task_status_label("approved"),
                 }
             except Exception:
                 pass
 
     requests_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
     if requests_dir.exists():
-        for request_file in sorted(requests_dir.glob("task_*_request.json")):
+        pattern = f"task_*_{relay_session_id}_request.json" if relay_session_id else "task_*_request.json"
+        for request_file in sorted(requests_dir.glob(pattern)):
             try:
                 payload = json.loads(request_file.read_text(encoding="utf-8"))
                 task_id = int(payload.get("task_id", 0))
                 if task_id <= 0:
+                    continue
+                if not _relay_matches_session(payload, relay_session_id):
+                    continue
+                current_task = current_by_id.get(task_id)
+                if current_task is None or not _relay_task_matches_payload(current_task, payload):
                     continue
                 if task_id not in statuses:
                     statuses[task_id] = {
@@ -126,17 +181,25 @@ def _relay_state_payload() -> dict:
     tasks = state_store.load_relay_tasks()
     settings = state_store.load_settings()
     repo_root = str(ui_state.get("repo_root") or settings.get("repo_root") or "").strip()
-    task_statuses = _relay_task_statuses(repo_root)
+    relay_session_id = str(ui_state.get("relay_session_id") or "").strip()
+    task_statuses = _relay_task_statuses(repo_root, tasks, relay_session_id)
 
     decorated_tasks: list[dict] = []
     completed = 0
     for task in tasks:
         task_copy = dict(task)
         task_id = int(task_copy.get("id", 0))
-        status_info = task_statuses.get(task_id, {
-            "code": "not_started",
-            "label": _relay_task_status_label("not_started"),
-        })
+        saved_status = str(task_copy.get("status", "")).strip().lower()
+        if saved_status == "skipped":
+            status_info = {
+                "code": "skipped",
+                "label": _relay_task_status_label("skipped"),
+            }
+        else:
+            status_info = task_statuses.get(task_id, {
+                "code": "not_started",
+                "label": _relay_task_status_label("not_started"),
+            })
         task_copy["status"] = status_info["code"]
         task_copy["status_label"] = status_info["label"]
         decorated_tasks.append(task_copy)
@@ -159,9 +222,13 @@ def _relay_state_payload() -> dict:
         try:
             manual_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests" if repo_root else None
             if manual_dir and manual_dir.exists():
-                request_files = sorted(manual_dir.glob("task_*_request.json"))
-                if request_files:
-                    current_review = json.loads(request_files[0].read_text(encoding="utf-8"))
+                pattern = f"task_*_{relay_session_id}_request.json" if relay_session_id else "task_*_request.json"
+                request_files = sorted(manual_dir.glob(pattern))
+                for request_file in request_files:
+                    payload = json.loads(request_file.read_text(encoding="utf-8"))
+                    if _relay_matches_session(payload, relay_session_id):
+                        current_review = payload
+                        break
         except Exception:
             current_review = None
 
@@ -170,6 +237,8 @@ def _relay_state_payload() -> dict:
         "goal": str(ui_state.get("goal") or settings.get("goal") or ""),
         "repo_root": repo_root,
         "aider_model": str(ui_state.get("aider_model") or settings.get("aider_model") or "ollama/mistral"),
+        "max_task_attempts": int(ui_state.get("max_task_attempts") or settings.get("max_task_retries", 2) + 1),
+        "relay_session_id": relay_session_id,
         "prompt_output": str(ui_state.get("prompt_output") or ""),
         "plan_paste": str(ui_state.get("plan_paste") or ""),
         "tasks": decorated_tasks,
@@ -177,7 +246,7 @@ def _relay_state_payload() -> dict:
         "is_running": run.is_running,
         "live_run_active": live_run_active,
         "completed_tasks": completed if decorated_tasks else run.completed_tasks,
-        "total_tasks": len(decorated_tasks),
+        "total_tasks": _relay_executable_task_count(decorated_tasks),
         "current_review": current_review,
     }
 
@@ -562,16 +631,25 @@ def api_start_run():
         "goal": settings.get("goal", ""),
         "repo_root": settings.get("repo_root", ""),
         "aider_model": settings.get("aider_model", ""),
+        "supervisor": settings.get("supervisor", ""),
         "supervisor_command": settings.get("supervisor_command", ""),
         "dry_run": settings.get("dry_run", False),
         "status": "running",
         "tasks": 0,
         "elapsed": 0,
         "log": [],
+        "tasks_detail": [],
     })
 
     def on_event(event_type: str, data: dict) -> None:
         _broadcast(event_type, data)
+        if event_type in ("task_update", "progress", "review_required", "relay_review_needed", "paused", "resumed", "start"):
+            state_store.update_history_entry(run_id, {
+                "status": run.status,
+                "tasks": len(run.tasks),
+                "tasks_detail": list(run.tasks.values()),
+                "log": run.log_lines[-state_store.MAX_LOG_LINES:],
+            })
         if event_type in ("complete", "error", "stopped"):
             final = data.get("final") or {}
             state_store.update_history_entry(run_id, {
@@ -579,6 +657,7 @@ def api_start_run():
                 "tasks": final.get("tasks", len(run.tasks)),
                 "elapsed": data.get("elapsed", 0),
                 "log": run.log_lines[-state_store.MAX_LOG_LINES:],
+                "tasks_detail": list(run.tasks.values()),
             })
             run.remove_listener(on_event)
 
@@ -600,10 +679,15 @@ def api_run_status():
     return jsonify({
         "is_running": run.is_running,
         "status": run.status,
+        "paused": run.status == "paused",
         "tasks": list(run.tasks.values()),
         "command": run.command_preview,
         "total_tasks": run.total_tasks,
         "completed_tasks": run.completed_tasks,
+        "done_tasks": run.completed_tasks,
+        "repo_root": run.repo_root,
+        "driver": run.driver,
+        "run_id": run.run_id,
         "percent": (
             round(run.completed_tasks / run.total_tasks * 100)
             if run.total_tasks > 0 else 0
@@ -1266,8 +1350,48 @@ def api_relay_import_plan():
     state_store.save_relay_tasks(tasks)
     ui_state = state_store.load_relay_ui_state()
     ui_state["step"] = 2
+    ui_state["relay_session_id"] = uuid.uuid4().hex[:12]
     state_store.save_relay_ui_state(ui_state)
-    return jsonify({"tasks": tasks, "count": len(tasks)})
+    return jsonify({"tasks": tasks, "count": len(tasks), "relay_session_id": ui_state["relay_session_id"]})
+
+
+@app.route("/api/relay/tasks/skip", methods=["POST"])
+def api_relay_skip_task():
+    data = request.get_json(force=True) or {}
+    task_id = int(data.get("task_id", 0))
+    skip = bool(data.get("skip", True))
+
+    if task_id <= 0:
+        return jsonify({"error": "task_id is required"}), 400
+
+    run = get_run()
+    if run.is_running or run.status in ("running", "waiting_review", "paused"):
+        return jsonify({"error": "Stop or finish the active run before changing skipped tasks."}), 409
+
+    tasks = state_store.load_relay_tasks()
+    task = next((item for item in tasks if int(item.get("id", 0)) == task_id), None)
+    if task is None:
+        return jsonify({"error": f"Task {task_id} was not found."}), 404
+
+    current_status = str(task.get("status", "")).strip().lower()
+    ui_state = state_store.load_relay_ui_state()
+    known_statuses = _relay_task_statuses(
+        str(ui_state.get("repo_root", "") or ""),
+        tasks,
+        str(ui_state.get("relay_session_id", "") or ""),
+    )
+    effective_status = known_statuses.get(task_id, {}).get("code") or current_status or "not_started"
+
+    if skip:
+        if effective_status in ("running", "waiting_review", "approved", "success"):
+            return jsonify({"error": f"Task {task_id} cannot be skipped from its current status."}), 409
+        task["status"] = "skipped"
+    else:
+        if current_status == "skipped":
+            task.pop("status", None)
+
+    state_store.save_relay_tasks(tasks)
+    return jsonify(_relay_state_payload())
 
 
 @app.route("/api/relay/state", methods=["GET"])
@@ -1297,13 +1421,13 @@ def api_relay_review_packet():
     task_id   = request.args.get("task_id", "")
     repo_root = (request.args.get("repo_root") or "").strip()
     goal      = (request.args.get("goal") or "").strip()
+    relay_session_id = (request.args.get("relay_session_id") or _relay_current_session_id()).strip()
 
     if not task_id or not repo_root:
         return jsonify({"error": "task_id and repo_root are required"}), 400
 
     # Locate the request file written by bridge_runner
-    req_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
-    req_file = req_dir / f"task_{int(task_id):04d}_request.json"
+    req_file = _relay_request_file(repo_root, int(task_id), relay_session_id)
     if not req_file.exists():
         return jsonify({"error": f"Request file not found: {req_file.name}"}), 404
 
@@ -1333,6 +1457,7 @@ def api_relay_submit_decision():
     raw_text  = data.get("raw_text", "")
     task_id   = data.get("task_id")
     repo_root = (data.get("repo_root") or "").strip()
+    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id()).strip()
 
     if not task_id or not repo_root:
         return jsonify({"error": "task_id and repo_root are required"}), 400
@@ -1345,7 +1470,7 @@ def api_relay_submit_decision():
     decision_map = {"approved": "pass", "rework": "rework", "failed": "fail"}
     ms_decision  = decision_map.get(parsed["decision"], parsed["decision"])
 
-    decision_payload: dict = {"task_id": int(task_id), "decision": ms_decision}
+    decision_payload: dict = {"task_id": int(task_id), "decision": ms_decision, "relay_session_id": relay_session_id}
     if ms_decision == "rework" and "instruction" in parsed:
         decision_payload["instruction"] = parsed["instruction"]
     if ms_decision == "fail" and "reason" in parsed:
@@ -1353,7 +1478,7 @@ def api_relay_submit_decision():
 
     dec_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
     dec_dir.mkdir(parents=True, exist_ok=True)
-    dec_file = dec_dir / f"task_{int(task_id):04d}_decision.json"
+    dec_file = _relay_decision_file(repo_root, int(task_id), relay_session_id)
     dec_file.write_text(json.dumps(decision_payload, indent=2), encoding="utf-8")
 
     return jsonify({"decision": ms_decision, "file": dec_file.name})
@@ -1369,12 +1494,12 @@ def api_relay_replan_prompt():
     failed_reason = (data.get("failed_reason") or "").strip()
     repo_root     = (data.get("repo_root") or "").strip()
     goal          = (data.get("goal") or "").strip()
+    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id()).strip()
 
     if not task_id or not repo_root:
         return jsonify({"error": "task_id and repo_root are required"}), 400
 
-    req_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
-    req_file = req_dir / f"task_{int(task_id):04d}_request.json"
+    req_file = _relay_request_file(repo_root, int(task_id), relay_session_id)
     diff     = ""
     task     = {"id": task_id, "title": f"Task {task_id}", "instruction": ""}
     if req_file.exists():

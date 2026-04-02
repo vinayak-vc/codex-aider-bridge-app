@@ -132,3 +132,4 @@ class BridgeConfig:
     manual_review_poll_seconds: int = 2
     workflow_profile: str = "standard"  # standard | micro
     skip_onboarding_scan: bool = False  # skip one-time source scan on first use
+    relay_session_id: Optional[str] = None

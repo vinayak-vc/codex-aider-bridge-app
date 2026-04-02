@@ -1,5 +1,7 @@
 // pages/tokens.js — Token analytics page controller
 
+import { SSEClient } from '/static/js/core/sse.js';
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const $   = id => document.getElementById(id);
@@ -40,6 +42,9 @@ function fmtElapsed(sec) {
 let _sessions      = [];
 let _totals        = {};
 let _selectedIdx   = null;
+let _repoRoot      = '';
+let _sse           = null;
+let _refreshTimer  = null;
 
 // ── Render top stats ──────────────────────────────────────────────────────────
 
@@ -238,7 +243,15 @@ function selectSession(idx) {
 
 async function loadTokens() {
   try {
-    const data = await fetch('/api/tokens').then(r => r.json());
+    if (!_repoRoot) {
+      const settings = await fetch('/api/settings').then(r => r.json());
+      _repoRoot = settings?.repo_root || '';
+    }
+
+    const url = _repoRoot
+      ? `/api/reports/tokens?repo_root=${encodeURIComponent(_repoRoot)}`
+      : '/api/tokens';
+    const data = await fetch(url).then(r => r.json());
     _sessions  = Array.isArray(data.sessions) ? data.sessions : [];
     _totals    = data.totals || {};
   } catch (_) {
@@ -266,10 +279,43 @@ async function loadTokens() {
   selectSession(0);
 }
 
+function scheduleRefresh() {
+  if (_refreshTimer) {
+    clearTimeout(_refreshTimer);
+  }
+  _refreshTimer = setTimeout(() => {
+    _refreshTimer = null;
+    void loadTokens();
+  }, 400);
+}
+
+function connectSSE() {
+  if (_sse) {
+    return;
+  }
+
+  _sse = new SSEClient('/api/run/stream');
+  _sse
+    .on('start', scheduleRefresh)
+    .on('token_report', scheduleRefresh)
+    .on('progress', scheduleRefresh)
+    .on('complete', scheduleRefresh)
+    .on('stopped', scheduleRefresh)
+    .on('error', scheduleRefresh)
+    .connect();
+
+  window.addEventListener('beforeunload', () => _sse?.disconnect(), { once: true });
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 function init() {
   $('btn-refresh-tokens')?.addEventListener('click', loadTokens);
+  window.addEventListener('bridge:project-switched', event => {
+    _repoRoot = event?.detail?.path || '';
+    scheduleRefresh();
+  });
+  connectSSE();
   loadTokens();
 }
 

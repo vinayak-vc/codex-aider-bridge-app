@@ -28,10 +28,12 @@ class ManualSupervisorSession:
         repo_root: Path,
         logger: logging.Logger,
         poll_seconds: int = 2,
+        session_id: Optional[str] = None,
     ) -> None:
         self._repo_root = repo_root
         self._logger = logger
         self._poll_seconds = poll_seconds
+        self._session_id = str(session_id or "").strip() or None
         self._base_dir = repo_root / "bridge_progress" / "manual_supervisor"
         self._requests_dir = self._base_dir / "requests"
         self._decisions_dir = self._base_dir / "decisions"
@@ -50,6 +52,7 @@ class ManualSupervisorSession:
     ) -> Path:
         request_payload = {
             "task_id": report.task.id,
+            "relay_session_id": self._session_id,
             "task_type": report.task.type,
             "files": list(report.task.files),
             "instruction": report.task.instruction,
@@ -124,6 +127,7 @@ class ManualSupervisorSession:
     ) -> None:
         payload = {
             "task_id": task_id,
+            "relay_session_id": self._session_id,
             "instruction": instruction,
             "files": list(files),
             "diff": diff,
@@ -278,13 +282,16 @@ class ManualSupervisorSession:
         )
 
     def _request_path(self, task_id: int) -> Path:
-        return self._requests_dir / f"task_{task_id:04d}_request.json"
+        suffix = f"_{self._session_id}" if self._session_id else ""
+        return self._requests_dir / f"task_{task_id:04d}{suffix}_request.json"
 
     def _decision_path(self, task_id: int) -> Path:
-        return self._decisions_dir / f"task_{task_id:04d}_decision.json"
+        suffix = f"_{self._session_id}" if self._session_id else ""
+        return self._decisions_dir / f"task_{task_id:04d}{suffix}_decision.json"
 
     def _completed_path(self, task_id: int) -> Path:
-        return self._completed_dir / f"task_{task_id:04d}_completed.json"
+        suffix = f"_{self._session_id}" if self._session_id else ""
+        return self._completed_dir / f"task_{task_id:04d}{suffix}_completed.json"
 
     def _archive_stale_live_review_files(self, task_id: int) -> None:
         request_path = self._request_path(task_id)

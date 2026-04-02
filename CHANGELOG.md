@@ -20,6 +20,7 @@
 ### Fixed
 - Chat no longer resets when the user changes panels
 - Relay restore no longer traps the UI on stale **Run & Review** state after app restart
+- AI Relay manual-supervisor artefacts are now isolated by per-plan session id, preventing task-id collisions across different imported plans
 
 ## [2026-04-01] — Multi-page Web UI, Chat Feature, AI Relay Spec
 

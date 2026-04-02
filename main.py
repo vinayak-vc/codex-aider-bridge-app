@@ -300,6 +300,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Polling interval in seconds while waiting for a manual supervisor decision.",
     )
     parser.add_argument(
+        "--relay-session-id",
+        default=None,
+        help="Optional AI Relay session id used to isolate manual-supervisor artefacts for one imported plan.",
+    )
+    parser.add_argument(
         "--workflow-profile",
         default="standard",
         choices=["standard", "micro"],
@@ -1704,6 +1709,7 @@ def main() -> int:
         manual_review_poll_seconds=max(1, int(args.manual_review_poll_seconds)),
         workflow_profile=str(args.workflow_profile),
         skip_onboarding_scan=bool(args.skip_onboarding_scan),
+        relay_session_id=str(args.relay_session_id).strip() if args.relay_session_id else None,
     )
 
     run_preflight_checks(config, logger)
@@ -1803,6 +1809,7 @@ def main() -> int:
             repo_root,
             logger,
             poll_seconds=config.manual_review_poll_seconds,
+            session_id=config.relay_session_id,
         )
     elif not _auto_approve:
         supervisor = SupervisorAgent(

@@ -150,6 +150,7 @@ function openLogModal(entry) {
   const title     = $('log-modal-title');
   const sub       = $('log-modal-sub');
   const stats     = $('log-modal-stats');
+  const tasksBox  = $('log-modal-tasks');
   const terminal  = $('log-modal-terminal');
 
   if (!modal) return;
@@ -160,6 +161,7 @@ function openLogModal(entry) {
   // Stats
   if (stats) {
     const badgeCls = STATUS_BADGE[entry.status] || 'badge--muted';
+    const taskCount = Array.isArray(entry.tasks_detail) ? entry.tasks_detail.length : (entry.tasks ?? '—');
     stats.innerHTML = `
       <div class="log-stat">
         <span class="log-stat__label">Status</span>
@@ -167,7 +169,7 @@ function openLogModal(entry) {
       </div>
       <div class="log-stat">
         <span class="log-stat__label">Tasks</span>
-        <span class="log-stat__value">${entry.tasks ?? '—'}</span>
+        <span class="log-stat__value">${taskCount}</span>
       </div>
       <div class="log-stat">
         <span class="log-stat__label">Elapsed</span>
@@ -178,6 +180,31 @@ function openLogModal(entry) {
         <span class="log-stat__value" style="font-size:var(--font-size-xs);font-family:var(--font-mono)">${esc(entry.aider_model || '—')}</span>
       </div>
     `;
+  }
+
+  if (tasksBox) {
+    const taskItems = Array.isArray(entry.tasks_detail) ? entry.tasks_detail : [];
+    if (taskItems.length) {
+      tasksBox.style.display = '';
+      tasksBox.innerHTML = `
+        <div class="history-modal-tasks-title">Tasks in this session</div>
+        <div class="history-modal-task-list">
+          ${taskItems.map(task => `
+            <div class="history-modal-task-item">
+              <div class="history-modal-task-head">
+                <span class="history-modal-task-id">#${esc(task.id ?? '?')}</span>
+                <span class="history-modal-task-status">${esc(task.status || 'unknown')}</span>
+                <span class="history-modal-task-title">${esc(task.title || '')}</span>
+              </div>
+              <div class="history-modal-task-text">${esc(task.instruction || '')}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } else {
+      tasksBox.style.display = 'none';
+      tasksBox.innerHTML = '';
+    }
   }
 
   // Log lines

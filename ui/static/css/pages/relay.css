@@ -207,6 +207,13 @@
 
 .relay-task-body {}
 
+.relay-task-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .relay-task-title {
   font-size: var(--font-size-sm);
   font-weight: 600;
@@ -243,6 +250,7 @@
   flex-shrink: 0;
 }
 .relay-task-status-badge[data-status="not_started"]   { background: rgba(148,163,184,.10); color: var(--color-text-muted); border-color: rgba(148,163,184,.22); }
+.relay-task-status-badge[data-status="skipped"]       { background: rgba(148,163,184,.10); color: var(--color-text-subtle); border-color: rgba(148,163,184,.22); }
 .relay-task-status-badge[data-status="running"]       { background: rgba(225,29,72,.12);  color: var(--color-accent);    border-color: rgba(225,29,72,.30); }
 .relay-task-status-badge[data-status="waiting_review"]{ background: rgba(245,158,11,.10); color: var(--color-warning);   border-color: rgba(245,158,11,.30); }
 .relay-task-status-badge[data-status="approved"]      { background: rgba(34,197,94,.15);  color: #22c55e;               border-color: rgba(34,197,94,.30); }
@@ -261,6 +269,22 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-subtle);
   font-family: var(--font-mono);
+}
+
+.relay-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.relay-task-action {
+  min-width: 72px;
+}
+
+.relay-task-item[data-status="skipped"] {
+  opacity: 0.75;
+  border-style: dashed;
 }
 
 /* ── Panel actions ── */

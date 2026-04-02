@@ -168,6 +168,14 @@
              placeholder="e.g. ollama/qwen2.5-coder:14b">
     </div>
 
+    <div class="field">
+      <label class="field-label" for="relay-max-attempts">Max attempts per task</label>
+      <input id="relay-max-attempts" class="input" type="number" min="1" max="10" value="3">
+      <div class="text-subtle" style="font-size:var(--font-size-xs);margin-top:6px">
+        Includes the first attempt. Example: 3 means the bridge can try a task up to 3 times total.
+      </div>
+    </div>
+
     <button class="btn btn--primary" id="btn-generate-prompt">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
         <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Zm.75-12h9v9h-9v-9Z"/>
@@ -212,7 +220,7 @@
   <div class="relay-panel-header">
     <h2 class="relay-panel-title">Step 2 — Confirm the task list</h2>
     <p class="relay-panel-desc">
-      Review the tasks the AI generated. If anything looks wrong, go back and regenerate.
+      Review the tasks the AI generated. You can skip tasks before launch, or discard this plan and start a new one.
     </p>
   </div>
 
@@ -220,7 +228,7 @@
 
   <div class="relay-panel-actions">
     <button class="btn btn--secondary" id="btn-back-to-step1">
-      Back
+      Discard Tasks &amp; Start New Plan
     </button>
     <button class="btn btn--primary" id="btn-confirm-tasks">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
