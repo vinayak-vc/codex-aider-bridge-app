@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from . import state_store
+
 BRIDGE_ROOT = Path(__file__).parent.parent
 
 # When running as a PyInstaller bundle, sys.executable is the .exe itself,
@@ -33,6 +35,7 @@ class BridgeRun:
         self.total_tasks: int = 0
         self.completed_tasks: int = 0
         self.token_data: Optional[dict] = None
+        self._relay_mode: bool = False
 
     # ── Listener management ────────────────────────────────────────────────
 
@@ -72,8 +75,19 @@ class BridgeRun:
             cmd.extend(["--idea-file", settings["idea_file"].strip()])
         if settings.get("aider_model", "").strip():
             cmd.extend(["--aider-model", settings["aider_model"].strip()])
-        if settings.get("manual_supervisor"):
+        supervisor = settings.get("supervisor", "")
+        if settings.get("manual_supervisor") or supervisor == "ai_relay":
             cmd.append("--manual-supervisor")
+            # For AI Relay, write the pre-imported tasks to a temporary plan file
+            if supervisor == "ai_relay" and not settings.get("plan_file", "").strip():
+                tasks = state_store.load_relay_tasks()
+                if tasks:
+                    plan_path = state_store.DATA_DIR / "relay_active_plan.json"
+                    plan_path.write_text(
+                        json.dumps({"tasks": tasks}, indent=2), encoding="utf-8"
+                    )
+                    if "--plan-file" not in cmd:
+                        cmd.extend(["--plan-file", str(plan_path)])
         elif settings.get("supervisor_command", "").strip():
             cmd.extend(["--supervisor-command", settings["supervisor_command"].strip()])
         if settings.get("manual_review_poll_seconds"):
@@ -113,6 +127,7 @@ class BridgeRun:
             self.total_tasks = 0
             self.completed_tasks = 0
             self.token_data = None
+            self._relay_mode = settings.get("supervisor") == "ai_relay"
             cmd = self.build_command(settings)
             self.command_preview = " ".join(cmd)
             thread = threading.Thread(
@@ -208,15 +223,14 @@ class BridgeRun:
                     self._emit("token_report", {"report": report})
                 elif event_type == "review_required":
                     self.status = "waiting_review"
-                    self._emit(
-                        "review_required",
-                        {
-                            "task_id": event.get("task_id", 0),
-                            "request_file": event.get("request_file", ""),
-                            "validation_message": event.get("validation_message", ""),
-                            "mode": event.get("mode", "manual"),
-                        },
-                    )
+                    payload = {
+                        "task_id": event.get("task_id", 0),
+                        "request_file": event.get("request_file", ""),
+                        "validation_message": event.get("validation_message", ""),
+                        "mode": event.get("mode", "manual"),
+                    }
+                    emit_type = "relay_review_needed" if self._relay_mode else "review_required"
+                    self._emit(emit_type, payload)
             except Exception:
                 pass
             return
