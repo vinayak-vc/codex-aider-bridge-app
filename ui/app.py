@@ -641,3 +641,185 @@ When the user is ready to execute, suggest they go to the Run tab with a clear g
         content_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── AI Relay routes ───────────────────────────────────────────────────────────
+
+@app.route("/relay")
+def relay_page():
+    return render_template("relay.html", active_page="relay")
+
+
+@app.route("/api/relay/generate-prompt", methods=["POST"])
+def api_relay_generate_prompt():
+    """Return the plan prompt the user pastes into their web AI."""
+    from utils.relay_formatter import build_plan_prompt
+    from utils.project_knowledge import load_knowledge, to_context_text
+
+    data     = request.get_json(force=True) or {}
+    goal     = (data.get("goal") or "").strip()
+    repo_root = (data.get("repo_root") or "").strip()
+    if not goal:
+        return jsonify({"error": "goal is required"}), 400
+
+    knowledge_context = ""
+    if repo_root:
+        try:
+            knowledge = load_knowledge(repo_root)
+            knowledge_context = to_context_text(knowledge)
+        except Exception:
+            pass
+
+    prompt = build_plan_prompt(goal, knowledge_context, repo_root)
+    return jsonify({"prompt": prompt})
+
+
+@app.route("/api/relay/import-plan", methods=["POST"])
+def api_relay_import_plan():
+    """Parse the web AI's plan response and persist the task list."""
+    from utils.relay_formatter import parse_plan
+
+    data     = request.get_json(force=True) or {}
+    raw_text = data.get("raw_text", "")
+    try:
+        tasks = parse_plan(raw_text)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+
+    state_store.save_relay_tasks(tasks)
+    return jsonify({"tasks": tasks, "count": len(tasks)})
+
+
+@app.route("/api/relay/review-packet", methods=["GET"])
+def api_relay_review_packet():
+    """Build the review text for a completed task."""
+    from utils.relay_formatter import build_review_packet
+
+    task_id   = request.args.get("task_id", "")
+    repo_root = (request.args.get("repo_root") or "").strip()
+    goal      = (request.args.get("goal") or "").strip()
+
+    if not task_id or not repo_root:
+        return jsonify({"error": "task_id and repo_root are required"}), 400
+
+    # Locate the request file written by bridge_runner
+    req_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
+    req_file = req_dir / f"task_{int(task_id):04d}_request.json"
+    if not req_file.exists():
+        return jsonify({"error": f"Request file not found: {req_file.name}"}), 404
+
+    try:
+        req_data = json.loads(req_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return jsonify({"error": f"Could not read request file: {exc}"}), 500
+
+    tasks      = state_store.load_relay_tasks()
+    total      = len(tasks)
+    task       = next((t for t in tasks if str(t.get("id")) == str(task_id)), req_data)
+    diff       = req_data.get("diff", "")
+    validation = req_data.get("validation_result", "not run")
+    attempt    = req_data.get("attempt", 1)
+    max_retries = req_data.get("max_retries", 2)
+
+    packet = build_review_packet(task, diff, validation, attempt, max_retries, total, goal)
+    return jsonify({"packet": packet})
+
+
+@app.route("/api/relay/submit-decision", methods=["POST"])
+def api_relay_submit_decision():
+    """Parse the web AI's review response and write the decision file."""
+    from utils.relay_formatter import parse_decision
+
+    data      = request.get_json(force=True) or {}
+    raw_text  = data.get("raw_text", "")
+    task_id   = data.get("task_id")
+    repo_root = (data.get("repo_root") or "").strip()
+
+    if not task_id or not repo_root:
+        return jsonify({"error": "task_id and repo_root are required"}), 400
+
+    parsed = parse_decision(raw_text)
+    if parsed["decision"] == "unparseable":
+        return jsonify({"error": "Could not parse a decision from the text.", "raw": parsed.get("raw", "")}), 422
+
+    # Map relay decision names → manual-supervisor decision names
+    decision_map = {"approved": "pass", "rework": "rework", "failed": "fail"}
+    ms_decision  = decision_map.get(parsed["decision"], parsed["decision"])
+
+    decision_payload: dict = {"task_id": int(task_id), "decision": ms_decision}
+    if ms_decision == "rework" and "instruction" in parsed:
+        decision_payload["instruction"] = parsed["instruction"]
+    if ms_decision == "fail" and "reason" in parsed:
+        decision_payload["reason"] = parsed["reason"]
+
+    dec_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
+    dec_dir.mkdir(parents=True, exist_ok=True)
+    dec_file = dec_dir / f"task_{int(task_id):04d}_decision.json"
+    dec_file.write_text(json.dumps(decision_payload, indent=2), encoding="utf-8")
+
+    return jsonify({"decision": ms_decision, "file": dec_file.name})
+
+
+@app.route("/api/relay/replan-prompt", methods=["POST"])
+def api_relay_replan_prompt():
+    """Build the replan prompt for a failed task."""
+    from utils.relay_formatter import build_replan_prompt
+
+    data          = request.get_json(force=True) or {}
+    task_id       = data.get("task_id")
+    failed_reason = (data.get("failed_reason") or "").strip()
+    repo_root     = (data.get("repo_root") or "").strip()
+    goal          = (data.get("goal") or "").strip()
+
+    if not task_id or not repo_root:
+        return jsonify({"error": "task_id and repo_root are required"}), 400
+
+    req_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
+    req_file = req_dir / f"task_{int(task_id):04d}_request.json"
+    diff     = ""
+    task     = {"id": task_id, "title": f"Task {task_id}", "instruction": ""}
+    if req_file.exists():
+        try:
+            req_data = json.loads(req_file.read_text(encoding="utf-8"))
+            diff     = req_data.get("diff", "")
+            tasks    = state_store.load_relay_tasks()
+            found    = next((t for t in tasks if str(t.get("id")) == str(task_id)), None)
+            if found:
+                task = found
+        except Exception:
+            pass
+
+    if not failed_reason:
+        failed_reason = "Task marked as failed by reviewer."
+
+    prompt = build_replan_prompt(task, failed_reason, diff, goal)
+    return jsonify({"prompt": prompt})
+
+
+@app.route("/api/relay/import-replan", methods=["POST"])
+def api_relay_import_replan():
+    """Parse replacement tasks from the web AI and splice them into the task list."""
+    from utils.relay_formatter import parse_plan
+
+    data     = request.get_json(force=True) or {}
+    raw_text = data.get("raw_text", "")
+    task_id  = data.get("task_id")
+
+    if not task_id:
+        return jsonify({"error": "task_id is required"}), 400
+
+    try:
+        replacement_tasks = parse_plan(raw_text)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+
+    tasks = state_store.load_relay_tasks()
+    # Remove the failed task and everything after it, then splice in replacements
+    pivot = next((i for i, t in enumerate(tasks) if str(t.get("id")) == str(task_id)), None)
+    if pivot is not None:
+        tasks = tasks[:pivot] + replacement_tasks
+    else:
+        tasks = tasks + replacement_tasks
+
+    state_store.save_relay_tasks(tasks)
+    return jsonify({"tasks": tasks, "count": len(tasks)})
