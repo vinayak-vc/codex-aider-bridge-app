@@ -38,6 +38,10 @@ app.config["JSON_SORT_KEYS"] = False
 _sse_clients: list[queue.Queue] = []
 _sse_lock = threading.Lock()
 
+# Knowledge context cache: {repo_root: (context_str, timestamp)}
+_knowledge_cache: dict[str, tuple[str, float]] = {}
+_KNOWLEDGE_CACHE_TTL = 60.0  # seconds
+
 
 def _broadcast(event_type: str, data: dict) -> None:
     payload = json.dumps({"type": event_type, **data})
@@ -588,19 +592,24 @@ def api_chat():
             )
         }), 400
 
-    # --- Build project context from knowledge file ---
+    # --- Build project context from knowledge file (cached 60 s) ---
     repo_root = settings.get("repo_root", "").strip()
     knowledge_ctx = ""
     if repo_root:
-        try:
-            _root = Path(__file__).parent.parent
-            if str(_root) not in sys.path:
-                sys.path.insert(0, str(_root))
-            from utils.project_knowledge import load_knowledge, to_context_text
-            knowledge = load_knowledge(Path(repo_root))
-            knowledge_ctx = to_context_text(knowledge)
-        except Exception:
-            pass
+        cached = _knowledge_cache.get(repo_root)
+        if cached and (time.time() - cached[1]) < _KNOWLEDGE_CACHE_TTL:
+            knowledge_ctx = cached[0]
+        else:
+            try:
+                _root = Path(__file__).parent.parent
+                if str(_root) not in sys.path:
+                    sys.path.insert(0, str(_root))
+                from utils.project_knowledge import load_knowledge, to_context_text
+                knowledge = load_knowledge(Path(repo_root))
+                knowledge_ctx = to_context_text(knowledge)
+                _knowledge_cache[repo_root] = (knowledge_ctx, time.time())
+            except Exception:
+                pass
 
     system_prompt = f"""You are a helpful AI coding assistant integrated into the Codex-Aider Bridge tool.
 You help developers understand their codebase, plan features, debug issues, and discuss architecture.

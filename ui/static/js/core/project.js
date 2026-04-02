@@ -178,12 +178,59 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ── Global model selector ─────────────────────────────────────────────────────
+
+async function loadModels() {
+  const sel = $('global-model-select');
+  if (!sel) return;
+
+  try {
+    const [status, settings] = await Promise.all([
+      fetch('/api/chat/status').then(r => r.json()).catch(() => ({})),
+      fetch('/api/settings').then(r => r.json()).catch(() => ({})),
+    ]);
+
+    const models   = status.available_models || [];
+    const current  = settings.aider_model || '';
+
+    // Strip "ollama/" prefix for display; raw value is the full model string
+    sel.innerHTML = models.length
+      ? models.map(m => {
+          const label = m.replace(/^ollama\//, '');
+          const sel_  = m === current || label === current ? ' selected' : '';
+          return `<option value="${esc(m)}"${sel_}>${esc(label)}</option>`;
+        }).join('')
+      : `<option value="${esc(current)}">${esc(current || 'No models found')}</option>`;
+
+    // If current setting not in list but non-empty, prepend it
+    if (current && !models.includes(current)) {
+      const label = current.replace(/^ollama\//, '');
+      sel.insertAdjacentHTML('afterbegin',
+        `<option value="${esc(current)}" selected>${esc(label)}</option>`);
+    }
+  } catch (_) {}
+}
+
+async function saveModel(value) {
+  if (!value) return;
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    settings.aider_model = value;
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+  } catch (_) {}
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 export async function initProjectBar() {
   await fetchProjects();
   await fetchCurrentPath();
   renderProjectName();
+  loadModels();
 
   // Switcher button toggles dropdown
   $('project-switcher')?.addEventListener('click', e => {
@@ -205,5 +252,10 @@ export async function initProjectBar() {
   // Esc → close
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && _open) closeDropdown();
+  });
+
+  // Global model select — save on change
+  $('global-model-select')?.addEventListener('change', e => {
+    saveModel(e.target.value);
   });
 }

@@ -187,8 +187,11 @@ function renderOverview(k) {
   // Docs
   const docsEl = $('docs-list');
   if (docsEl && docCount > 0) {
-    docsEl.innerHTML = (k.docs || [])
-      .map(d => `<span class="chip --doc">${esc(d)}</span>`).join('');
+    docsEl.innerHTML = (k.docs || []).map(d => {
+      const path    = esc(typeof d === 'object' ? (d.path || d.file || '') : String(d));
+      const summary = typeof d === 'object' && d.summary ? esc(d.summary) : '';
+      return `<span class="chip --doc" title="${summary || path}">${path || '(unknown)'}</span>`;
+    }).join('');
     $('card-docs').style.display = '';
   }
 

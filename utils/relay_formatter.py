@@ -31,8 +31,10 @@ _DECISION_SCAN_LINES   = 5
 
 def build_plan_prompt(goal: str, knowledge_context: str, repo_root: str) -> str:
     """Return a prompt the user pastes into their web AI to generate a task plan."""
-    ctx_section = knowledge_context.strip() if knowledge_context else "(no project context available — set a repo root in Run settings first)"
-    root_note   = f"Repository: {repo_root}" if repo_root else "Repository: not configured"
+    root_note = f"Repository: {repo_root}" if repo_root else "Repository: not configured"
+    ctx_block = ""
+    if knowledge_context and knowledge_context.strip():
+        ctx_block = f"\nPROJECT CONTEXT:\n{knowledge_context.strip()}\n"
 
     return f"""{_DIVIDER}
 BRIDGE PLAN REQUEST
@@ -40,10 +42,7 @@ BRIDGE PLAN REQUEST
 
 You are a software planning assistant.
 {root_note}
-
-PROJECT CONTEXT:
-{ctx_section}
-
+{ctx_block}
 GOAL:
 {goal}
 

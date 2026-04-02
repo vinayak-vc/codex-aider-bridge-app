@@ -397,6 +397,45 @@
 }
 .project-dropdown-add:hover { opacity: .75; }
 
+/* ── Global model selector ── */
+.model-selector-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 16px;
+  padding: 0 10px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  transition: border-color var(--transition);
+  flex-shrink: 0;
+}
+.model-selector-wrap:focus-within {
+  border-color: var(--color-accent);
+}
+.model-selector-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--color-accent);
+}
+.model-selector-select {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  max-width: 180px;
+  padding: 0;
+}
+.model-selector-select option {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
 /* ── Responsive ── */
 
 /* Tablet: icon-only sidebar */
