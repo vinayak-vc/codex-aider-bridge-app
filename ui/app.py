@@ -236,7 +236,7 @@ def _relay_state_payload() -> dict:
         "step": step,
         "goal": str(ui_state.get("goal") or settings.get("goal") or ""),
         "repo_root": repo_root,
-        "aider_model": str(ui_state.get("aider_model") or settings.get("aider_model") or "ollama/mistral"),
+        "aider_model": str(ui_state.get("aider_model") or settings.get("aider_model") or "ollama/qwen2.5-coder:14b"),
         "max_task_attempts": int(ui_state.get("max_task_attempts") or settings.get("max_task_retries", 2) + 1),
         "relay_session_id": relay_session_id,
         "prompt_output": str(ui_state.get("prompt_output") or ""),
