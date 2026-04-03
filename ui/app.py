@@ -1870,6 +1870,68 @@ def api_reports_knowledge():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/knowledge/refresh", methods=["POST"])
+def api_knowledge_refresh():
+    """Re-scan the project and refresh knowledge + AI_UNDERSTANDING.md."""
+    import logging
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    from utils.onboarding_scanner import OnboardingScanner
+    from utils.project_knowledge import load_knowledge, save_knowledge
+    from context.project_understanding import ensure_project_understanding
+
+    data = request.get_json(force=True) or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root not set"}), 400
+
+    repo_path = Path(repo_root)
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Directory not found: {repo_root}"}), 400
+
+    try:
+        logger = logging.getLogger("bridge_app")
+
+        # Load or create knowledge
+        knowledge = load_knowledge(repo_path)
+
+        # Run the scanner (re-scans all source files)
+        scanner = OnboardingScanner(repo_path, logger)
+        knowledge = scanner.run(knowledge)
+
+        # Set last_refreshed timestamp
+        from datetime import datetime
+        knowledge.setdefault("project", {})["last_refreshed"] = datetime.now().isoformat(timespec="seconds")
+
+        # Save knowledge
+        save_knowledge(knowledge, repo_path)
+
+        # Regenerate AI_UNDERSTANDING.md
+        try:
+            ensure_project_understanding(
+                repo_root=repo_path,
+                knowledge=knowledge,
+                logger=logger,
+                skip_source_scan=True,  # already scanned above
+            )
+        except Exception:
+            pass  # Non-fatal — understanding is a nice-to-have
+
+        files_count = len(knowledge.get("files", {}))
+        return jsonify({
+            "ok": True,
+            "files_scanned": files_count,
+            "last_refreshed": knowledge["project"]["last_refreshed"],
+        })
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/reports/last_run")
 def api_reports_last_run():
     """Last run summary (reads bridge_progress/last_run.json)."""

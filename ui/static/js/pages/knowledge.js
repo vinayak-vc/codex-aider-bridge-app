@@ -339,6 +339,8 @@ function initFileTable() {
 
 // ── Data loading ──────────────────────────────────────────────────────────────
 
+let _hasKnowledge = false;
+
 async function loadAll() {
   const [knowledge, understanding] = await Promise.allSettled([
     fetch('/api/reports/knowledge').then(r => r.json()),
@@ -348,9 +350,97 @@ async function loadAll() {
   const k = knowledge.status === 'fulfilled' ? (knowledge.value || {}) : {};
   const u = understanding.status === 'fulfilled' ? (understanding.value || {}) : {};
 
+  _hasKnowledge = Object.keys(k.files || {}).length > 0;
+  _updateRefreshButton();
+  _updateLastRefreshed(k);
+
   renderOverview(k);
   renderUnderstanding(u, k);
   buildFileRows(k.files);
+}
+
+// ── Refresh knowledge (re-scan project) ──────────────────────────────────────
+
+async function refreshKnowledge() {
+  const btn = $('btn-refresh-knowledge');
+  const label = $('btn-refresh-label');
+  if (btn) btn.disabled = true;
+  if (label) label.textContent = 'Scanning...';
+
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    const repo = settings?.repo_root || '';
+    if (!repo) {
+      alert('No project folder selected. Set one on the Run page first.');
+      return;
+    }
+
+    const res = await fetch('/api/knowledge/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: repo }),
+    }).then(r => r.json());
+
+    if (res.error) {
+      alert('Refresh failed: ' + res.error);
+      return;
+    }
+
+    // Reload the page data
+    await loadAll();
+  } catch (err) {
+    alert('Refresh failed: ' + (err.message || err));
+  } finally {
+    if (btn) btn.disabled = false;
+    _updateRefreshButton();
+  }
+}
+
+function _updateRefreshButton() {
+  const label = $('btn-refresh-label');
+  if (label) label.textContent = _hasKnowledge ? 'Refresh Knowledge' : 'Generate Knowledge';
+}
+
+function _updateLastRefreshed(k) {
+  const el = $('knowledge-last-refreshed');
+  if (!el) return;
+  const ts = k?.project?.last_refreshed || k?.project?.last_updated;
+  if (!ts) { el.textContent = 'Never'; return; }
+  try {
+    const d = new Date(ts);
+    const diff = Math.floor((Date.now() - d) / 1000);
+    if (diff < 60)    el.textContent = 'just now';
+    else if (diff < 3600)  el.textContent = `${Math.floor(diff / 60)}m ago`;
+    else if (diff < 86400) el.textContent = `${Math.floor(diff / 3600)}h ago`;
+    else el.textContent = d.toLocaleDateString();
+  } catch (_) {
+    el.textContent = ts;
+  }
+}
+
+// ── Auto-refresh ─────────────────────────────────────────────────────────────
+
+let _autoRefreshTimer = null;
+const _STORAGE_KEY = 'bridge_knowledge_refresh_minutes';
+
+function _getAutoRefreshMinutes() {
+  const saved = localStorage.getItem(_STORAGE_KEY);
+  return saved !== null ? parseInt(saved, 10) : 10;
+}
+
+function _startAutoRefresh() {
+  _stopAutoRefresh();
+  const minutes = _getAutoRefreshMinutes();
+  if (minutes > 0) {
+    _autoRefreshTimer = setInterval(() => refreshKnowledge(), minutes * 60 * 1000);
+  }
+}
+
+function _stopAutoRefresh() {
+  if (_autoRefreshTimer) {
+    clearInterval(_autoRefreshTimer);
+    _autoRefreshTimer = null;
+  }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -359,9 +449,27 @@ function init() {
   initTabs();
   initFileTable();
 
-  $('btn-refresh-knowledge')?.addEventListener('click', loadAll);
+  // Reload from disk (quick)
+  $('btn-reload-knowledge')?.addEventListener('click', loadAll);
+
+  // Refresh knowledge (re-scan, slow)
+  $('btn-refresh-knowledge')?.addEventListener('click', refreshKnowledge);
+
+  // Auto-refresh interval control
+  const autoSel = $('knowledge-auto-refresh');
+  if (autoSel) {
+    autoSel.value = String(_getAutoRefreshMinutes());
+    autoSel.addEventListener('change', () => {
+      localStorage.setItem(_STORAGE_KEY, autoSel.value);
+      _startAutoRefresh();
+    });
+  }
+
+  // Project switch
+  window.addEventListener('bridge:project-switched', () => loadAll());
 
   loadAll();
+  _startAutoRefresh();
 }
 
 init();
