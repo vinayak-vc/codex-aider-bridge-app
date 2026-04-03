@@ -566,6 +566,7 @@ async function generatePlan() {
       tasks:        data.tasks,
       plan_summary: data.plan_summary,
       plan_status:  'plan_ready',
+      plan_file:    '',  // Clear any stale plan file from previous confirm
     });
     _confirmedPlanFile = '';
   } catch (err) {

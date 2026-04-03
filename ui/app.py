@@ -1260,7 +1260,14 @@ def api_run_nl_launch():
     
     brief     = state.get("brief", {})
     plan_file = state.get("plan_file", "")
-    
+
+    # Validate plan file exists — stale references cause Aider to hang on nonexistent files
+    if plan_file and not Path(plan_file).exists():
+        plan_file = ""
+
+    if not plan_file:
+        return jsonify({"error": "No confirmed plan file found. Click 'New Conversation', regenerate the plan, and confirm it."}), 400
+
     # Merge current global settings (model, supervisor) with NL-specific goal/plan
     settings = state_store.load_settings()
     run_settings = dict(settings)
