@@ -1837,7 +1837,7 @@ def main() -> int:
     if _manual_supervisor_enabled:
         logger.info(
             "Bridge running in MANUAL-SUPERVISOR mode — review requests will be written to "
-            "bridge_progress/manual_supervisor/ and no external AI CLI will be invoked."
+            "bridge_progress/manual_supervisor/ and the UI proxy thread handles supervisor dispatch."
         )
     elif _auto_approve:
         logger.info(

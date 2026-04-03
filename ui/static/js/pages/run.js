@@ -1638,6 +1638,9 @@ function bindControls() {
     btn.addEventListener('click', () => switchRunTab(btn.dataset.tab));
   });
 
+  // Back to Settings button in log toolbar
+  $('btn-back-to-settings')?.addEventListener('click', () => switchRunTab('settings'));
+
   // Chatbot wizard controls
   bindChatbotControls();
 }
@@ -1656,15 +1659,15 @@ async function hydrateExistingRun() {
     const log = await fetch('/api/run/log').then(r => r.json());
     if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
 
-    // Switch to log tab since there's run data to show
-    switchRunTab('log');
-
     if (alive) {
+      // Active run — switch to log so user sees live output
+      switchRunTab('log');
       setRunning(true);
       showBanner('running', 'Run in progress…');
       connectSSE();
     } else {
-      // Run already finished — show the final banner so user sees result on return
+      // Run already finished — stay on Settings tab, show banner at top
+      // User can click Log tab to see output if they want
       setRunning(false);
       showBanner(
         status.status,
