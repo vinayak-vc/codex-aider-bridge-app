@@ -637,6 +637,7 @@ function populateForm(s) {
   $('f-repo-root').value         = s.repo_root         || '';
   $('f-aider-model').value       = s.aider_model       || 'ollama/mistral';
   $('f-dry-run').checked         = !!s.dry_run;
+  $('f-auto-commit').checked     = s.auto_commit !== false;
   $('f-validation-cmd').value    = s.validation_command || '';
   $('f-max-retries').value       = s.max_task_retries   ?? 2;
   $('f-max-plan-attempts').value = s.max_plan_attempts  ?? 3;
@@ -683,6 +684,7 @@ function collectSettings() {
     supervisor_command: sup === 'custom' ? $('f-supervisor-command').value.trim()
                       : (SUPERVISOR_CMDS[sup] || ''),
     dry_run:            $('f-dry-run').checked,
+    auto_commit:        $('f-auto-commit').checked,
     validation_command: $('f-validation-cmd').value.trim(),
     max_task_retries:   parseInt($('f-max-retries').value, 10)      || 2,
     max_plan_attempts:  parseInt($('f-max-plan-attempts').value, 10) || 3,
@@ -716,6 +718,8 @@ function updateCommandPreview() {
     parts.push({ cls: 'cmd-flag', text: `--aider-model ${s.aider_model}` });
   // Universal pipeline: all runs use --manual-supervisor
   parts.push({ cls: 'cmd-flag', text: '--manual-supervisor' });
+  if (!s.auto_commit)
+    parts.push({ cls: 'cmd-flag', text: '--no-auto-commit' });
   if (s.validation_command)
     parts.push({ cls: 'cmd-flag', text: `--validation-command "${s.validation_command}"` });
   if (s.max_plan_attempts && s.max_plan_attempts !== 3)
@@ -1583,7 +1587,7 @@ function bindControls() {
   $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
 
   // All form inputs → live preview update
-  ['nl-input','f-repo-root','f-aider-model','f-dry-run','f-validation-cmd',
+  ['nl-input','f-repo-root','f-aider-model','f-dry-run','f-auto-commit','f-validation-cmd',
    'f-max-retries','f-max-plan-attempts','f-task-timeout',
    'f-idea-file','f-plan-output-file','f-clarifications']
     .forEach(id => {

@@ -133,3 +133,4 @@ class BridgeConfig:
     workflow_profile: str = "standard"  # standard | micro
     skip_onboarding_scan: bool = False  # skip one-time source scan on first use
     relay_session_id: Optional[str] = None
+    auto_commit: bool = True  # auto-commit after each approved task

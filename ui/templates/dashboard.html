@@ -170,6 +170,49 @@
       <button class="btn btn--primary" id="btn-submit-review">Submit Decision</button>
     </div>
   </div>
+  </div>
+
+  <!-- ── Git Panel ── -->
+  <div class="card git-panel" id="git-panel" style="margin-top:20px">
+    <div class="section-header" style="margin-bottom:14px">
+      <span class="section-title">Git</span>
+      <button class="btn btn--secondary btn--sm" id="btn-git-refresh">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="13" height="13">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Branch row -->
+    <div class="git-branch-row">
+      <label class="field-label" style="margin:0">Branch</label>
+      <select class="input git-branch-select" id="git-branch-select" style="max-width:200px"></select>
+      <button class="btn btn--secondary btn--sm" id="btn-git-new-branch" title="Create new branch">+ New</button>
+    </div>
+
+    <!-- Status -->
+    <div class="git-status-line" id="git-status-line" style="margin-top:10px;font-size:var(--font-size-xs);color:var(--color-text-muted)"></div>
+
+    <!-- Recent commits -->
+    <div style="margin-top:16px">
+      <div class="detail-section-title" style="margin-bottom:8px">Recent Commits</div>
+      <div class="git-commit-list" id="git-commit-list">
+        <div class="text-subtle" style="font-size:var(--font-size-xs);padding:8px 0">No commits loaded.</div>
+      </div>
+    </div>
+
+    <!-- Changed files -->
+    <div id="git-changed-wrap" style="display:none;margin-top:16px">
+      <div class="detail-section-title" style="margin-bottom:8px">Changed Files</div>
+      <div class="git-changed-list" id="git-changed-list"></div>
+    </div>
+
+    <!-- Diff viewer -->
+    <div id="git-diff-viewer" style="display:none;margin-top:12px">
+      <pre class="git-diff-pre" id="git-diff-pre"></pre>
+    </div>
+  </div>
+
 </div>
 </div>
 {% endblock %}

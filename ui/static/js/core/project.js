@@ -122,6 +122,7 @@ async function switchProject(path) {
     _currentPath = path;
     renderProjectName();
     renderDropdown();
+    refreshGitStatus();
     window.dispatchEvent(new CustomEvent('bridge:project-switched', {
       detail: { path: path },
     }));
@@ -181,6 +182,31 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ── Git branch chip ──────────────────────────────────────────────────────────
+
+async function refreshGitStatus() {
+  const chip = $('git-branch-chip');
+  const nameEl = $('git-branch-name');
+  const dot = $('git-status-dot');
+  if (!chip) return;
+
+  if (!_currentPath) {
+    chip.style.display = 'none';
+    return;
+  }
+
+  try {
+    const data = await fetch(`/api/git/status?repo_root=${encodeURIComponent(_currentPath)}`).then(r => r.json());
+    if (data.error) { chip.style.display = 'none'; return; }
+
+    if (nameEl) nameEl.textContent = data.branch || 'unknown';
+    if (dot) dot.dataset.clean = data.is_clean ? 'true' : 'false';
+    chip.style.display = '';
+  } catch (_) {
+    chip.style.display = 'none';
+  }
+}
+
 // ── Global model selector ─────────────────────────────────────────────────────
 
 async function loadModels() {
@@ -234,6 +260,7 @@ export async function initProjectBar() {
   await fetchCurrentPath();
   renderProjectName();
   loadModels();
+  refreshGitStatus();
 
   // Switcher button toggles dropdown
   $('project-switcher')?.addEventListener('click', e => {

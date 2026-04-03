@@ -374,6 +374,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--no-auto-commit",
+        action="store_true",
+        help="Disable automatic git commits after each approved task. Changes stay unstaged.",
+    )
+    parser.add_argument(
         "--session-tokens",
         type=int,
         default=0,
@@ -1761,6 +1766,7 @@ def main() -> int:
         workflow_profile=str(args.workflow_profile),
         skip_onboarding_scan=bool(args.skip_onboarding_scan),
         relay_session_id=str(args.relay_session_id).strip() if args.relay_session_id else None,
+        auto_commit=not bool(args.no_auto_commit),
     )
 
     run_preflight_checks(config, logger)
@@ -1971,7 +1977,11 @@ def main() -> int:
                 diagnostics=diagnostics,
             )
             failed_task_id = None
-            commit_sha = _auto_commit_task_changes(repo_root, task, logger)
+            commit_sha = None
+            if config.auto_commit:
+                commit_sha = _auto_commit_task_changes(repo_root, task, logger)
+            else:
+                logger.info("Task %s: auto-commit disabled — changes left in working tree", task.id)
             if commit_sha:
                 task_commit_shas[task.id] = commit_sha
             completed_ids.add(task.id)
