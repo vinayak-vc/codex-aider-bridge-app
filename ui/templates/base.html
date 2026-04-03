@@ -162,14 +162,6 @@
       </select>
     </div>
 
-    <!-- Git branch chip -->
-    <a href="/dashboard" class="git-branch-chip" id="git-branch-chip" style="display:none" title="Current git branch — click to open git panel">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"/>
-      </svg>
-      <span id="git-branch-name">main</span>
-      <span class="git-status-dot" id="git-status-dot" data-clean="true"></span>
-    </a>
   </header>
 
   <!-- ── Main Content ── -->
@@ -178,6 +170,30 @@
       {% block content %}{% endblock %}
     </div>
   </main>
+
+  <!-- ── VS Code-style status bar ── -->
+  <footer class="status-bar" id="status-bar">
+    <div class="status-bar-left">
+      <a href="/dashboard" class="status-item status-item--branch" id="sb-branch" title="Current branch — click to manage">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="13" height="13">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"/>
+        </svg>
+        <span id="sb-branch-name">—</span>
+      </a>
+      <span class="status-item" id="sb-git-status" title="Working tree status">
+        <span class="status-dot" id="sb-git-dot" data-clean="true"></span>
+        <span id="sb-git-label">—</span>
+      </span>
+    </div>
+    <div class="status-bar-right">
+      <span class="status-item" id="sb-run-status">
+        <span class="status-dot" id="sb-run-dot" data-status="idle"></span>
+        Idle
+      </span>
+      <span class="status-item" id="sb-tasks">0 tasks</span>
+      <span class="status-item status-item--muted">Bridge v0.1</span>
+    </div>
+  </footer>
 
 </div>
 

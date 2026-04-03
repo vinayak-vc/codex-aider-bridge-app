@@ -43,7 +43,7 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 28px 32px;
+  padding: 28px 32px 36px;  /* extra bottom for status bar */
 }
 
 @media (max-width: 900px) {
@@ -51,7 +51,7 @@ body {
     margin-left: var(--nav-width-collapsed);
   }
   .page-body {
-    padding: 20px 16px;
+    padding: 20px 16px 36px;
   }
 }
 
@@ -61,8 +61,87 @@ body {
     height: 100dvh;
   }
   .page-body {
-    padding: 16px 12px 72px;
+    padding: 16px 12px 80px;
   }
+}
+
+/* ── Status Bar (VS Code-style) ── */
+.status-bar {
+  position: fixed;
+  bottom: 0;
+  left: var(--nav-width);
+  right: 0;
+  height: 28px;
+  background: var(--color-surface-2);
+  border-top: 1px solid var(--color-border);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  color: var(--color-text-muted);
+  gap: 4px;
+}
+.status-bar-left,
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  height: 28px;
+  white-space: nowrap;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: default;
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition);
+}
+a.status-item:hover,
+button.status-item:hover {
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.status-item--branch {
+  font-family: var(--font-mono);
+}
+.status-item--muted {
+  color: var(--color-text-subtle);
+  font-size: 11px;
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot[data-clean="true"]   { background: var(--color-success); }
+.status-dot[data-clean="false"]  { background: var(--color-warning); }
+.status-dot[data-status="idle"]    { background: var(--color-text-subtle); }
+.status-dot[data-status="running"] { background: var(--color-accent); animation: status-pulse 1.4s infinite; }
+.status-dot[data-status="success"] { background: var(--color-success); }
+.status-dot[data-status="failure"] { background: var(--color-danger); }
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+@media (max-width: 900px) {
+  .status-bar { left: var(--nav-width-collapsed); }
+}
+@media (max-width: 600px) {
+  .status-bar { left: 0; bottom: 52px; }
 }
 
 /* Typography */

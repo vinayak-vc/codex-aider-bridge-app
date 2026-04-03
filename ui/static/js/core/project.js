@@ -185,27 +185,74 @@ function esc(s) {
 // ── Git branch chip ──────────────────────────────────────────────────────────
 
 async function refreshGitStatus() {
-  const chip = $('git-branch-chip');
-  const nameEl = $('git-branch-name');
-  const dot = $('git-status-dot');
-  if (!chip) return;
+  const branchName = $('sb-branch-name');
+  const gitDot = $('sb-git-dot');
+  const gitLabel = $('sb-git-label');
 
   if (!_currentPath) {
-    chip.style.display = 'none';
+    if (branchName) branchName.textContent = '—';
+    if (gitLabel) gitLabel.textContent = '—';
     return;
   }
 
   try {
     const data = await fetch(`/api/git/status?repo_root=${encodeURIComponent(_currentPath)}`).then(r => r.json());
-    if (data.error) { chip.style.display = 'none'; return; }
+    if (data.error) {
+      if (branchName) branchName.textContent = '—';
+      if (gitLabel) gitLabel.textContent = 'Not a repo';
+      return;
+    }
 
-    if (nameEl) nameEl.textContent = data.branch || 'unknown';
-    if (dot) dot.dataset.clean = data.is_clean ? 'true' : 'false';
-    chip.style.display = '';
+    if (branchName) branchName.textContent = data.branch || 'detached';
+    if (gitDot) gitDot.dataset.clean = data.is_clean ? 'true' : 'false';
+    if (gitLabel) {
+      if (data.is_clean) {
+        gitLabel.textContent = 'Clean';
+      } else {
+        const parts = [];
+        if (data.staged) parts.push(`${data.staged} staged`);
+        if (data.unstaged) parts.push(`${data.unstaged} modified`);
+        if (data.untracked) parts.push(`${data.untracked} new`);
+        gitLabel.textContent = parts.join(', ') || 'Dirty';
+      }
+    }
   } catch (_) {
-    chip.style.display = 'none';
+    if (branchName) branchName.textContent = '—';
   }
 }
+
+// ── Status bar run status ────────────────────────────────────────────────────
+
+async function refreshRunStatus() {
+  try {
+    const data = await fetch('/api/run/status').then(r => r.json());
+    const statusEl = $('sb-run-status');
+    const tasksEl  = $('sb-tasks');
+    const runDot   = $('sb-run-dot');
+    const navChip  = $('nav-status-chip');
+    const navLabel = $('nav-status-label');
+
+    const status = data.status || 'idle';
+    const labels = {
+      idle: 'Idle', running: 'Running', success: 'Done',
+      failure: 'Failed', stopped: 'Stopped', paused: 'Paused',
+      waiting_review: 'Review',
+    };
+    const label = labels[status] || status;
+
+    if (statusEl) statusEl.innerHTML =
+      `<span class="status-dot" id="sb-run-dot" data-status="${status}"></span> ${label}`;
+    if (tasksEl) tasksEl.textContent =
+      `${data.completed_tasks || 0}/${data.total_tasks || 0} tasks`;
+
+    // Also update the nav sidebar chip
+    if (navChip) navChip.dataset.status = status;
+    if (navLabel) navLabel.textContent = label;
+  } catch (_) {}
+}
+
+// Refresh status bar periodically
+setInterval(refreshRunStatus, 3000);
 
 // ── Global model selector ─────────────────────────────────────────────────────
 
@@ -261,6 +308,7 @@ export async function initProjectBar() {
   renderProjectName();
   loadModels();
   refreshGitStatus();
+  refreshRunStatus();
 
   // Switcher button toggles dropdown
   $('project-switcher')?.addEventListener('click', e => {

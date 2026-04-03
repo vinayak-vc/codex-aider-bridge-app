@@ -495,34 +495,4 @@
   }
 }
 
-/* ── Git branch chip (top bar) ── */
-.git-branch-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-mono);
-  color: var(--color-text-muted);
-  text-decoration: none;
-  cursor: pointer;
-  transition: border-color var(--transition), color var(--transition);
-  white-space: nowrap;
-}
-.git-branch-chip:hover {
-  border-color: var(--color-accent);
-  color: var(--color-text);
-}
-.git-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-success);
-  flex-shrink: 0;
-}
-.git-status-dot[data-clean="false"] {
-  background: var(--color-warning);
-}
+/* Git chip styles moved to base.css .status-bar */
