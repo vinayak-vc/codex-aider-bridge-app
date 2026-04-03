@@ -842,6 +842,9 @@ function setRunning(running) {
   if (btnL)  { btnL.disabled = running; btnL.style.display = running ? 'none' : ''; }
   if (btnS)  btnS.style.display = running ? '' : 'none';
   if (hint)  hint.style.display = running ? 'none' : '';
+
+  // Re-apply chatbot visibility rules (chatbot hides Launch button etc.)
+  if (!running) _cbShowOrHide();
 }
 
 // ── SSE handling ──────────────────────────────────────────────────────────────
@@ -855,7 +858,6 @@ function connectSSE() {
       showBanner('running', 'Run in progress…');
       _setRoleState('role-planner', 'active', 'Planner — generating...');
       showRoleStrip(true);
-      switchRunTab('log');
     })
     .on('complete', d => {
       const ok  = d.status === 'success';
@@ -925,6 +927,11 @@ function connectSSE() {
 
 async function launchRun() {
   const s = collectSettings();
+  if (!s.repo_root) {
+    toast('Please set a project folder first.', 'warning');
+    $('f-repo-root')?.focus();
+    return;
+  }
   if (!s.goal) {
     toast('Please enter a goal / instruction.', 'warning');
     $('nl-input')?.focus();
@@ -935,6 +942,7 @@ async function launchRun() {
   hideBanner();
   resetRoleStrip();
   setRunning(true);
+  switchRunTab('log');
   connectSSE();
 
   try {
@@ -962,8 +970,8 @@ async function launchNLRun() {
   hideBanner();
   resetRoleStrip();
   setRunning(true);
+  switchRunTab('log');
   connectSSE();
-  // Tab switches to Log via SSE 'start' event — no manual switch here
 
   try {
     play('launch');
@@ -1413,7 +1421,23 @@ function _cbReset() {
 function _cbShowOrHide() {
   const sup   = document.querySelector('input[name="supervisor"]:checked')?.value || '';
   const panel = $('chatbot-relay-panel');
-  if (panel) panel.style.display = sup === 'chatbot' ? '' : 'none';
+  const nlPanel = $('nl-panel');
+  const dryRow = document.querySelector('.toggle-row');  // dry run toggle
+  const cmdPreview = $('cmd-preview')?.closest('.field');
+  const advTrigger = $('adv-trigger')?.closest('.accordion');
+  const launchBtn = $('btn-launch-run');
+
+  const isChatbot = sup === 'chatbot';
+
+  // Show/hide chatbot wizard
+  if (panel) panel.style.display = isChatbot ? '' : 'none';
+  // Hide NL panel and other settings when chatbot is active (chatbot wizard replaces them)
+  if (nlPanel) nlPanel.style.display = isChatbot ? 'none' : '';
+  if (dryRow) dryRow.style.display = isChatbot ? 'none' : '';
+  if (cmdPreview) cmdPreview.style.display = isChatbot ? 'none' : '';
+  if (advTrigger) advTrigger.style.display = isChatbot ? 'none' : '';
+  // Hide top Launch button when chatbot is active (chatbot has its own launch)
+  if (launchBtn) launchBtn.style.display = isChatbot ? 'none' : '';
 }
 
 function bindChatbotControls() {
