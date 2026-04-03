@@ -1710,9 +1710,21 @@ def api_run_nl_plan():
     # Smart goal routing: classify and add hint for the supervisor
     goal_category = _classify_goal(goal_text)
     if goal_category == "read":
-        goal_text += "\n\nNOTE: This is a read-only analysis request. Use task type 'read'. Do NOT create/modify any files."
+        goal_text += (
+            "\n\nCRITICAL: This is a READ-ONLY analysis request. "
+            "You MUST use task type 'read' (not 'validate', not 'create', not 'modify'). "
+            "The 'read' type reads the file and returns the answer — Aider is NOT invoked. "
+            "Do NOT create new files. Do NOT modify existing files. "
+            "Target the ACTUAL file that exists in the repo tree below — do NOT guess file names."
+        )
     elif goal_category == "investigate":
-        goal_text += "\n\nNOTE: This requires investigation/analysis. Use task type 'investigate' for analysis tasks. You may follow with 'create' or 'modify' tasks if fixes are needed."
+        goal_text += (
+            "\n\nCRITICAL: This requires investigation/analysis. "
+            "Use task type 'investigate' (not 'validate', not 'create'). "
+            "The 'investigate' type reads files and sends content to the supervisor for analysis — Aider is NOT invoked. "
+            "Target ACTUAL files that exist in the repo tree below. "
+            "You may follow with 'create' or 'modify' tasks if fixes are needed."
+        )
 
     knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
 
