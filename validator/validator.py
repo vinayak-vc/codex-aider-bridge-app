@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 from models.task import Task, ValidationResult
 
 # ── Unity MCP ─────────────────────────────────────────────────────────────────
@@ -529,6 +531,7 @@ class MechanicalValidator:
                 errors="replace",
                 check=False,
                 timeout=_SYNTAX_TIMEOUT_SECONDS,
+                creationflags=_WIN_NO_WINDOW,
             )
         except subprocess.TimeoutExpired:
             return ValidationResult(
@@ -569,6 +572,7 @@ class MechanicalValidator:
             errors="replace",
             check=False,
             timeout=_SYNTAX_TIMEOUT_SECONDS,
+            creationflags=_WIN_NO_WINDOW,
         )
 
         return ValidationResult(
@@ -620,6 +624,7 @@ class MechanicalValidator:
                 errors="replace",
                 check=False,
                 timeout=_SYNTAX_TIMEOUT_SECONDS,
+                creationflags=_WIN_NO_WINDOW,
             )
             if result.returncode != 0:
                 errors.append(f"{js_file.name}: {result.stderr.strip()[:500]}")
@@ -668,6 +673,7 @@ class MechanicalValidator:
                 errors="replace",
                 check=False,
                 timeout=_SYNTAX_TIMEOUT_SECONDS,
+                creationflags=_WIN_NO_WINDOW,
             )
             return ValidationResult(
                 task_id=task_id,
@@ -695,6 +701,7 @@ class MechanicalValidator:
                     errors="replace",
                     check=False,
                     timeout=_SYNTAX_TIMEOUT_SECONDS,
+                    creationflags=_WIN_NO_WINDOW,
                 )
                 if result.returncode != 0:
                     errors.append(f"{ts_file.name}: {result.stderr.strip()[:500]}")
@@ -751,6 +758,7 @@ class MechanicalValidator:
                 shell=False,
                 timeout=_CI_TIMEOUT_SECONDS,
                 check=False,
+                creationflags=_WIN_NO_WINDOW,
             )
         except subprocess.TimeoutExpired:
             return ValidationResult(

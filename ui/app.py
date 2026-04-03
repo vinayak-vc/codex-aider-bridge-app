@@ -15,6 +15,9 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from . import setup_checker, state_store
 from .bridge_runner import get_run
 
+# On Windows, prevent subprocess calls from opening visible CMD windows.
+_WIN_CREATE_FLAGS: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 # When bundled by PyInstaller, Flask cannot locate templates via __file__.
 # Point it explicitly at the extracted bundle path.
 # NOTE: passing template_folder=None disables the loader entirely; use the
@@ -521,6 +524,7 @@ def api_install_aider():
             [sys.executable, "-m", "pip", "install", "--upgrade", "aider-chat"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=_WIN_CREATE_FLAGS,
         )
         for line in proc.stdout:  # type: ignore[union-attr]
             yield f"data: {json.dumps({'line': line.rstrip()})}\n\n"
@@ -542,6 +546,7 @@ def api_ollama_pull():
             ["ollama", "pull", model],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=_WIN_CREATE_FLAGS,
         )
         for line in proc.stdout:  # type: ignore[union-attr]
             yield f"data: {json.dumps({'line': line.rstrip()})}\n\n"
@@ -614,6 +619,7 @@ def _git(repo_root: str, *args: str, timeout: int = 15) -> subprocess.CompletedP
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        creationflags=_WIN_CREATE_FLAGS,
     )
 
 
@@ -1037,6 +1043,7 @@ class SupervisorProxyThread(threading.Thread):
             encoding="utf-8",
             check=False,
             timeout=self._timeout,
+            creationflags=_WIN_CREATE_FLAGS,
         )
 
         response = result.stdout.strip()

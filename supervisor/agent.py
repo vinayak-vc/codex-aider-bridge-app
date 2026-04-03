@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 from models.task import ReviewResult, SubTask, Task, TaskReport
 from utils.command_resolution import resolve_command_arguments
@@ -343,6 +346,7 @@ class SupervisorAgent:
                     encoding="utf-8",
                     check=False,
                     timeout=self._timeout,
+                    creationflags=_WIN_NO_WINDOW,
                 )
             except subprocess.TimeoutExpired as ex:
                 if ex.process:

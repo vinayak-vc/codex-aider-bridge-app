@@ -1251,6 +1251,7 @@ def record_rollback_point(repo_root: Path, logger: logging.Logger) -> Optional[s
             text=True,
             check=False,
             timeout=10,
+            creationflags=_WIN_NO_WINDOW,
         )
         if result.returncode == 0:
             sha = result.stdout.strip()
@@ -1361,6 +1362,9 @@ def estimate_session_tokens(
     return total
 
 
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
 def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git"] + args,
@@ -1371,6 +1375,7 @@ def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedPr
         errors="replace",
         check=False,
         timeout=30,
+        creationflags=_WIN_NO_WINDOW,
     )
 
 

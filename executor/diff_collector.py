@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 from pathlib import Path
 
 _logger = logging.getLogger(__name__)
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class DiffCollector:
@@ -71,6 +73,7 @@ class DiffCollector:
                 encoding="utf-8",
                 check=False,
                 timeout=15,
+                creationflags=_WIN_NO_WINDOW,
             )
             return result.stdout.strip()
         except (OSError, subprocess.TimeoutExpired):
