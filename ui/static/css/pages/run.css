@@ -245,40 +245,6 @@
 .run-status-banner.--failure  { background: var(--color-danger-bg);  border: 1px solid var(--color-danger);  color: var(--color-danger); }
 .run-status-banner.--stopped  { background: var(--color-warning-bg); border: 1px solid var(--color-warning); color: var(--color-warning); }
 
-/* ── Mode toggle ── */
-.run-mode-toggle-row {
-  margin-bottom: 24px;
-  position: relative;
-  z-index: 10;
-}
-.run-mode-toggle {
-  display: flex;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  width: fit-content;
-  margin-bottom: 20px;
-}
-.run-mode-btn {
-  padding: 7px 20px;
-  background: var(--color-surface);
-  border: none;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: background var(--transition), color var(--transition);
-  white-space: nowrap;
-}
-.run-mode-btn.--active {
-  background: var(--color-accent);
-  color: #fff;
-  font-weight: 500;
-}
-.run-mode-btn:hover:not(.--active) {
-  background: var(--color-surface-2);
-  color: var(--color-text);
-}
-
 /* ── NL status row ── */
 .nl-status-row {
   display: flex;

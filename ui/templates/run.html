@@ -30,13 +30,6 @@
   </div>
 </div>
 
-<div class="run-mode-toggle-row">
-  <div class="run-mode-toggle">
-    <button class="run-mode-btn --active" id="btn-mode-structured">Structured</button>
-    <button class="run-mode-btn" id="btn-mode-nl">Natural Language</button>
-  </div>
-</div>
-
 <!-- Run status banner -->
 <div id="run-status-banner" style="display:none;margin-bottom:16px"></div>
 
@@ -110,6 +103,15 @@
           </label>
         </div>
         <div class="supervisor-option">
+          <input type="radio" name="supervisor" id="sup-chatbot" value="chatbot">
+          <label for="sup-chatbot">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 9.75a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375m-13.5 3.01c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.184-4.183a1.14 1.14 0 0 1 .778-.332 48.294 48.294 0 0 0 5.83-.498c1.585-.233 2.708-1.626 2.708-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z"/>
+            </svg>
+            Chatbot
+          </label>
+        </div>
+        <div class="supervisor-option">
           <input type="radio" name="supervisor" id="sup-manual" value="manual">
           <label for="sup-manual">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -137,9 +139,9 @@
     <!-- Aider model API key warning & Model key banner -->
     <div id="model-api-banner" style="display:none;margin-top:-4px;margin-bottom:4px"></div>
 
-    <!-- ── Mode Panels ── -->
+    <!-- ── NL Goal Panel ── -->
 
-    <div id="nl-panel" style="display:none">
+    <div id="nl-panel">
       <div class="nl-status-row" id="nl-status-row" style="display:none">
         <span class="nl-status-chip" id="nl-status-chip">Drafting</span>
         <span class="nl-confidence-badge" id="nl-confidence-badge" style="display:none"></span>
@@ -153,11 +155,11 @@
       </div>
 
       <div class="field">
-        <label class="field-label" for="nl-input">Describe what you want to build</label>
+        <label class="field-label" for="nl-input">Goal / Instruction <span style="color:var(--color-danger)">*</span></label>
         <textarea id="nl-input" class="input" rows="5"
-                  placeholder="Example: I want a login screen with email and password. Keep the current UI style and don't touch multiplayer code."
+                  placeholder="Describe what you want to build or change. Example: Add a login screen with email and password. Keep the current UI style."
                   style="resize:vertical"></textarea>
-        <div class="text-subtle" style="font-size:var(--font-size-xs);margin-top:4px">Ctrl+Enter to generate</div>
+        <div class="text-subtle" style="font-size:var(--font-size-xs);margin-top:4px">Ctrl+Enter to generate brief &nbsp;·&nbsp; or click Launch to run directly</div>
       </div>
 
       <button class="btn btn--primary" id="btn-generate-brief" style="width:100%">
@@ -180,13 +182,7 @@
             </label>
         </div>
         <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn btn--primary" id="btn-apply-brief" style="flex:1">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
-            </svg>
-            Apply to Run
-          </button>
-          <button class="btn btn--secondary" id="btn-regenerate-brief">Regenerate Brief</button>
+          <button class="btn btn--secondary" id="btn-regenerate-brief" style="width:100%">Regenerate Brief</button>
         </div>
         <div class="nl-plan-divider"><span>Plan</span></div>
         <button class="btn btn--secondary" id="btn-generate-plan" style="width:100%">
@@ -215,21 +211,8 @@
               </svg>
             Launch This Run
             </button>
-            <button class="btn btn--secondary" id="btn-transfer-to-relay" style="width:100%;margin-top:8px">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M8.288 15.038a5.25 5.25 0 0 1 7.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 0 1 1.06 0Z"/>
-              </svg>
-              Start Supervised Run (AI Relay)
-            </button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <div id="structured-panel">
-      <div class="field">
-        <label class="field-label" for="f-goal">Instruction / Goal <span style="color:var(--color-danger)">*</span></label>
-        <textarea id="f-goal" class="input" rows="4" placeholder="Describe what you want the bridge to do…" style="resize:vertical"></textarea>
       </div>
     </div>
 

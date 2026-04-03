@@ -12,6 +12,7 @@ const SUPERVISOR_CMDS = {
   claude:   'claude',
   cursor:   'cursor',
   windsurf: 'windsurf',
+  chatbot:  null,   // inline relay wizard — handled by UI in Milestone B
   manual:   null,   // sets manual_supervisor: true
   custom:   '',     // freeform
 };
@@ -43,6 +44,13 @@ const SUPERVISOR_COMPAT = {
     message:
       'Windsurf runs as an IDE and uses your <strong>Windsurf subscription</strong>. ' +
       'Windsurf IDE must be installed and licensed on this machine.',
+  },
+  chatbot: {
+    level: 'info',
+    message:
+      '<strong>No API key required.</strong> ' +
+      'At each review point, the UI shows a prompt to copy into any chatbot (ChatGPT, Claude, Gemini…). ' +
+      'Paste the response back and the run continues.',
   },
   manual: {
     level: 'success',
@@ -140,7 +148,6 @@ const $ = id => document.getElementById(id);
 
 // ── Natural Language Mode ─────────────────────────────────────────────────────
 
-let _nlMode = false;
 let _currentBrief = null;
 let _nlTasks = [];
 let _nlSummary = '';
@@ -264,27 +271,6 @@ async function _restoreNLState() {
   } catch (_) {}
 }
 
-function setMode(mode) {
-  try {
-    _nlMode = mode === 'nl';
-    const nlPanel = $('nl-panel');
-    const structPanel = $('structured-panel');
-    const btnNl = $('btn-mode-nl');
-    const btnStruct = $('btn-mode-structured');
-
-    if (nlPanel) nlPanel.style.display = _nlMode ? '' : 'none';
-    if (structPanel) structPanel.style.display = _nlMode ? 'none' : '';
-    if (btnNl) btnNl.classList.toggle('--active', _nlMode);
-    if (btnStruct) btnStruct.classList.toggle('--active', !_nlMode);
-
-    // hide the shortcut hint in NL mode (Ctrl+Enter has different meaning there)
-    const hint = $('run-shortcut-hint');
-    if (hint) hint.style.display = _nlMode ? 'none' : '';
-  } catch (err) {
-    console.error('setMode failed:', err);
-  }
-}
-
 function _renderBriefSection(label, items) {
   if (!items?.length) return '';
   return `<div class="nl-brief-section">
@@ -364,10 +350,7 @@ function validateSafety() {
 
   const canProceed = isConfident && isClarified && riskVerified;
 
-  const btnApply = $('btn-apply-brief');
   const btnPlan = $('btn-generate-plan');
-
-  if (btnApply) btnApply.disabled = !canProceed;
   if (btnPlan) btnPlan.disabled = !canProceed;
 
   // Show/hide safety wrap if risky or low confidence
@@ -422,22 +405,22 @@ async function generateBrief() {
 
 async function applyBrief() {
   if (!_currentBrief) return;
-  setMode('structured');
 
-  const goalEl = $('f-goal');
-  const clarEl = $('f-clarifications');
-  if (goalEl) goalEl.value = _currentBrief.goal || '';
+  // Update the goal textarea with the refined goal from the brief
+  const nlInput = $('nl-input');
+  if (nlInput && _currentBrief.goal) {
+    nlInput.value = _currentBrief.goal;
+  }
 
   // Fold constraints + acceptance criteria into the clarifications field
+  const clarEl = $('f-clarifications');
   const extras = [
     ...(_currentBrief.constraints || []).map(c => `Constraint: ${c}`),
     ...(_currentBrief.acceptance_criteria || []).map(a => `Acceptance: ${a}`),
   ];
-  if (extras.length) {
-    const existing = clarEl?.value.trim() || '';
-    if (clarEl) {
-      clarEl.value = existing ? `${existing}\n${extras.join('\n')}` : extras.join('\n');
-    }
+  if (extras.length && clarEl) {
+    const existing = clarEl.value.trim() || '';
+    clarEl.value = existing ? `${existing}\n${extras.join('\n')}` : extras.join('\n');
     // Auto-open advanced accordion
     const trigger = $('adv-trigger');
     const body    = $('adv-body');
@@ -447,22 +430,9 @@ async function applyBrief() {
     }
   }
 
-  // Visual Handoff Animation: Pulse target fields
-  [goalEl, clarEl].forEach(el => {
-    if (!el) return;
-    const fieldWrap = el.closest('.field');
-    if (fieldWrap) {
-      fieldWrap.classList.remove('field--highlight');
-      void fieldWrap.offsetWidth; // Force reflow
-      fieldWrap.classList.add('field--highlight');
-      setTimeout(() => fieldWrap.classList.remove('field--highlight'), 2000);
-    }
-  });
-
   updateCommandPreview();
   await _saveNLState('ready_to_run');
-  goalEl?.focus();
-  toast('Brief applied — review the fields and launch when ready.', 'success');
+  toast('Goal updated from brief — generate a plan or launch directly.', 'success');
 }
 
 // ── Plan generation ───────────────────────────────────────────────────────────
@@ -591,57 +561,11 @@ async function confirmPlan() {
   }
 }
 
-async function transferToRelay() {
-  if (!_currentBrief || !_nlProjectKey) return;
-  
-  const btn = $('btn-transfer-to-relay');
-  if (btn) { btn.disabled = true; btn.textContent = 'Transferring...'; }
-
-  try {
-    // 1. Get the current plan state
-    const stateRes = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
-    const state    = await stateRes.json();
-    
-    if (!state.tasks?.length) {
-      toast('No tasks found to transfer. Confirm the plan first.', 'warning');
-      return;
-    }
-
-    // 2. Push to Relay API
-    const res = await fetch('/api/relay/import-from-nl', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        repo_root:    _nlProjectKey,
-        tasks:        state.tasks,
-        brief:        _currentBrief,
-        plan_summary: state.plan_summary || '',
-      }),
-    });
-
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Transfer failed.');
-    }
-
-    toast('Plan transferred to AI Relay. Redirecting...', 'success');
-    
-    // 3. Redirect to Relay page
-    setTimeout(() => {
-      window.location.href = '/relay';
-    }, 1000);
-
-  } catch (err) {
-    toast(err.message || 'Failed to transfer to Relay.', 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Start Supervised Run (AI Relay)'; }
-  }
-}
-
 // ── Settings → form ──────────────────────────────────────────────────────────
 
 function populateForm(s) {
-  $('f-goal').value              = s.goal              || '';
+  const nlInput = $('nl-input');
+  if (nlInput && s.goal) nlInput.value = s.goal;
   $('f-repo-root').value         = s.repo_root         || '';
   $('f-aider-model').value       = s.aider_model       || 'ollama/mistral';
   $('f-dry-run').checked         = !!s.dry_run;
@@ -683,7 +607,7 @@ function collectSettings() {
     : [];
 
   const settings = {
-    goal:               $('f-goal').value.trim(),
+    goal:               ($('nl-input')?.value || '').trim(),
     repo_root:          $('f-repo-root').value.trim(),
     aider_model:        $('f-aider-model').value.trim(),
     supervisor:         sup,
@@ -882,7 +806,7 @@ async function launchRun() {
   const s = collectSettings();
   if (!s.goal) {
     toast('Please enter a goal / instruction.', 'warning');
-    $('f-goal')?.focus();
+    $('nl-input')?.focus();
     return;
   }
 
@@ -940,13 +864,8 @@ async function launchNLRun() {
 // ── Bind controls ─────────────────────────────────────────────────────────────
 
 function bindControls() {
-  // Mode toggle
-  $('btn-mode-structured')?.addEventListener('click', () => setMode('structured'));
-  $('btn-mode-nl')?.addEventListener('click',         () => setMode('nl'));
-
   // NL brief controls
   $('btn-generate-brief')?.addEventListener('click', generateBrief);
-  $('btn-apply-brief')?.addEventListener('click', applyBrief);
 
   // Regenerate brief — clear brief + plan, keep textarea message
   $('btn-regenerate-brief')?.addEventListener('click', () => {
@@ -1019,9 +938,11 @@ function bindControls() {
     }
   });
 
-  // Ctrl+Enter to launch (structured mode only; NL mode has its own handler on the textarea)
+  // Ctrl+Enter from anywhere outside the goal textarea launches the run
+  // (the goal textarea itself uses Ctrl+Enter for generateBrief)
   document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning && !_nlMode) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning
+        && document.activeElement?.id !== 'nl-input') {
       e.preventDefault();
       launchRun();
     }
@@ -1080,7 +1001,7 @@ function bindControls() {
   $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
 
   // All form inputs → live preview update
-  ['f-goal','f-repo-root','f-aider-model','f-dry-run','f-validation-cmd',
+  ['nl-input','f-repo-root','f-aider-model','f-dry-run','f-validation-cmd',
    'f-max-retries','f-max-plan-attempts','f-task-timeout',
    'f-idea-file','f-plan-output-file','f-clarifications']
     .forEach(id => {
@@ -1114,8 +1035,6 @@ function bindControls() {
     if (e.key === 'Enter') { e.preventDefault(); sendStdin(); }
   });
   btnSend?.addEventListener('click', sendStdin);
-
-  $('btn-transfer-to-relay')?.addEventListener('click', transferToRelay);
 
   // Advanced accordion
   const trigger = $('adv-trigger');
