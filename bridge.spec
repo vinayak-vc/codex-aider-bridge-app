@@ -92,6 +92,7 @@ a = Analysis(
         "utils.manual_supervisor",
         "utils.project_type_prompt",
         "utils.checkpoint",
+        "utils.telemetry",
         "context.project_understanding",
         "bridge_logging",
         "bridge_logging.logger",

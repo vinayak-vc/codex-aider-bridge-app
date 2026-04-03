@@ -15,6 +15,15 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from . import setup_checker, state_store
 from .bridge_runner import get_run
 
+# Telemetry — local-only usage analytics
+try:
+    _root_path = Path(__file__).parent.parent
+    if str(_root_path) not in sys.path:
+        sys.path.insert(0, str(_root_path))
+    from utils.telemetry import get_collector as _get_telemetry
+except ImportError:
+    _get_telemetry = None
+
 # On Windows, prevent subprocess calls from opening visible CMD windows.
 _WIN_CREATE_FLAGS: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
@@ -464,6 +473,17 @@ def _broadcast(event_type: str, data: dict) -> None:
 def index():
     from flask import redirect
     return redirect("/dashboard")
+
+
+# ── Telemetry: page view tracking ─────────────────────────────────────────────
+
+_TRACKED_PAGES = {"/dashboard", "/run", "/knowledge", "/history", "/tokens", "/git", "/setup"}
+
+@app.after_request
+def _track_page_view(response):
+    if _get_telemetry and request.path in _TRACKED_PAGES and response.status_code == 200:
+        _get_telemetry().page_viewed(request.path)
+    return response
 
 
 # ── Page routes ────────────────────────────────────────────────────────────────
@@ -1150,6 +1170,16 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
     if repo_root:
         state_store.add_project(repo_root)
 
+    # Telemetry: record run start
+    if _get_telemetry:
+        t = _get_telemetry()
+        t.run_started(
+            supervisor=settings.get("supervisor", "?"),
+            model=settings.get("aider_model", "?"),
+            goal_len=len(settings.get("goal", "")),
+            task_count=0,
+        )
+
     history_payload = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "goal": settings.get("goal", ""),
@@ -1188,6 +1218,22 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
                 "tasks_detail": list(run.tasks.values()),
             })
             run.remove_listener(on_event)
+            # Telemetry: record run outcome
+            if _get_telemetry:
+                t = _get_telemetry()
+                if event_type == "complete" and data.get("status") == "success":
+                    t.run_completed(run.completed_tasks, run.total_tasks, data.get("elapsed", 0), 0)
+                elif event_type in ("error", "stopped"):
+                    t.run_failed(str(data.get("message", data.get("status", "?"))), elapsed=data.get("elapsed", 0))
+                else:
+                    t.run_failed("failure", elapsed=data.get("elapsed", 0))
+                # Auto-save telemetry
+                try:
+                    rr = settings.get("repo_root", "").strip()
+                    if rr:
+                        t.save(Path(rr))
+                except Exception:
+                    pass
             # Stop the supervisor proxy thread
             with _proxy_lock:
                 proxy = _active_proxy_threads.pop(run_id, None)
@@ -1490,6 +1536,30 @@ def api_run_progress():
         "plan_file": plan_file,
         "can_resume": can_resume,
     })
+
+
+@app.route("/api/telemetry", methods=["GET"])
+def api_telemetry():
+    """Export telemetry data for AI analysis."""
+    if not _get_telemetry:
+        return jsonify({"error": "Telemetry not available"}), 500
+    t = _get_telemetry()
+    return jsonify(t.build_report())
+
+
+@app.route("/api/telemetry/save", methods=["POST"])
+def api_telemetry_save():
+    """Save telemetry to disk."""
+    if not _get_telemetry:
+        return jsonify({"error": "Telemetry not available"}), 500
+    t = _get_telemetry()
+    data = request.json or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if repo_root:
+        path = t.save(Path(repo_root))
+    else:
+        path = t.save()
+    return jsonify({"ok": True, "path": str(path)})
 
 
 @app.route("/api/run/import-plan", methods=["POST"])
