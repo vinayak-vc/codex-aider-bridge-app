@@ -356,7 +356,7 @@ class BridgeRun:
             return
 
         # ── Plan ready ────────────────────────────────────────────────────
-        m = re.search(r"Supervisor produced (\d+) task", msg)
+        m = re.search(r"(?:Supervisor produced|Loaded) (\d+) task", msg)
         if m:
             self.total_tasks = int(m.group(1))
             self._emit("plan_ready", {"task_count": self.total_tasks})
