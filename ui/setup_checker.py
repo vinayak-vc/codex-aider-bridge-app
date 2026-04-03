@@ -211,6 +211,94 @@ def check_gpu() -> dict:
     }
 
 
+def check_gpu_processes() -> list[dict]:
+    """List all processes using the GPU with PID, name, and memory."""
+    _flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    processes = []
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,name,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5, creationflags=_flags,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 2:
+                    pid = int(parts[0]) if parts[0].isdigit() else 0
+                    name = parts[1]
+                    mem = int(parts[2]) if len(parts) > 2 and parts[2].strip().isdigit() else 0
+                    short = name.split("\\")[-1].split("/")[-1]
+                    processes.append({"pid": pid, "name": short, "path": name, "memory_mb": mem})
+    except Exception:
+        pass
+
+    # Also get graphics processes (C+G type)
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=gpu_name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5, creationflags=_flags,
+        )
+        # Use pmon for more complete process list
+        result2 = subprocess.run(
+            ["nvidia-smi", "pmon", "-c", "1", "-s", "m"],
+            capture_output=True, text=True, timeout=5, creationflags=_flags,
+        )
+        if result2.returncode == 0:
+            seen_pids = {p["pid"] for p in processes}
+            for line in result2.stdout.strip().splitlines():
+                if line.startswith("#") or line.startswith("="):
+                    continue
+                parts = line.split()
+                if len(parts) >= 4:
+                    try:
+                        pid = int(parts[1])
+                    except ValueError:
+                        continue
+                    if pid in seen_pids or pid == 0:
+                        continue
+                    mem = 0
+                    try:
+                        mem = int(parts[3]) if parts[3] != "-" else 0
+                    except (ValueError, IndexError):
+                        pass
+                    # Get process name from pid
+                    pname = _get_process_name(pid, _flags)
+                    if pname:
+                        processes.append({"pid": pid, "name": pname, "path": "", "memory_mb": mem})
+                        seen_pids.add(pid)
+    except Exception:
+        pass
+
+    # Sort by memory usage descending
+    processes.sort(key=lambda p: p.get("memory_mb", 0), reverse=True)
+    return processes
+
+
+def _get_process_name(pid: int, flags: int) -> str:
+    """Get process name from PID."""
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=3, creationflags=flags,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                parts = result.stdout.strip().split(",")
+                if parts:
+                    return parts[0].strip('"')
+        else:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "comm="],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+    except Exception:
+        pass
+    return f"PID {pid}"
+
+
 def check_codex() -> dict:
     path = shutil.which("codex") or shutil.which("codex.cmd")
     return {

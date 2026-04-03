@@ -1572,6 +1572,62 @@ def api_telemetry_save():
     return jsonify({"ok": True, "path": str(path)})
 
 
+@app.route("/api/system/gpu-processes")
+def api_gpu_processes():
+    """List all processes using the GPU."""
+    from . import setup_checker
+    try:
+        procs = setup_checker.check_gpu_processes()
+        gpu = setup_checker.check_gpu()
+        return jsonify({
+            "processes": procs,
+            "gpu": gpu,
+            "total_gpu_mem_mb": sum(p.get("memory_mb", 0) for p in procs),
+        })
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/system/kill-process", methods=["POST"])
+def api_kill_process():
+    """Kill a process by PID."""
+    data = request.json or {}
+    pid = data.get("pid", 0)
+    if not pid:
+        return jsonify({"error": "pid is required"}), 400
+
+    # Safety: never kill critical system processes
+    protected = {"explorer.exe", "System", "csrss.exe", "winlogon.exe",
+                 "svchost.exe", "lsass.exe", "smss.exe", "services.exe"}
+
+    try:
+        import os
+        import signal
+        # Get process name first to check protection
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=3,
+                creationflags=_WIN_CREATE_FLAGS,
+            )
+            pname = ""
+            if result.stdout.strip():
+                pname = result.stdout.strip().split(",")[0].strip('"')
+            if pname.lower() in {p.lower() for p in protected}:
+                return jsonify({"error": f"Cannot kill system process: {pname}"}), 403
+
+            # Kill it
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, timeout=5,
+                           creationflags=_WIN_CREATE_FLAGS)
+        else:
+            os.kill(int(pid), signal.SIGTERM)
+
+        return jsonify({"ok": True, "pid": pid})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/system/recommend-model")
 def api_recommend_model():
     """Detect system specs and recommend the best Ollama coding model."""
