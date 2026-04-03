@@ -507,7 +507,11 @@
           </svg>
           Settings
         </button>
-        <span class="section-title">Live log</span>
+        <!-- Log view toggle -->
+        <div class="log-view-toggle">
+          <button class="btn btn--secondary btn--sm log-view-btn --active" id="btn-log-parsed" title="Parsed view">Parsed</button>
+          <button class="btn btn--secondary btn--sm log-view-btn" id="btn-log-raw" title="Raw view">Raw</button>
+        </div>
         <span class="badge badge--muted" id="log-line-count">0 lines</span>
         <span id="log-run-badge" style="display:none"></span>
       </div>
@@ -524,7 +528,18 @@
       </div>
     </div>
 
-    <div class="log-terminal" id="log-terminal">
+    <!-- Parsed log view (default) -->
+    <div class="log-parsed" id="log-parsed">
+      <div class="log-empty" id="log-parsed-empty">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" width="32" height="32">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/>
+        </svg>
+        <span>Log will appear here when a run starts.</span>
+      </div>
+    </div>
+
+    <!-- Raw log view (hidden by default) -->
+    <div class="log-terminal" id="log-terminal" style="display:none">
       <div class="log-empty" id="log-empty">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" width="32" height="32">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/>

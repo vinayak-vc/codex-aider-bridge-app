@@ -914,6 +914,104 @@ function escHtml(s) {
 
 let _lineCount = 0;
 let _autoScroll = true;
+let _logView = 'parsed'; // 'parsed' | 'raw'
+
+function _switchLogView(view) {
+  _logView = view;
+  const parsed = $('log-parsed');
+  const raw = $('log-terminal');
+  $('btn-log-parsed')?.classList.toggle('--active', view === 'parsed');
+  $('btn-log-raw')?.classList.toggle('--active', view === 'raw');
+  if (parsed) parsed.style.display = view === 'parsed' ? '' : 'none';
+  if (raw) raw.style.display = view === 'raw' ? '' : 'none';
+}
+
+function _parseLine(rawLine) {
+  // Extract timestamp
+  const tsMatch = rawLine.match(/(\d{2}:\d{2}:\d{2})/);
+  const time = tsMatch ? tsMatch[1] : '';
+
+  // Classify the line
+  const line = rawLine;
+  const trimmed = line.trim();
+
+  // Skip raw JSON bridge events in parsed view
+  if (trimmed.startsWith('{"_bridge_event"')) return null;
+
+  // Task start
+  let m = line.match(/Task\s+(\d+)\s*[—-]\s*attempt\s+(\d+)\/(\d+)\s*[—-]\s*files:\s*(.+)/);
+  if (m) return { time, type: 'task', cls: '--task', label: `Task ${m[1]}`, text: `Attempt ${m[2]}/${m[3]} — files: ${m[4]}`,
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-accent)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>' };
+
+  // Supervisor approved
+  if (/supervisor approved/.test(line)) {
+    m = line.match(/Task\s+(\d+)/);
+    return { time, type: 'success', cls: '--success', label: m ? `Task ${m[1]}` : 'Task', text: 'Supervisor approved',
+      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-success)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>' };
+  }
+
+  // Rework
+  m = line.match(/supervisor requested rework[^:]*:\s*(.+)/);
+  if (m) return { time, type: 'warning', cls: '--warning', label: 'Rework', text: m[1],
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-warning)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>' };
+
+  // Error
+  if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line)) {
+    const msg = line.replace(/.*\|\s*(ERROR|CRITICAL)\s*\|\s*\w+\s*\|\s*/, '');
+    return { time, type: 'error', cls: '--error', label: 'Error', text: msg,
+      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-danger)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>' };
+  }
+
+  // Warning
+  if (/\|\s*WARNING\s*\|/.test(line)) {
+    const msg = line.replace(/.*\|\s*WARNING\s*\|\s*\w+\s*\|\s*/, '');
+    return { time, type: 'warning', cls: '--warning', label: 'Warning', text: msg,
+      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-warning)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>' };
+  }
+
+  // Bridge/plan events
+  if (/Bridge start|Plan ready|Pre-flight|Loaded.*task/.test(line)) {
+    const msg = line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, '');
+    return { time, type: 'info', cls: '--info', label: 'Bridge', text: msg,
+      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-info)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>' };
+  }
+
+  // Proxy events
+  if (/\[proxy\]/.test(line)) {
+    const msg = line.replace(/.*\[proxy\]\s*/, '');
+    return { time, type: 'info', cls: '--info', label: 'Proxy', text: msg,
+      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-info)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>' };
+  }
+
+  // Skip noise lines (git readiness, gitignore, etc.)
+  if (/Git readiness|Added.*bridge entries|gitignore|Rollback point|undo all changes/.test(line)) return null;
+
+  // Generic INFO
+  if (/\|\s*INFO\s*\|/.test(line)) {
+    const msg = line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, '');
+    return { time, type: 'info', cls: '--info', label: '', text: msg, icon: '' };
+  }
+
+  return null; // Skip unparseable lines in parsed view
+}
+
+function _appendParsedEvent(parsed) {
+  const container = $('log-parsed');
+  if (!container) return;
+  const emptyEl = $('log-parsed-empty');
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  const div = document.createElement('div');
+  div.className = `parsed-event ${parsed.cls}`;
+  div.innerHTML = `
+    <span class="parsed-time">${_esc(parsed.time)}</span>
+    <span class="parsed-icon">${parsed.icon}</span>
+    <span class="parsed-content">${parsed.label ? `<span class="parsed-label">${_esc(parsed.label)}</span>` : ''}${_esc(parsed.text)}</span>
+  `;
+  container.appendChild(div);
+
+  if (_autoScroll) container.scrollTop = container.scrollHeight;
+}
 
 function appendLog(rawLine) {
   const terminal = $('log-terminal');
@@ -927,7 +1025,7 @@ function appendLog(rawLine) {
   const countEl = $('log-line-count');
   if (countEl) countEl.textContent = `${_lineCount} line${_lineCount !== 1 ? 's' : ''}`;
 
-  // Colour-code common log prefixes
+  // Raw view — colour-coded
   const line = rawLine;
   let cls = '';
   if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line))  cls = 'log-error';
@@ -941,7 +1039,12 @@ function appendLog(rawLine) {
   span.textContent = line + '\n';
   terminal.appendChild(span);
 
-  if (_autoScroll) terminal.scrollTop = terminal.scrollHeight;
+  if (_logView === 'raw' && _autoScroll) terminal.scrollTop = terminal.scrollHeight;
+
+  // Parsed view — structured cards
+  const parsed = _parseLine(rawLine);
+  if (parsed) _appendParsedEvent(parsed);
+
   _incrementLogBadge();
 }
 
@@ -952,13 +1055,19 @@ function clearLog() {
   const countEl = $('log-line-count');
   if (countEl) countEl.textContent = '0 lines';
 
-  // Keep the empty-state element, remove log spans
+  // Clear raw terminal
   const spans = terminal.querySelectorAll('span.log-error, span.log-warn, span.log-ok, span.log-info, span.log-event, span:not(#log-empty span)');
   spans.forEach(s => s.remove());
-
-  // Re-show empty state
   const empty = $('log-empty');
   if (empty) empty.style.display = '';
+
+  // Clear parsed log
+  const parsed = $('log-parsed');
+  if (parsed) {
+    parsed.querySelectorAll('.parsed-event').forEach(e => e.remove());
+    const pe = $('log-parsed-empty');
+    if (pe) pe.style.display = '';
+  }
 }
 
 // ── Run status banner ─────────────────────────────────────────────────────────
@@ -1831,6 +1940,10 @@ function bindControls() {
 
   // Back to Settings button in log toolbar
   $('btn-back-to-settings')?.addEventListener('click', () => switchRunTab('settings'));
+
+  // Log view toggle (parsed/raw)
+  $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
+  $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
 
   // Task progress panel
   $('btn-refresh-progress')?.addEventListener('click', loadProgress);

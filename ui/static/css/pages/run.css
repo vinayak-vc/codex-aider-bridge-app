@@ -403,6 +403,74 @@
 
 .log-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
+/* Log view toggle */
+.log-view-toggle {
+  display: flex;
+  gap: 2px;
+}
+.log-view-btn {
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+}
+.log-view-btn.--active {
+  background: var(--color-surface-2);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ── Parsed log view ── */
+.log-parsed {
+  flex: 1;
+  min-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.parsed-event {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
+  font-size: var(--font-size-xs);
+  align-items: flex-start;
+}
+.parsed-event.--success { border-left: 3px solid var(--color-success); }
+.parsed-event.--error   { border-left: 3px solid var(--color-danger); }
+.parsed-event.--warning { border-left: 3px solid var(--color-warning); }
+.parsed-event.--info    { border-left: 3px solid var(--color-info); }
+.parsed-event.--task    { border-left: 3px solid var(--color-accent); }
+
+.parsed-time {
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  flex-shrink: 0;
+  min-width: 60px;
+}
+.parsed-icon {
+  flex-shrink: 0;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.parsed-content {
+  flex: 1;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.parsed-label {
+  font-weight: 600;
+  color: var(--color-text);
+  margin-right: 6px;
+}
+
 .log-terminal {
   background: #020408;
   border: 1px solid var(--color-border);
