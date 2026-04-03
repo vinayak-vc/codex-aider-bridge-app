@@ -957,14 +957,37 @@ def execute_task_with_review(
             _emit_structured({"type": "task_complete", "task_id": current_task.id, "diff": analysis_result[:1500]})
             return analysis_result
 
+        # ── Pre-check: validate target files exist for non-create tasks ─────
+        if current_task.type not in ("create",):
+            missing = [f for f in current_task.files if not (config.repo_root / f).exists()]
+            if missing and len(missing) == len(current_task.files):
+                # ALL target files are missing — this task will definitely fail
+                raise RuntimeError(
+                    f"Task {current_task.id} ({current_task.type}): none of the target files exist: "
+                    f"{', '.join(missing)}. Check the file paths in your plan — "
+                    f"the file may have a different name or location."
+                )
+            elif missing:
+                logger.warning(
+                    "Task %s (%s): some target files do not exist: %s",
+                    current_task.id, current_task.type, ", ".join(missing),
+                )
+
         # ── Step 1: Execute via Aider ────────────────────────────────────────
         if diagnostics:
             diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
         execution_result = runner.run(current_task, selected_files.all_paths, aider_context)
 
         if execution_result.exit_code == -1:
+            stderr = execution_result.stderr
+            if "timed out" in stderr.lower():
+                raise RuntimeError(
+                    f"Task {current_task.id}: Aider timed out after {config.task_timeout_seconds}s. "
+                    "The local LLM may be too slow for this task, or the task targets files that don't exist. "
+                    "Try: increase --task-timeout, use a faster model, or check the file paths in the plan."
+                )
             raise RuntimeError(
-                f"Task {current_task.id}: Aider could not start. {execution_result.stderr}"
+                f"Task {current_task.id}: Aider could not start. {stderr}"
             )
 
         if not execution_result.succeeded:

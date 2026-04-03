@@ -174,7 +174,7 @@ FILE REGISTRY (what each file does):
   ui/static/css/pages/dashboard.css
     -> .dashboard-stats {
   ui/static/css/pages/git.css
-    -> .git-top-row {
+    -> .git-page {
   ui/static/css/pages/history.css
     -> .history-toolbar {
   ui/static/js/core/api.js

@@ -9,482 +9,482 @@
     "last_updated": "2026-04-03",
     "understanding_confirmed": false,
     "scanned": true,
-    "last_refreshed": "2026-04-03T23:37:23"
+    "last_refreshed": "2026-04-04T01:10:33"
   },
   "files": {
     "AGENT_CONTEXT.md": {
       "role": "The bridge is a local CLI orchestrator with a strict two-role separation:",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "AGENTIC_AI_ONBOARDING.md": {
       "role": "> Read this document fully before doing anything.",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "AI Relay Supervisor.md": {
       "role": "A new supervisor mode called **\"AI Relay\"** where you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini, Grok \u2014 anything) as the brain via copy-paste, with no API key. The bridge formats every",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "AI_RELAY_PLAN.md": {
       "role": "> **Status:** PENDING \u2014 ready to implement",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "AI_RELAY_SPEC.md": {
       "role": "> **Status:** PLANNED \u2014 implement after Chat feature is complete",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "AI_SUPERVISOR_PROMPT.md": {
       "role": "This document explains how an agentic AI should behave when supervising Aider through this bridge.",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "build.bat": {
       "role": "@echo off",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "CHANGELOG.md": {
       "role": "- **Universal Pipeline**: all supervisor types now use `--manual-supervisor` under the hood; the UI backend dispatches review decisions via a `SupervisorProxyThread`",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "example plan.json": {
       "role": "{",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "features.md": {
       "role": "This document lists the currently implemented features of `codex-aider-bridge-app` based on the code in this repository.",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "HOW_TO.md": {
       "role": "This bridge is designed for a three-part workflow:",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "HOW_TO_TALK_TO_SUPERVISOR.md": {
       "role": "This document tells you exactly how to communicate with the Agentic AI (Supervisor)",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "launch_ui.bat": {
       "role": "@echo off",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "launch_ui.py": {
       "role": "launch_ui",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "main.py": {
       "role": "exposes build_argument_parser, load_plan_from_file, auto_split_tasks, obtain_plan, show_plan_preview",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "MISSING_FEATURES_AND_IMPROVEMENTS.md": {
       "role": "> Audit Date: 2026-03-25 | Branch: chatbot_llm | Done by: \ud83d\udd35 Claude (Technical Supervisor)",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "README.md": {
       "role": "`codex-aider-bridge-app` is a local orchestrator that separates **planning and review** from **code execution**.",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "requirements.txt": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "requirements_ui.txt": {
       "role": "flask>=3.0",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "TASK_PLAN.json": {
       "role": "{",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "TASK_PLAN_2.json": {
       "role": "{",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "Universal Pipeline.md": {
       "role": "The bridge has two roles, played by the same entity (the supervisor):",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "WHY_THIS_REPO.md": {
       "role": "> Written by: \ud83d\udd35 Claude (Technical Supervisor) | 2026-03-25",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "WORK_LOG.md": {
       "role": "> Branch: `chatbot_llm`",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "bridge_logging/__init__.py": {
       "role": "Logging helpers for the bridge app",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "bridge_logging/logger.py": {
       "role": "exposes configure_logging",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "context/__init__.py": {
       "role": "Context package",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "context/file_selector.py": {
       "role": "defines FileSelector; exposes select",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "context/idea_loader.py": {
       "role": "defines IdeaLoader; exposes load",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "context/project_understanding.py": {
       "role": "defines ProjectDoc; exposes ensure_project_understanding, understanding_file_path",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "context/repo_scanner.py": {
       "role": "defines RepoScanner; exposes scan",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "executor/__init__.py": {
       "role": "Executor package",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "executor/aider_runner.py": {
       "role": "defines AiderRunner; exposes run",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "executor/diff_collector.py": {
       "role": "defines DiffCollector; exposes collect",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "models/__init__.py": {
       "role": "Typed models used across the bridge app",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "models/task.py": {
       "role": "defines Task, AiderContext, SubTask, SelectedFiles; exposes id",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "parser/__init__.py": {
       "role": "Parser package",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "parser/task_parser.py": {
       "role": "defines PlanParseError, TaskParser; exposes parse",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "planner/__init__.py": {
       "role": "Planner package",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "planner/codex_client.py": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "planner/fallback_planner.py": {
       "role": "defines FallbackPlanner; exposes build_plan",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "supervisor/__init__.py": {
       "role": "Supervisor package \u2014 Tech Supervisor agent for planning and review",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "supervisor/agent.py": {
       "role": "defines SupervisorError, SupervisorAgent; exposes generate_plan, generate_subplan, review_task",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "tests/test_bridge_resilience.py": {
       "role": "defines BridgeResilienceTests; exposes test_safe_stdout_write_swallows_os_error, test_find_unexpected_files_ignores_python_runtime_artifacts, test_manual_supervisor_resumes_completed_task_when_files_m",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/__init__.py": {
       "role": "Bridge UI package \u2014 Flask web interface for the Codex Aider Bridge App",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/app.py": {
       "role": "defines _ChatRuntime, SupervisorProxyThread; exposes index, page_dashboard, page_run, page_git, page_knowledge",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/bridge_runner.py": {
       "role": "defines BridgeRun; exposes get_run, add_listener, remove_listener, build_command, start",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/setup_checker.py": {
       "role": "exposes check_all, check_python, check_aider, check_ollama, check_codex",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/state_store.py": {
       "role": "exposes load_settings, save_settings, load_history, add_history_entry, update_history_entry",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/__init__.py": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/checkpoint.py": {
       "role": "Lightweight checkpoint: persist completed task IDs so a failed run can resume",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/command_resolution.py": {
       "role": "exposes split_command, resolve_command_arguments, resolve_executable, iter_local_script_directories, build_missing_executable_message",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/manual_supervisor.py": {
       "role": "defines ManualSupervisorError, ManualSupervisorSession; exposes submit_review_request, consume_existing_decision, record_completed_review, try_resume_completed_task, wait_for_decision",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/onboarding_scanner.py": {
       "role": "Onboarding scanner \u2014 one-time source analysis for existing projects",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/project_knowledge.py": {
       "role": "Project knowledge cache \u2014 stores what every file does so any AI can\nunderstand the project architecture by reading one JSON file",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/project_type_prompt.py": {
       "role": "Interactive project-type selection prompt shown at first bridge run",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/relay_formatter.py": {
       "role": "relay_formatter",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/report_generator.py": {
       "role": "Generate a Markdown run report from a session token report",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/run_diagnostics.py": {
       "role": "Run Diagnostics \u2014 structured failure analysis for AI supervisors",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "utils/token_tracker.py": {
       "role": "Token usage tracker for the bridge",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "validator/__init__.py": {
       "role": "Validator package",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "validator/validator.py": {
       "role": "defines _ProjectType, MechanicalValidator; exposes is_unity_project, validate",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/data/history.json": {
       "role": "[",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/data/projects.json": {
       "role": "[",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/data/settings.json": {
       "role": "{",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/base.html": {
       "role": "<!DOCTYPE html>",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/chat.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/dashboard.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/history.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/index.html": {
       "role": "<!DOCTYPE html>",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/knowledge.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/run.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/setup.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/templates/tokens.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/base.css": {
       "role": "html {",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/chat-drawer.css": {
       "role": ".chat-drawer-toggle {",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/components.css": {
       "role": ".btn {",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/pages/chat.css": {
       "role": ".chat-shell {",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/pages/dashboard.css": {
       "role": ".dashboard-stats {",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/pages/history.css": {
       "role": ".history-toolbar {",
@@ -495,32 +495,32 @@
     "ui/static/js/core/api.js": {
       "role": "Fetch JSON from the bridge API.",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/js/core/chat-drawer.js": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/js/core/event-notifier.js": {
       "role": "exports initEventNotifications",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/js/pages/chat.js": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/js/pages/dashboard.js": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/js/pages/history.js": {
       "role": "no description",
@@ -531,20 +531,20 @@
     "ui/templates/git.html": {
       "role": "{% extends \"base.html\" %}",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/css/pages/git.css": {
-      "role": ".git-top-row {",
+      "role": ".git-page {",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     },
     "ui/static/js/pages/git.js": {
       "role": "no description",
       "task_type": "scan",
-      "last_modified": "2026-04-03",
-      "created": "2026-04-03"
+      "last_modified": "2026-04-04",
+      "created": "2026-04-04"
     }
   },
   "docs": [
