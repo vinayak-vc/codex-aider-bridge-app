@@ -475,6 +475,11 @@ def page_run():
     return render_template("run.html", active_page="run")
 
 
+@app.route("/git")
+def page_git():
+    return render_template("git.html", active_page="git")
+
+
 @app.route("/knowledge")
 def page_knowledge():
     return render_template("knowledge.html", active_page="knowledge")
