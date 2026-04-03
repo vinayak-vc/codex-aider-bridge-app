@@ -254,6 +254,43 @@ async function refreshRunStatus() {
 // Refresh status bar periodically
 setInterval(refreshRunStatus, 3000);
 
+// ── GPU status ───────────────────────────────────────────────────────────────
+
+async function refreshGpuStatus() {
+  const dot = $('sb-gpu-dot');
+  const label = $('sb-gpu-label');
+  if (!dot || !label) return;
+
+  try {
+    const data = await fetch('/api/check').then(r => r.json());
+    const gpu = data.gpu;
+    if (!gpu) return;
+
+    if (gpu.status === 'gpu_active') {
+      dot.dataset.status = 'success';
+      label.textContent = `GPU: ${gpu.gpu_name || 'Active'}`;
+      label.title = `VRAM: ${gpu.vram_used_gb}/${gpu.vram_total_gb}GB, ${gpu.gpu_utilization}% util`;
+    } else if (gpu.status === 'gpu_available_not_used') {
+      dot.dataset.status = 'failure';
+      label.textContent = 'GPU idle (CPU mode!)';
+      label.title = gpu.hint || 'Ollama is using CPU despite GPU being available';
+    } else if (gpu.status === 'cpu_only') {
+      dot.dataset.status = 'failure';
+      label.textContent = 'CPU only';
+      label.title = gpu.hint || 'No GPU detected';
+    } else if (gpu.status === 'gpu_ready') {
+      dot.dataset.status = 'idle';
+      label.textContent = `GPU: ${gpu.gpu_name || 'Ready'}`;
+      label.title = 'GPU available, waiting for model load';
+    } else {
+      dot.dataset.status = 'idle';
+      label.textContent = `GPU: ${gpu.gpu_name || '?'}`;
+    }
+  } catch (_) {
+    label.textContent = 'GPU: ?';
+  }
+}
+
 // ── Global model selector ─────────────────────────────────────────────────────
 
 async function loadModels() {
@@ -312,6 +349,8 @@ export async function initProjectBar() {
   loadModels();
   refreshGitStatus();
   refreshRunStatus();
+  refreshGpuStatus();
+  setInterval(refreshGpuStatus, 15000); // Refresh GPU status every 15s
 
   // Switcher button toggles dropdown
   $('project-switcher')?.addEventListener('click', e => {
