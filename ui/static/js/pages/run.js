@@ -915,15 +915,44 @@ function escHtml(s) {
 let _lineCount = 0;
 let _autoScroll = true;
 let _logView = 'parsed'; // 'parsed' | 'raw'
+let _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
+let _hiddenTags = new Set();
 
 function _switchLogView(view) {
   _logView = view;
   const parsed = $('log-parsed');
   const raw = $('log-terminal');
+  const tagBar = $('log-tag-bar');
   $('btn-log-parsed')?.classList.toggle('--active', view === 'parsed');
   $('btn-log-raw')?.classList.toggle('--active', view === 'raw');
   if (parsed) parsed.style.display = view === 'parsed' ? '' : 'none';
   if (raw) raw.style.display = view === 'raw' ? '' : 'none';
+  if (tagBar) tagBar.style.display = view === 'parsed' ? '' : 'none';
+}
+
+function _updateTagCount(tag) {
+  _tagCounts[tag] = (_tagCounts[tag] || 0) + 1;
+  const el = $(`tag-count-${tag}`);
+  if (el) el.textContent = _tagCounts[tag];
+}
+
+function _toggleTag(tag) {
+  if (_hiddenTags.has(tag)) {
+    _hiddenTags.delete(tag);
+  } else {
+    _hiddenTags.add(tag);
+  }
+  // Update button state
+  document.querySelectorAll('.log-tag').forEach(btn => {
+    btn.classList.toggle('--active', !_hiddenTags.has(btn.dataset.tag));
+  });
+  // Show/hide events
+  const parsed = $('log-parsed');
+  if (!parsed) return;
+  parsed.querySelectorAll('.parsed-event').forEach(ev => {
+    const evTag = ev.dataset.tag || '';
+    ev.dataset.hidden = _hiddenTags.has(evTag) ? 'true' : 'false';
+  });
 }
 
 function _parseLine(rawLine) {
@@ -938,61 +967,77 @@ function _parseLine(rawLine) {
   // Skip raw JSON bridge events in parsed view
   if (trimmed.startsWith('{"_bridge_event"')) return null;
 
+  const I = (color) => `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="${color}" width="14" height="14">`;
+  const icons = {
+    play:    `${I('var(--color-accent)')}<path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>`,
+    check:   `${I('var(--color-success)')}<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>`,
+    refresh: `${I('var(--color-warning)')}<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>`,
+    error:   `${I('var(--color-danger)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
+    warn:    `${I('var(--color-warning)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
+    info:    `${I('var(--color-info)')}<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>`,
+    swap:    `${I('var(--color-info)')}<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>`,
+  };
+
   // Task start
   let m = line.match(/Task\s+(\d+)\s*[—-]\s*attempt\s+(\d+)\/(\d+)\s*[—-]\s*files:\s*(.+)/);
-  if (m) return { time, type: 'task', cls: '--task', label: `Task ${m[1]}`, text: `Attempt ${m[2]}/${m[3]} — files: ${m[4]}`,
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-accent)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>' };
+  if (m) return { time, tag: 'task', cls: '--task', label: `Task ${m[1]}`, text: `Attempt ${m[2]}/${m[3]} — ${m[4].trim()}`, icon: icons.play };
 
   // Supervisor approved
-  if (/supervisor approved/.test(line)) {
+  if (/supervisor approved|auto-approved/.test(line)) {
     m = line.match(/Task\s+(\d+)/);
-    return { time, type: 'success', cls: '--success', label: m ? `Task ${m[1]}` : 'Task', text: 'Supervisor approved',
-      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-success)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>' };
+    return { time, tag: 'review', cls: '--review', label: m ? `Task ${m[1]} Approved` : 'Approved', text: 'Supervisor approved', icon: icons.check };
   }
 
   // Rework
   m = line.match(/supervisor requested rework[^:]*:\s*(.+)/);
-  if (m) return { time, type: 'warning', cls: '--warning', label: 'Rework', text: m[1],
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-warning)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>' };
+  if (m) return { time, tag: 'review', cls: '--warning', label: 'Rework', text: m[1], icon: icons.refresh };
+
+  // Mechanical check failed
+  if (/mechanical check failed/.test(line)) {
+    const msg = line.replace(/.*mechanical check failed[^—]*[—-]\s*/, '');
+    return { time, tag: 'warning', cls: '--warning', label: 'Validation Failed', text: msg || 'Mechanical check failed', icon: icons.warn };
+  }
 
   // Error
   if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line)) {
     const msg = line.replace(/.*\|\s*(ERROR|CRITICAL)\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, type: 'error', cls: '--error', label: 'Error', text: msg,
-      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-danger)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>' };
+    return { time, tag: 'error', cls: '--error', label: 'Error', text: msg, icon: icons.error };
   }
 
   // Warning
   if (/\|\s*WARNING\s*\|/.test(line)) {
     const msg = line.replace(/.*\|\s*WARNING\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, type: 'warning', cls: '--warning', label: 'Warning', text: msg,
-      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-warning)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>' };
+    return { time, tag: 'warning', cls: '--warning', label: 'Warning', text: msg, icon: icons.warn };
   }
 
-  // Bridge/plan events
-  if (/Bridge start|Plan ready|Pre-flight|Loaded.*task/.test(line)) {
+  // Bridge lifecycle
+  if (/Bridge start|Plan ready|Pre-flight|Loaded.*task|Project knowledge|Project understanding|Validator/.test(line)) {
     const msg = line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, type: 'info', cls: '--info', label: 'Bridge', text: msg,
-      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-info)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>' };
+    return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: msg, icon: icons.info };
   }
 
   // Proxy events
   if (/\[proxy\]/.test(line)) {
     const msg = line.replace(/.*\[proxy\]\s*/, '');
-    return { time, type: 'info', cls: '--info', label: 'Proxy', text: msg,
-      icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-info)" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>' };
+    return { time, tag: 'proxy', cls: '--proxy', label: 'Proxy', text: msg, icon: icons.swap };
   }
 
-  // Skip noise lines (git readiness, gitignore, etc.)
-  if (/Git readiness|Added.*bridge entries|gitignore|Rollback point|undo all changes/.test(line)) return null;
+  // [bridge] events
+  if (/\[bridge\]/.test(line)) {
+    const msg = line.replace(/.*\[bridge\]\s*/, '');
+    return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: msg, icon: icons.info };
+  }
+
+  // Skip noise
+  if (/Git readiness|Added.*bridge entries|gitignore|Rollback point|undo all changes|_bridge_event/.test(line)) return null;
 
   // Generic INFO
   if (/\|\s*INFO\s*\|/.test(line)) {
     const msg = line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, type: 'info', cls: '--info', label: '', text: msg, icon: '' };
+    return { time, tag: 'info', cls: '--info', label: '', text: msg, icon: '' };
   }
 
-  return null; // Skip unparseable lines in parsed view
+  return null;
 }
 
 function _appendParsedEvent(parsed) {
@@ -1001,12 +1046,18 @@ function _appendParsedEvent(parsed) {
   const emptyEl = $('log-parsed-empty');
   if (emptyEl) emptyEl.style.display = 'none';
 
+  // Update tag count
+  if (parsed.tag) _updateTagCount(parsed.tag);
+
   const div = document.createElement('div');
   div.className = `parsed-event ${parsed.cls}`;
+  div.dataset.tag = parsed.tag || '';
+  if (_hiddenTags.has(parsed.tag)) div.dataset.hidden = 'true';
   div.innerHTML = `
     <span class="parsed-time">${_esc(parsed.time)}</span>
     <span class="parsed-icon">${parsed.icon}</span>
     <span class="parsed-content">${parsed.label ? `<span class="parsed-label">${_esc(parsed.label)}</span>` : ''}${_esc(parsed.text)}</span>
+    <span class="parsed-tag">${_esc(parsed.tag)}</span>
   `;
   container.appendChild(div);
 
@@ -1068,6 +1119,13 @@ function clearLog() {
     const pe = $('log-parsed-empty');
     if (pe) pe.style.display = '';
   }
+
+  // Reset tag counts
+  _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
+  Object.keys(_tagCounts).forEach(tag => {
+    const el = $(`tag-count-${tag}`);
+    if (el) el.textContent = '0';
+  });
 }
 
 // ── Run status banner ─────────────────────────────────────────────────────────
@@ -1944,6 +2002,11 @@ function bindControls() {
   // Log view toggle (parsed/raw)
   $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
   $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
+
+  // Tag filter toggles
+  document.querySelectorAll('.log-tag').forEach(btn => {
+    btn.addEventListener('click', () => _toggleTag(btn.dataset.tag));
+  });
 
   // Task progress panel
   $('btn-refresh-progress')?.addEventListener('click', loadProgress);

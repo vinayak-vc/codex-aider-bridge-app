@@ -528,7 +528,18 @@
       </div>
     </div>
 
-    <!-- Parsed log view (default) -->
+    <!-- Tag filter bar (parsed view only) -->
+    <div class="log-tag-bar" id="log-tag-bar">
+      <button class="log-tag --active" data-tag="task" title="Task execution events">Task <span class="log-tag-count" id="tag-count-task">0</span></button>
+      <button class="log-tag --active" data-tag="review" title="Supervisor review decisions">Review <span class="log-tag-count" id="tag-count-review">0</span></button>
+      <button class="log-tag --active" data-tag="error" title="Errors and failures">Error <span class="log-tag-count" id="tag-count-error">0</span></button>
+      <button class="log-tag --active" data-tag="warning" title="Warnings">Warning <span class="log-tag-count" id="tag-count-warning">0</span></button>
+      <button class="log-tag --active" data-tag="bridge" title="Bridge lifecycle events">Bridge <span class="log-tag-count" id="tag-count-bridge">0</span></button>
+      <button class="log-tag --active" data-tag="proxy" title="Supervisor proxy events">Proxy <span class="log-tag-count" id="tag-count-proxy">0</span></button>
+      <button class="log-tag --active" data-tag="info" title="General info">Info <span class="log-tag-count" id="tag-count-info">0</span></button>
+    </div>
+
+    <!-- Parsed log view (default) — only this scrolls -->
     <div class="log-parsed" id="log-parsed">
       <div class="log-empty" id="log-parsed-empty">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" width="32" height="32">
