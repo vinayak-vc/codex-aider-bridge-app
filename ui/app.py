@@ -1366,6 +1366,80 @@ def api_run_tasks():
     })
 
 
+@app.route("/api/run/progress")
+def api_run_progress():
+    """Return persisted task progress from checkpoint + task_metrics.
+
+    This survives restarts — reads from bridge_progress/ on disk.
+    """
+    repo_root = (request.args.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"tasks": [], "completed": [], "total_tasks": 0, "can_resume": False, "plan_file": "", "failed_task_id": None, "last_status": ""})
+
+    progress_dir = Path(repo_root) / "bridge_progress"
+
+    # Load checkpoint (completed task IDs)
+    completed = []
+    checkpoint_file = progress_dir / "checkpoint.json"
+    if checkpoint_file.exists():
+        try:
+            data = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            completed = sorted(data.get("completed", []))
+        except Exception:
+            pass
+
+    # Load task metrics (full task details)
+    tasks = []
+    total_tasks = 0
+    failed_task_id = None
+    last_status = ""
+    metrics_file = progress_dir / "task_metrics.json"
+    if metrics_file.exists():
+        try:
+            data = json.loads(metrics_file.read_text(encoding="utf-8"))
+            total_tasks = data.get("planned_tasks", 0)
+            failed_task_id = data.get("failed_task_id")
+            last_status = data.get("status", "")
+            for t in data.get("tasks", []):
+                tid = t.get("id", 0)
+                status = "done" if t.get("completed") or tid in completed else "pending"
+                if tid == failed_task_id:
+                    status = "failed"
+                tasks.append({
+                    "id": tid,
+                    "type": t.get("type", ""),
+                    "files": t.get("files", []),
+                    "instruction": t.get("instruction", ""),
+                    "status": status,
+                    "commit_sha": t.get("commit_sha"),
+                })
+        except Exception:
+            pass
+
+    # Load plan file path from NL state
+    plan_file = ""
+    try:
+        nl_state = state_store.load_run_nl_state(repo_root)
+        plan_file = nl_state.get("plan_file", "") if nl_state else ""
+    except Exception:
+        pass
+
+    can_resume = bool(completed) and len(completed) < total_tasks and bool(plan_file)
+
+    return jsonify({
+        "total_tasks": total_tasks,
+        "completed": completed,
+        "failed_task_id": failed_task_id,
+        "last_status": last_status,
+        "tasks": tasks,
+        "plan_file": plan_file,
+        "can_resume": can_resume,
+    })
+
+
 @app.route("/api/run/pause", methods=["POST"])
 def api_pause_run():
     """Create the pause file so the bridge stops between tasks."""

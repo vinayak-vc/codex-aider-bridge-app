@@ -58,6 +58,12 @@
   </div>
 </div>
 
+<!-- ── Split layout: left (settings/log) | right (task progress) ── -->
+<div class="run-split" id="run-split">
+
+<!-- ── Left panel ── -->
+<div class="run-left-panel" id="run-left-panel">
+
 <!-- ── Tab bar ── -->
 <div class="tabs run-tabs" id="run-tabs">
   <button class="tab --active" data-tab="settings" id="run-tab-btn-settings">
@@ -546,6 +552,50 @@
   </div><!-- /run-tab-log -->
 
 </div><!-- /run-tab-content -->
+
+</div><!-- /run-left-panel -->
+
+<!-- ── Drag divider ── -->
+<div class="run-divider" id="run-divider" title="Drag to resize"></div>
+
+<!-- ── Right panel: Task Progress ── -->
+<div class="run-right-panel" id="run-right-panel">
+  <div class="task-progress-header">
+    <span class="section-title">Task Progress</span>
+    <button class="btn btn--secondary btn--sm" id="btn-refresh-progress" title="Refresh">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="12" height="12">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="task-progress-bar-wrap">
+    <div class="task-progress-bar" id="task-progress-bar" style="width:0%"></div>
+  </div>
+  <div class="task-progress-label" id="task-progress-label">No tasks</div>
+
+  <!-- Resume button -->
+  <button class="btn btn--primary btn--sm" id="btn-resume-run" style="display:none;width:100%;margin-top:8px">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/>
+    </svg>
+    <span id="btn-resume-label">Resume</span>
+  </button>
+
+  <!-- Task list -->
+  <div class="task-progress-list" id="task-progress-list">
+    <div class="task-progress-empty">No task data yet. Generate a plan and run it.</div>
+  </div>
+
+  <!-- Selected task detail -->
+  <div class="task-detail-pane" id="task-detail-pane" style="display:none">
+    <div class="task-detail-title" id="task-detail-title"></div>
+    <div class="task-detail-body" id="task-detail-body"></div>
+  </div>
+</div>
+
+</div><!-- /run-split -->
 {% endblock %}
 
 {% block page_script %}

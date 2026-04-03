@@ -179,6 +179,160 @@ function resetRoleStrip() {
   showRoleStrip(false);
 }
 
+// ── Task Progress Panel ──────────────────────────────────────────────────────
+
+let _progressTasks = [];
+let _selectedTaskId = null;
+
+async function loadProgress() {
+  try {
+    const data = await fetch('/api/run/progress').then(r => r.json());
+    _progressTasks = data.tasks || [];
+    renderProgressPanel(data);
+  } catch (_) {}
+}
+
+function renderProgressPanel(data) {
+  const bar = $('task-progress-bar');
+  const label = $('task-progress-label');
+  const list = $('task-progress-list');
+  const resumeBtn = $('btn-resume-run');
+  const resumeLabel = $('btn-resume-label');
+
+  const total = data.total_tasks || _progressTasks.length || 0;
+  const done = (data.completed || []).length;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+
+  if (bar) bar.style.width = pct + '%';
+  if (label) label.textContent = total > 0 ? `${done} / ${total} tasks (${pct}%)` : 'No tasks';
+
+  // Resume button
+  if (resumeBtn) {
+    if (data.can_resume && !_isRunning) {
+      const nextId = done + 1;
+      if (resumeLabel) resumeLabel.textContent = `Resume from task ${nextId}`;
+      resumeBtn.style.display = '';
+    } else {
+      resumeBtn.style.display = 'none';
+    }
+  }
+
+  // Task list
+  if (!list) return;
+  if (!_progressTasks.length) {
+    list.innerHTML = '<div class="task-progress-empty">No task data yet. Generate a plan and run it.</div>';
+    return;
+  }
+
+  const statusIcons = {
+    done: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>',
+    running: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>',
+    failed: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>',
+    pending: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><circle cx="12" cy="12" r="9"/></svg>',
+  };
+
+  list.innerHTML = _progressTasks.map(t => {
+    const s = t.status || 'pending';
+    const icon = statusIcons[s] || statusIcons.pending;
+    const files = (t.files || []).join(', ');
+    const title = t.instruction ? t.instruction.slice(0, 50) : `Task ${t.id}`;
+    return `
+      <div class="task-progress-item" data-task-id="${t.id}" title="${_esc(t.instruction || '')}">
+        <span class="task-status-icon --${s}">${icon}</span>
+        <div class="task-progress-info">
+          <div class="task-progress-title">${t.id}. ${_esc(title)}</div>
+          <div class="task-progress-files">${_esc(files)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.task-progress-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const tid = parseInt(el.dataset.taskId, 10);
+      _selectProgressTask(tid);
+      list.querySelectorAll('.task-progress-item').forEach(r => r.classList.remove('--active'));
+      el.classList.add('--active');
+    });
+  });
+}
+
+function _selectProgressTask(taskId) {
+  _selectedTaskId = taskId;
+  const task = _progressTasks.find(t => t.id === taskId);
+  const pane = $('task-detail-pane');
+  const title = $('task-detail-title');
+  const body = $('task-detail-body');
+  if (!pane || !task) { if (pane) pane.style.display = 'none'; return; }
+
+  if (title) title.textContent = `Task ${task.id} (${task.type || '?'}) — ${task.status || 'pending'}`;
+  if (body) {
+    let html = `<p>${_esc(task.instruction || 'No instruction')}</p>`;
+    html += `<p style="margin-top:6px;font-family:var(--font-mono)">Files: ${_esc((task.files || []).join(', '))}</p>`;
+    if (task.commit_sha) html += `<p style="margin-top:4px">Commit: <code>${_esc(task.commit_sha)}</code></p>`;
+    body.innerHTML = html;
+  }
+  pane.style.display = '';
+}
+
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function updateProgressFromSSE(data) {
+  // Update a specific task status in the progress panel
+  const taskId = data.task?.id || data.task_id;
+  if (!taskId) return;
+
+  const existing = _progressTasks.find(t => t.id === taskId);
+  if (existing) {
+    if (data.task?.status === 'approved') existing.status = 'done';
+    else if (data.task?.status === 'running') existing.status = 'running';
+    else if (data.task?.status === 'rework' || data.task?.status === 'retrying') existing.status = 'running';
+  }
+
+  // Re-render with updated data
+  const done = _progressTasks.filter(t => t.status === 'done').length;
+  const total = _progressTasks.length;
+  const bar = $('task-progress-bar');
+  const label = $('task-progress-label');
+  if (bar) bar.style.width = (total > 0 ? Math.round(done / total * 100) : 0) + '%';
+  if (label) label.textContent = `${done} / ${total} tasks (${total > 0 ? Math.round(done / total * 100) : 0}%)`;
+
+  renderProgressPanel({ total_tasks: total, completed: _progressTasks.filter(t => t.status === 'done').map(t => t.id), tasks: _progressTasks, can_resume: false });
+}
+
+// ── Drag-to-resize ──────────────────────────────────────────────────────────
+
+function initDragResize() {
+  const divider = $('run-divider');
+  const rightPanel = $('run-right-panel');
+  if (!divider || !rightPanel) return;
+
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = rightPanel.offsetWidth;
+    divider.classList.add('--dragging');
+
+    const onMove = e2 => {
+      const delta = startX - e2.clientX;
+      const newWidth = Math.max(220, Math.min(500, startWidth + delta));
+      rightPanel.style.width = newWidth + 'px';
+    };
+    const onUp = () => {
+      divider.classList.remove('--dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
 function updateCompatWarnings() {
   // Supervisor banner
   const sup = document.querySelector('input[name="supervisor"]:checked')?.value || '';
@@ -867,6 +1021,7 @@ function connectSSE() {
       setRunning(false);
       _setRoleState('role-reviewer', 'done', 'Reviewer');
       _sse.disconnect();
+      loadProgress();
     })
     .on('error', d => {
       showBanner('failure', `Error: ${d.message || 'unknown error'}`);
@@ -874,10 +1029,12 @@ function connectSSE() {
       _sse.disconnect();
       // Don't auto-switch — user may want to read the log
     })
+    .on('task_update', d => updateProgressFromSSE(d))
     .on('stopped', () => {
       showBanner('stopped', 'Run stopped.');
       setRunning(false);
       _sse.disconnect();
+      loadProgress();
     })
     .on('supervisor_review_requested', d => {
       const tid = d.task_id || '?';
@@ -1669,6 +1826,28 @@ function bindControls() {
   // Back to Settings button in log toolbar
   $('btn-back-to-settings')?.addEventListener('click', () => switchRunTab('settings'));
 
+  // Task progress panel
+  $('btn-refresh-progress')?.addEventListener('click', loadProgress);
+  $('btn-resume-run')?.addEventListener('click', async () => {
+    // Resume uses the existing plan file + checkpoint
+    const settings = collectSettings();
+    settings.plan_file = '';  // Let main.py use checkpoint
+    clearLog();
+    hideBanner();
+    resetRoleStrip();
+    setRunning(true);
+    switchRunTab('log');
+    connectSSE();
+    try {
+      play('launch');
+      await apiPost('/api/run', settings);
+    } catch (err) {
+      showBanner('failure', err.message || 'Resume failed.');
+      setRunning(false);
+      _sse?.disconnect();
+    }
+  });
+
   // Chatbot wizard controls
   bindChatbotControls();
 }
@@ -1733,6 +1912,12 @@ async function init() {
   // If a run is already active, show live state
   await hydrateExistingRun();
   updateCompatWarnings();
+
+  // Load task progress from persisted checkpoint
+  await loadProgress();
+
+  // Enable drag-to-resize on the split divider
+  initDragResize();
 }
 
 init();
