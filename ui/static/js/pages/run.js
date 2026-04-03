@@ -741,6 +741,41 @@ async function launchRun() {
   }
 }
 
+async function launchNLRun() {
+  if (!_nlProjectKey) {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    _nlProjectKey = settings.repo_root || '';
+  }
+  if (!_nlProjectKey) {
+    toast('No project folder configured.', 'error');
+    return;
+  }
+
+  clearLog();
+  hideBanner();
+  setRunning(true);
+  connectSSE();
+
+  try {
+    play('launch');
+    const res = await fetch('/api/run/nl/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to start run.');
+
+    // Update session state so we know which run was last launched
+    await _saveNLState('running', { last_run_id: data.run_id });
+  } catch (err) {
+    showBanner('failure', err.message || 'Failed to start run.');
+    setRunning(false);
+    _sse?.disconnect();
+    toast(err.message || 'Failed to start run.', 'error');
+  }
+}
+
 // ── Bind controls ─────────────────────────────────────────────────────────────
 
 function bindControls() {
@@ -791,6 +826,7 @@ function bindControls() {
 
   // Launch / stop
   $('btn-launch-run')?.addEventListener('click', launchRun);
+  $('btn-launch-nl-run')?.addEventListener('click', launchNLRun);
   $('btn-stop-run')?.addEventListener('click', async () => {
     try {
       await apiPost('/api/run/stop');
