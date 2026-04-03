@@ -258,19 +258,34 @@ class AiderRunner:
                 stdin=subprocess.DEVNULL,  # Never wait for input — prevents hang on hidden prompts
             )
         except subprocess.TimeoutExpired as ex:
-            # ex.process is not always set (Python 3.11 bug on Windows)
+            # Kill the hung process
             try:
                 if ex.process:
                     ex.process.kill()
             except Exception:
                 pass
+            # Capture any partial output for diagnosis
+            partial_out = ""
+            partial_err = ""
+            try:
+                if ex.stdout:
+                    partial_out = ex.stdout if isinstance(ex.stdout, str) else ex.stdout.decode("utf-8", errors="replace")
+                if ex.stderr:
+                    partial_err = ex.stderr if isinstance(ex.stderr, str) else ex.stderr.decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            self._logger.warning(
+                "Task %s: Aider timed out after %ds. Partial stdout (%d chars): %.500s",
+                task.id, self._timeout, len(partial_out), partial_out[-500:] if partial_out else "(none)",
+            )
             return ExecutionResult(
                 task_id=task.id,
                 succeeded=False,
                 exit_code=-1,
-                stdout="",
-                stderr=f"Aider timed out after {self._timeout}s",
+                stdout=partial_out[-2000:],
+                stderr=f"Aider timed out after {self._timeout}s. " + (partial_err[-500:] if partial_err else ""),
                 command=arguments,
+                duration_seconds=round(time.monotonic() - _start, 2),
             )
         except OSError as ex:
             return ExecutionResult(
