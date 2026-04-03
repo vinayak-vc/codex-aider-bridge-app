@@ -1923,9 +1923,11 @@ def api_knowledge_refresh():
                 knowledge=knowledge,
                 logger=logger,
                 skip_source_scan=True,  # already scanned above
+                allow_user_confirm=False,
+                input_func=lambda _: "",
             )
-        except Exception:
-            pass  # Non-fatal — understanding is a nice-to-have
+        except Exception as _ue:
+            logger.warning("Could not regenerate AI_UNDERSTANDING.md: %s", _ue)
 
         files_count = len(knowledge.get("files", {}))
         return jsonify({
