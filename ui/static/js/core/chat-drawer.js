@@ -101,6 +101,11 @@ function setDrawerOpen(open) {
   drawer.classList.toggle('chat-drawer--open', open);
   toggle.hidden = open;
   localStorage.setItem(STORE_KEY, open ? '1' : '0');
+
+  // When closing the drawer, unload the model from VRAM to free memory for Aider
+  if (!open) {
+    fetch('/api/system/unload-model', { method: 'POST' }).catch(() => {});
+  }
 }
 
 function autoResize(el) {
@@ -334,8 +339,8 @@ export async function initChatDrawer() {
     void refreshState();
   });
 
-  const shouldOpen = localStorage.getItem(STORE_KEY) === '1';
-  setDrawerOpen(shouldOpen);
+  // Don't auto-open the drawer on startup — keeps model unloaded and VRAM free
+  setDrawerOpen(false);
   await loadCurrentProject();
   startPolling();
 }
