@@ -142,6 +142,78 @@ const $ = id => document.getElementById(id);
 
 let _nlMode = false;
 let _currentBrief = null;
+let _nlProjectKey  = '';   // repo_root used as project key
+
+// Status: 'drafting' | 'needs_clarification' | 'ready_to_run'
+const NL_STATUS = {
+  drafting:           { label: 'Drafting',             mod: '' },
+  needs_clarification:{ label: 'Needs clarification',  mod: '--warning' },
+  ready_to_run:       { label: 'Ready to run',         mod: '--success' },
+};
+
+function _nlStatusFor(brief) {
+  if (!brief) return 'drafting';
+  return brief.needs_clarification ? 'needs_clarification' : 'ready_to_run';
+}
+
+function setNLStatusChip(status) {
+  const row  = $('nl-status-row');
+  const chip = $('nl-status-chip');
+  if (!row || !chip) return;
+  const info = NL_STATUS[status] || NL_STATUS.drafting;
+  chip.textContent = info.label;
+  chip.className = `nl-status-chip${info.mod ? ' ' + info.mod : ''}`;
+  row.style.display = '';
+}
+
+async function _saveNLState(status) {
+  if (!_nlProjectKey) return;
+  try {
+    await fetch('/api/run/nl/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo_root: _nlProjectKey,
+        message:   $('nl-input')?.value || '',
+        brief:     _currentBrief || {},
+        status,
+      }),
+    });
+  } catch (_) {}
+}
+
+async function _clearNLState() {
+  if (!_nlProjectKey) return;
+  try {
+    await fetch('/api/run/nl/state', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey }),
+    });
+  } catch (_) {}
+}
+
+async function _restoreNLState() {
+  if (!_nlProjectKey) return;
+  try {
+    const res   = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
+    const state = await res.json();
+    if (!state || !state.message) return;
+
+    // Restore textarea
+    if ($('nl-input')) $('nl-input').value = state.message;
+
+    // Restore brief if present
+    if (state.brief && state.brief.goal) {
+      _currentBrief = state.brief;
+      renderBrief(state.brief);
+    }
+
+    // Restore status chip
+    const status = state.status || _nlStatusFor(state.brief || null);
+    setNLStatusChip(status);
+  } catch (_) {}
+}
 
 function setMode(mode) {
   _nlMode = mode === 'nl';
@@ -209,14 +281,18 @@ async function generateBrief() {
 
   try {
     const settings = await fetch('/api/settings').then(r => r.json());
+    if (!_nlProjectKey) _nlProjectKey = settings.repo_root || '';
     const res = await fetch('/api/run/brief', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, repo_root: settings.repo_root || '' }),
+      body: JSON.stringify({ message, repo_root: _nlProjectKey }),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to generate brief.');
     renderBrief(data);
+    const status = _nlStatusFor(data);
+    setNLStatusChip(status);
+    await _saveNLState(status);
   } catch (err) {
     toast(err.message || 'Failed to generate brief.', 'error');
   } finally {
@@ -227,7 +303,7 @@ async function generateBrief() {
   }
 }
 
-function applyBrief() {
+async function applyBrief() {
   if (!_currentBrief) return;
   setMode('structured');
 
@@ -253,6 +329,7 @@ function applyBrief() {
   }
 
   updateCommandPreview();
+  await _saveNLState('ready_to_run');
   $('f-goal')?.focus();
   toast('Brief applied — review the fields and launch when ready.', 'success');
 }
@@ -531,12 +608,24 @@ function bindControls() {
   // NL brief controls
   $('btn-generate-brief')?.addEventListener('click', generateBrief);
   $('btn-apply-brief')?.addEventListener('click', applyBrief);
-  $('btn-new-brief')?.addEventListener('click', () => {
-    if ($('nl-input')) $('nl-input').value = '';
+
+  // Regenerate — clear brief output only, keep textarea message
+  $('btn-regenerate-brief')?.addEventListener('click', () => {
     $('nl-brief-output').style.display = 'none';
     _currentBrief = null;
     $('nl-input')?.focus();
   });
+
+  // New Conversation — clear everything including server state
+  $('btn-new-conversation')?.addEventListener('click', async () => {
+    if ($('nl-input')) $('nl-input').value = '';
+    $('nl-brief-output').style.display = 'none';
+    $('nl-status-row').style.display = 'none';
+    _currentBrief = null;
+    await _clearNLState();
+    $('nl-input')?.focus();
+  });
+
   $('nl-input')?.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -696,12 +785,19 @@ async function init() {
   bindControls();
 
   // Load saved settings
+  let settings = {};
   try {
-    const settings = await fetch('/api/settings').then(r => r.json());
+    settings = await fetch('/api/settings').then(r => r.json());
     populateForm(settings);
   } catch (_) {
     updateCommandPreview();
   }
+
+  // Set project key for NL persistence
+  _nlProjectKey = (settings.repo_root || '').trim();
+
+  // Restore NL conversation state if present
+  await _restoreNLState();
 
   // If a run is already active, show live state
   await hydrateExistingRun();

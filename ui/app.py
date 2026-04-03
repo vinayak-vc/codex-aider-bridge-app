@@ -856,6 +856,48 @@ def api_run_brief():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/run/nl/state", methods=["GET"])
+def api_run_nl_state_get():
+    """Return the persisted NL conversation state for the current project."""
+    repo_root = request.args.get("repo_root", "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    state = state_store.load_run_nl_state(repo_root)
+    return jsonify(state)
+
+
+@app.route("/api/run/nl/state", methods=["POST"])
+def api_run_nl_state_save():
+    """Persist the NL conversation state for a project."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+    state_store.save_run_nl_state(repo_root, {
+        "message": str(data.get("message", "")),
+        "brief":   data.get("brief") or {},
+        "status":  str(data.get("status", "drafting")),
+    })
+    return jsonify({"ok": True})
+
+
+@app.route("/api/run/nl/state", methods=["DELETE"])
+def api_run_nl_state_clear():
+    """Clear the NL conversation state for a project."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if repo_root:
+        state_store.clear_run_nl_state(repo_root)
+    return jsonify({"ok": True})
+
+
 def _manual_supervisor_dir() -> Optional[Path]:
     settings = state_store.load_settings()
     repo_root = settings.get("repo_root", "").strip()

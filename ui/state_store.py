@@ -28,7 +28,8 @@ HISTORY_FILE     = DATA_DIR / "history.json"
 TOKEN_LOG_FILE   = DATA_DIR / "token_log.json"
 RELAY_TASKS_FILE = DATA_DIR / "relay_tasks.json"
 RELAY_UI_STATE_FILE = DATA_DIR / "relay_ui_state.json"
-CHAT_SESSIONS_FILE = DATA_DIR / "chat_sessions.json"
+CHAT_SESSIONS_FILE   = DATA_DIR / "chat_sessions.json"
+RUN_NL_STATES_FILE   = DATA_DIR / "run_nl_states.json"
 MAX_HISTORY = 50
 MAX_LOG_LINES = 500
 
@@ -299,3 +300,54 @@ def rename_project(path: str, new_name: str) -> None:
         if p.get("path") == path:
             p["name"] = new_name.strip() or Path(path).name
     _save_projects(projects)
+
+
+# ── Run NL conversation state ──────────────────────────────────────────────────
+
+def _load_run_nl_states() -> dict[str, dict]:
+    _ensure()
+    if RUN_NL_STATES_FILE.exists():
+        try:
+            raw = json.loads(RUN_NL_STATES_FILE.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except Exception:
+            pass
+    return {}
+
+
+def _save_run_nl_states(states: dict[str, dict]) -> None:
+    _ensure()
+    RUN_NL_STATES_FILE.write_text(json.dumps(states, indent=2), encoding="utf-8")
+
+
+def load_run_nl_state(project_key: str) -> dict:
+    """Return the persisted NL conversation state for a project, or {}."""
+    if not project_key:
+        return {}
+    return _load_run_nl_states().get(project_key, {})
+
+
+def save_run_nl_state(project_key: str, state: dict) -> None:
+    """Persist NL conversation state for a project.
+
+    Allowed keys: message, brief, status, updated_at.
+    """
+    if not project_key:
+        return
+    import time as _time
+    allowed = {"message", "brief", "status", "updated_at"}
+    cleaned = {k: state[k] for k in allowed if k in state}
+    cleaned.setdefault("updated_at", _time.time())
+    states = _load_run_nl_states()
+    states[project_key] = cleaned
+    _save_run_nl_states(states)
+
+
+def clear_run_nl_state(project_key: str) -> None:
+    """Delete the NL conversation state for a project."""
+    if not project_key:
+        return
+    states = _load_run_nl_states()
+    if project_key in states:
+        del states[project_key]
+        _save_run_nl_states(states)
