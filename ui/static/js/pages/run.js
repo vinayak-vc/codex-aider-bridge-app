@@ -147,6 +147,7 @@ let _nlProjectKey  = '';   // repo_root used as project key
 // Status chip states
 const NL_STATUS = {
   drafting:           { label: 'Drafting',            mod: '' },
+  generating:         { label: 'Generating…',         mod: '--generating' },
   needs_clarification:{ label: 'Needs clarification', mod: '--warning' },
   ready_to_run:       { label: 'Ready to run',        mod: '--success' },
   plan_ready:         { label: 'Plan ready',          mod: '--info' },
@@ -359,6 +360,7 @@ async function generateBrief() {
 
   const btn = $('btn-generate-brief');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  setNLStatusChip('generating');
   $('nl-brief-output').style.display = 'none';
 
   try {
@@ -389,7 +391,9 @@ async function applyBrief() {
   if (!_currentBrief) return;
   setMode('structured');
 
-  $('f-goal').value = _currentBrief.goal || '';
+  const goalEl = $('f-goal');
+  const clarEl = $('f-clarifications');
+  if (goalEl) goalEl.value = _currentBrief.goal || '';
 
   // Fold constraints + acceptance criteria into the clarifications field
   const extras = [
@@ -397,11 +401,11 @@ async function applyBrief() {
     ...(_currentBrief.acceptance_criteria || []).map(a => `Acceptance: ${a}`),
   ];
   if (extras.length) {
-    const existing = $('f-clarifications').value.trim();
-    $('f-clarifications').value = existing
-      ? `${existing}\n${extras.join('\n')}`
-      : extras.join('\n');
-    // Auto-open advanced accordion so user sees the filled clarifications
+    const existing = clarEl?.value.trim() || '';
+    if (clarEl) {
+      clarEl.value = existing ? `${existing}\n${extras.join('\n')}` : extras.join('\n');
+    }
+    // Auto-open advanced accordion
     const trigger = $('adv-trigger');
     const body    = $('adv-body');
     if (trigger?.getAttribute('aria-expanded') !== 'true') {
@@ -410,9 +414,21 @@ async function applyBrief() {
     }
   }
 
+  // Visual Handoff Animation: Pulse target fields
+  [goalEl, clarEl].forEach(el => {
+    if (!el) return;
+    const fieldWrap = el.closest('.field');
+    if (fieldWrap) {
+      fieldWrap.classList.remove('field--highlight');
+      void fieldWrap.offsetWidth; // Force reflow
+      fieldWrap.classList.add('field--highlight');
+      setTimeout(() => fieldWrap.classList.remove('field--highlight'), 2000);
+    }
+  });
+
   updateCommandPreview();
   await _saveNLState('ready_to_run');
-  $('f-goal')?.focus();
+  goalEl?.focus();
   toast('Brief applied — review the fields and launch when ready.', 'success');
 }
 
@@ -459,6 +475,7 @@ async function generatePlan() {
 
   const btn = $('btn-generate-plan');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating plan…'; }
+  setNLStatusChip('generating');
   $('nl-plan-output').style.display = 'none';
 
   try {
