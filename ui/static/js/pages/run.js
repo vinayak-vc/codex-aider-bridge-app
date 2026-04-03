@@ -1883,9 +1883,19 @@ function bindControls() {
     }
   });
   $('btn-resume-run')?.addEventListener('click', async () => {
-    // Resume uses the existing plan file + checkpoint
+    // Resume uses the existing plan file + checkpoint skips completed tasks
     const settings = collectSettings();
-    settings.plan_file = '';  // Let main.py use checkpoint
+    // Get plan_file from saved settings (set by Load Plan or NL confirm)
+    if (!settings.plan_file) {
+      try {
+        const saved = await fetch('/api/settings').then(r => r.json());
+        settings.plan_file = saved.plan_file || '';
+      } catch (_) {}
+    }
+    if (!settings.plan_file) {
+      toast('No plan file set. Load a plan file first.', 'warning');
+      return;
+    }
     clearLog();
     hideBanner();
     resetRoleStrip();
