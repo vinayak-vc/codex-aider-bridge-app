@@ -599,34 +599,16 @@ def api_browse_file():
 
 # ── Run lifecycle ───────────────────────────────────────────────────────────────
 
-@app.route("/api/run", methods=["POST"])
-def api_start_run():
+def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
+    """Helper to initialize history, listeners, and start a bridge run."""
     run = get_run()
-    if run.is_running:
-        return jsonify({"error": "A run is already in progress."}), 409
-
-    settings = request.json or {}
-
-    # Validate repo_root before doing anything — without it the bridge
-    # subprocess would default to the PyInstaller temp dir (frozen) or the
-    # source tree CWD (dev mode), neither of which is a user project.
-    _repo = settings.get("repo_root", "").strip()
-    if not _repo:
-        return jsonify({
-            "error": (
-                "No project folder configured. "
-                "Open the Run settings panel, set 'Repo Root' to your project directory, "
-                "and try again."
-            )
-        }), 400
-
-    state_store.save_settings(settings)
+    repo_root = settings.get("repo_root", "").strip()
 
     # Auto-register the repo as a known project
-    if _repo:
-        state_store.add_project(_repo)
+    if repo_root:
+        state_store.add_project(repo_root)
 
-    run_id = state_store.add_history_entry({
+    history_payload = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "goal": settings.get("goal", ""),
         "repo_root": settings.get("repo_root", ""),
@@ -639,7 +621,11 @@ def api_start_run():
         "elapsed": 0,
         "log": [],
         "tasks_detail": [],
-    })
+    }
+    if extra_history:
+        history_payload.update(extra_history)
+
+    run_id = state_store.add_history_entry(history_payload)
 
     def on_event(event_type: str, data: dict) -> None:
         _broadcast(event_type, data)
@@ -663,7 +649,72 @@ def api_start_run():
 
     run.add_listener(on_event)
     run.start(settings, run_id)
+    return run_id
 
+
+@app.route("/api/run", methods=["POST"])
+def api_start_run():
+    run = get_run()
+    if run.is_running:
+        return jsonify({"error": "A run is already in progress."}), 409
+
+    settings = request.json or {}
+
+    # Validate repo_root before doing anything
+    _repo = settings.get("repo_root", "").strip()
+    if not _repo:
+        return jsonify({
+            "error": (
+                "No project folder configured. "
+                "Open the Run settings panel, set 'Repo Root' to your project directory, "
+                "and try again."
+            )
+        }), 400
+
+    state_store.save_settings(settings)
+    run_id = _start_bridge_run(settings)
+
+    return jsonify({"ok": True, "run_id": run_id})
+
+
+@app.route("/api/run/nl/launch", methods=["POST"])
+def api_run_nl_launch():
+    """Launch a run directly from the confirmed NL brief and plan."""
+    run = get_run()
+    if run.is_running:
+        return jsonify({"error": "A run is already in progress."}), 409
+
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    
+    if not repo_root:
+        return jsonify({"error": "No project folder configured."}), 400
+
+    state = state_store.load_run_nl_state(repo_root)
+    if not state or not state.get("brief"):
+        return jsonify({"error": "No confirmed plan found for this project. Generate and confirm a plan first."}), 400
+    
+    brief     = state.get("brief", {})
+    plan_file = state.get("plan_file", "")
+    
+    # Merge current global settings (model, supervisor) with NL-specific goal/plan
+    settings = state_store.load_settings()
+    run_settings = dict(settings)
+    run_settings.update({
+        "goal":      brief.get("goal", ""),
+        "repo_root": repo_root,
+        "plan_file": plan_file,
+    })
+    
+    run_id = _start_bridge_run(run_settings, extra_history={"source": "natural_language"})
+    
+    # Persist the run_id in NL state for traceability
+    state["last_run_id"] = run_id
+    state_store.save_run_nl_state(repo_root, state)
+    
     return jsonify({"ok": True, "run_id": run_id})
 
 
@@ -799,7 +850,10 @@ def api_run_brief():
         '  "constraints": ["Do not touch X"],\n'
         '  "acceptance_criteria": ["User can do A"],\n'
         '  "clarification_questions": [],\n'
-        '  "needs_clarification": false\n'
+        '  "needs_clarification": false,\n'
+        '  "confidence_score": 85,\n'
+        '  "risks": ["Potential risk 1"],\n'
+        '  "risk_level": "low"\n'
         "}\n\n"
         "Rules:\n"
         "- goal: single precise technical statement, not a question\n"
@@ -808,6 +862,9 @@ def api_run_brief():
         "- acceptance_criteria: observable, testable outcomes\n"
         "- clarification_questions: ONLY when something critical is ambiguous; leave [] when clear\n"
         "- needs_clarification: true only when clarification_questions is non-empty\n"
+        "- confidence_score: 0 to 100 based on how well you understand the request\n"
+        "- risks: identify patterns like bulk deletion, massive refactors, or sensitive file edits\n"
+        "- risk_level: 'low', 'medium', or 'high'\n"
         "- Be concise. One item per list entry. No generic items like 'code should work'."
     )
     if knowledge_ctx:
@@ -846,6 +903,10 @@ def api_run_brief():
         brief.setdefault("acceptance_criteria", [])
         brief.setdefault("clarification_questions", [])
         brief["needs_clarification"] = bool(brief.get("clarification_questions"))
+        brief.setdefault("confidence_score", 100)
+        brief.setdefault("risks", [])
+        brief.setdefault("risk_level", "low")
+        brief["requires_confirmation"] = brief.get("risk_level") in ("medium", "high")
         return jsonify(brief)
     except urllib.error.URLError as exc:
         reason = getattr(exc, "reason", str(exc))
@@ -854,6 +915,43 @@ def api_run_brief():
         return jsonify({"error": f"Model returned invalid JSON: {exc}. Try again."}), 422
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/relay/import-from-nl", methods=["POST"])
+def api_relay_import_from_nl():
+    """Import a plan generated in NL mode into the Relay state."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    tasks = data.get("tasks", [])
+    brief = data.get("brief", {})
+    summary = str(data.get("plan_summary", "")).strip()
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+    if not tasks:
+        return jsonify({"error": "No tasks to import"}), 400
+
+    # Ensure project exists
+    state_store.add_project(repo_root)
+
+    # 1. Update Relay-specific state
+    # We simulate a "completed Step 2" in Relay wizard
+    relay_session_id = str(uuid.uuid4())[:8] # New session for this run
+    
+    relay_state = {
+        "step": 2, # Jump straight to task confirmation
+        "goal": brief.get("goal", ""),
+        "repo_root": repo_root,
+        "aider_model": state_store.load_settings().get("aider_model", "ollama/qwen2.5-coder:14b"),
+        "relay_session_id": relay_session_id,
+        "tasks": tasks,
+        "plan_summary": summary,
+        "live_run_active": False,
+    }
+    state_store.save_relay_ui_state(relay_state)
+    state_store.save_relay_tasks(tasks)
+
+    return jsonify({"ok": True, "redirect": "/relay"})
 
 
 @app.route("/api/run/nl/plan", methods=["POST"])
@@ -998,11 +1096,9 @@ def api_run_nl_state_save():
         repo_root = settings.get("repo_root", "").strip()
     if not repo_root:
         return jsonify({"error": "repo_root is required"}), 400
-    state_store.save_run_nl_state(repo_root, {
-        "message": str(data.get("message", "")),
-        "brief":   data.get("brief") or {},
-        "status":  str(data.get("status", "drafting")),
-    })
+    
+    # Save the entire data blob (state_store will filter for allowed keys)
+    state_store.save_run_nl_state(repo_root, data)
     return jsonify({"ok": True})
 
 

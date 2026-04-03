@@ -142,11 +142,14 @@ const $ = id => document.getElementById(id);
 
 let _nlMode = false;
 let _currentBrief = null;
+let _nlTasks = [];
+let _nlSummary = '';
 let _nlProjectKey  = '';   // repo_root used as project key
 
 // Status chip states
 const NL_STATUS = {
   drafting:           { label: 'Drafting',            mod: '' },
+  generating:         { label: 'Generating…',         mod: '--generating' },
   needs_clarification:{ label: 'Needs clarification', mod: '--warning' },
   ready_to_run:       { label: 'Ready to run',        mod: '--success' },
   plan_ready:         { label: 'Plan ready',          mod: '--info' },
@@ -155,32 +158,40 @@ const NL_STATUS = {
 
 function _nlStatusFor(brief) {
   if (!brief) return 'drafting';
-  return brief.needs_clarification ? 'needs_clarification' : 'ready_to_run';
+  const confidence = brief.confidence_score ?? 100;
+  if (brief.needs_clarification || confidence < 60) return 'needs_clarification';
+  return 'ready_to_run';
 }
 
 function setNLStatusChip(status) {
   const row  = $('nl-status-row');
   const chip = $('nl-status-chip');
-  if (!row || !chip) return;
+  if (!chip) return;
   const info = NL_STATUS[status] || NL_STATUS.drafting;
   chip.textContent = info.label;
   chip.className = `nl-status-chip${info.mod ? ' ' + info.mod : ''}`;
-  row.style.display = '';
+  if (row) row.style.display = '';
 }
 
 async function _saveNLState(status, extra = {}) {
   if (!_nlProjectKey) return;
   try {
+    const body = {
+      repo_root: _nlProjectKey,
+      message:   $('nl-input')?.value || '',
+      brief:     _currentBrief || {},
+      tasks:     _nlTasks || [],
+      plan_summary: _nlSummary || '',
+      status,
+      confidence_score: _currentBrief?.confidence_score,
+      risks:            _currentBrief?.risks,
+      risk_level:       _currentBrief?.risk_level,
+      ...extra,
+    };
     await fetch('/api/run/nl/state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        repo_root: _nlProjectKey,
-        message:   $('nl-input')?.value || '',
-        brief:     _currentBrief || {},
-        status,
-        ...extra,
-      }),
+      body: JSON.stringify(body),
     });
   } catch (_) {}
 }
@@ -201,6 +212,21 @@ async function _restoreNLState() {
   try {
     const res   = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
     const state = await res.json();
+    
+    // Clear UI before potentially restoring
+    if ($('nl-input')) $('nl-input').value = '';
+    _currentBrief = null;
+    _nlTasks = [];
+    _nlSummary = '';
+    _confirmedPlanFile = '';
+    setNLStatusChip('drafting');
+    
+    // Hide NL plan sections
+    const nlPlanOutput = $('nl-plan-output');
+    if (nlPlanOutput) nlPlanOutput.style.display = 'none';
+    const nlConfirmed = $('nl-plan-confirmed-wrap');
+    if (nlConfirmed) nlConfirmed.style.display = 'none';
+
     if (!state || !state.message) return;
 
     // Restore textarea
@@ -211,6 +237,9 @@ async function _restoreNLState() {
       _currentBrief = state.brief;
       renderBrief(state.brief);
     }
+
+    _nlTasks = state.tasks || [];
+    _nlSummary = state.plan_summary || '';
 
     // Restore plan tasks if present
     if (Array.isArray(state.tasks) && state.tasks.length) {
@@ -236,14 +265,24 @@ async function _restoreNLState() {
 }
 
 function setMode(mode) {
-  _nlMode = mode === 'nl';
-  $('nl-panel').style.display        = _nlMode ? '' : 'none';
-  $('structured-panel').style.display = _nlMode ? 'none' : '';
-  $('btn-mode-nl').classList.toggle('--active', _nlMode);
-  $('btn-mode-structured').classList.toggle('--active', !_nlMode);
-  // hide the shortcut hint in NL mode (Ctrl+Enter has different meaning there)
-  const hint = $('run-shortcut-hint');
-  if (hint) hint.style.display = _nlMode ? 'none' : '';
+  try {
+    _nlMode = mode === 'nl';
+    const nlPanel = $('nl-panel');
+    const structPanel = $('structured-panel');
+    const btnNl = $('btn-mode-nl');
+    const btnStruct = $('btn-mode-structured');
+
+    if (nlPanel) nlPanel.style.display = _nlMode ? '' : 'none';
+    if (structPanel) structPanel.style.display = _nlMode ? 'none' : '';
+    if (btnNl) btnNl.classList.toggle('--active', _nlMode);
+    if (btnStruct) btnStruct.classList.toggle('--active', !_nlMode);
+
+    // hide the shortcut hint in NL mode (Ctrl+Enter has different meaning there)
+    const hint = $('run-shortcut-hint');
+    if (hint) hint.style.display = _nlMode ? 'none' : '';
+  } catch (err) {
+    console.error('setMode failed:', err);
+  }
 }
 
 function _renderBriefSection(label, items) {
@@ -269,6 +308,18 @@ function renderBrief(brief) {
     ${_renderBriefSection('Acceptance Criteria', brief.acceptance_criteria)}
   `;
 
+  // Confidence badge
+  const confBadge = $('nl-confidence-badge');
+  if (confBadge) {
+    const score = brief.confidence_score ?? 100;
+    confBadge.textContent = `${score}% Confidence`;
+    confBadge.style.display = '';
+    confBadge.className = 'nl-confidence-badge'; // Reset
+    if (score >= 80) confBadge.classList.add('--high');
+    else if (score >= 60) confBadge.classList.add('--medium');
+    else confBadge.classList.add('--low');
+  }
+
   const qWrap = $('nl-questions-wrap');
   const qCard = $('nl-questions-card');
   if (qWrap && qCard) {
@@ -284,7 +335,52 @@ function renderBrief(brief) {
     }
   }
 
+  // Risk alert
+  const riskAlert = $('nl-risk-alert');
+  if (riskAlert) {
+    if (brief.risks?.length) {
+      riskAlert.innerHTML = `
+        <div class="nl-brief-section">
+          <div class="nl-brief-label">Potential Risks Detected</div>
+          ${brief.risks.map(r => `<div class="nl-brief-item">• ${escHtml(r)}</div>`).join('')}
+        </div>`;
+      riskAlert.style.display = '';
+    } else {
+      riskAlert.style.display = 'none';
+    }
+  }
+
+  validateSafety();
   $('nl-brief-output').style.display = '';
+}
+
+function validateSafety() {
+  if (!_currentBrief) return;
+
+  const confidence = _currentBrief.confidence_score ?? 100;
+  const isConfident = confidence >= 60;
+  const isClarified = !(_currentBrief.needs_clarification || _currentBrief.clarification_questions?.length);
+  const riskVerified = !_currentBrief.requires_confirmation || $('f-nl-safety-ack')?.checked;
+
+  const canProceed = isConfident && isClarified && riskVerified;
+
+  const btnApply = $('btn-apply-brief');
+  const btnPlan = $('btn-generate-plan');
+
+  if (btnApply) btnApply.disabled = !canProceed;
+  if (btnPlan) btnPlan.disabled = !canProceed;
+
+  // Show/hide safety wrap if risky or low confidence
+  const safetyWrap = $('nl-safety-wrap');
+  if (safetyWrap) {
+    const shouldShow = _currentBrief.requires_confirmation || !isConfident;
+    safetyWrap.style.display = shouldShow ? '' : 'none';
+    
+    // If low confidence and no risks, hide the alert box itself but keep wrap for clarify info
+    const risks = _currentBrief.risks || [];
+    const riskAlert = $('nl-risk-alert');
+    if (riskAlert) riskAlert.style.display = risks.length ? '' : 'none';
+  }
 }
 
 async function generateBrief() {
@@ -297,6 +393,7 @@ async function generateBrief() {
 
   const btn = $('btn-generate-brief');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  setNLStatusChip('generating');
   $('nl-brief-output').style.display = 'none';
 
   try {
@@ -327,7 +424,9 @@ async function applyBrief() {
   if (!_currentBrief) return;
   setMode('structured');
 
-  $('f-goal').value = _currentBrief.goal || '';
+  const goalEl = $('f-goal');
+  const clarEl = $('f-clarifications');
+  if (goalEl) goalEl.value = _currentBrief.goal || '';
 
   // Fold constraints + acceptance criteria into the clarifications field
   const extras = [
@@ -335,11 +434,11 @@ async function applyBrief() {
     ...(_currentBrief.acceptance_criteria || []).map(a => `Acceptance: ${a}`),
   ];
   if (extras.length) {
-    const existing = $('f-clarifications').value.trim();
-    $('f-clarifications').value = existing
-      ? `${existing}\n${extras.join('\n')}`
-      : extras.join('\n');
-    // Auto-open advanced accordion so user sees the filled clarifications
+    const existing = clarEl?.value.trim() || '';
+    if (clarEl) {
+      clarEl.value = existing ? `${existing}\n${extras.join('\n')}` : extras.join('\n');
+    }
+    // Auto-open advanced accordion
     const trigger = $('adv-trigger');
     const body    = $('adv-body');
     if (trigger?.getAttribute('aria-expanded') !== 'true') {
@@ -348,9 +447,21 @@ async function applyBrief() {
     }
   }
 
+  // Visual Handoff Animation: Pulse target fields
+  [goalEl, clarEl].forEach(el => {
+    if (!el) return;
+    const fieldWrap = el.closest('.field');
+    if (fieldWrap) {
+      fieldWrap.classList.remove('field--highlight');
+      void fieldWrap.offsetWidth; // Force reflow
+      fieldWrap.classList.add('field--highlight');
+      setTimeout(() => fieldWrap.classList.remove('field--highlight'), 2000);
+    }
+  });
+
   updateCommandPreview();
   await _saveNLState('ready_to_run');
-  $('f-goal')?.focus();
+  goalEl?.focus();
   toast('Brief applied — review the fields and launch when ready.', 'success');
 }
 
@@ -359,6 +470,8 @@ async function applyBrief() {
 let _confirmedPlanFile = '';
 
 function renderNLTaskList(tasks, summary) {
+  _nlTasks = tasks || [];
+  _nlSummary = summary || '';
   const list = $('nl-task-list');
   if (!list) return;
 
@@ -397,6 +510,7 @@ async function generatePlan() {
 
   const btn = $('btn-generate-plan');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating plan…'; }
+  setNLStatusChip('generating');
   $('nl-plan-output').style.display = 'none';
 
   try {
@@ -474,6 +588,53 @@ async function confirmPlan() {
     toast(err.message || 'Failed to confirm plan.', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Confirm Plan'; }
+  }
+}
+
+async function transferToRelay() {
+  if (!_currentBrief || !_nlProjectKey) return;
+  
+  const btn = $('btn-transfer-to-relay');
+  if (btn) { btn.disabled = true; btn.textContent = 'Transferring...'; }
+
+  try {
+    // 1. Get the current plan state
+    const stateRes = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
+    const state    = await stateRes.json();
+    
+    if (!state.tasks?.length) {
+      toast('No tasks found to transfer. Confirm the plan first.', 'warning');
+      return;
+    }
+
+    // 2. Push to Relay API
+    const res = await fetch('/api/relay/import-from-nl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo_root:    _nlProjectKey,
+        tasks:        state.tasks,
+        brief:        _currentBrief,
+        plan_summary: state.plan_summary || '',
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Transfer failed.');
+    }
+
+    toast('Plan transferred to AI Relay. Redirecting...', 'success');
+    
+    // 3. Redirect to Relay page
+    setTimeout(() => {
+      window.location.href = '/relay';
+    }, 1000);
+
+  } catch (err) {
+    toast(err.message || 'Failed to transfer to Relay.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Start Supervised Run (AI Relay)'; }
   }
 }
 
@@ -741,6 +902,41 @@ async function launchRun() {
   }
 }
 
+async function launchNLRun() {
+  if (!_nlProjectKey) {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    _nlProjectKey = settings.repo_root || '';
+  }
+  if (!_nlProjectKey) {
+    toast('No project folder configured.', 'error');
+    return;
+  }
+
+  clearLog();
+  hideBanner();
+  setRunning(true);
+  connectSSE();
+
+  try {
+    play('launch');
+    const res = await fetch('/api/run/nl/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to start run.');
+
+    // Update session state so we know which run was last launched
+    await _saveNLState('running', { last_run_id: data.run_id });
+  } catch (err) {
+    showBanner('failure', err.message || 'Failed to start run.');
+    setRunning(false);
+    _sse?.disconnect();
+    toast(err.message || 'Failed to start run.', 'error');
+  }
+}
+
 // ── Bind controls ─────────────────────────────────────────────────────────────
 
 function bindControls() {
@@ -782,6 +978,12 @@ function bindControls() {
     $('nl-input')?.focus();
   });
 
+  let saveTimeout = null;
+  $('nl-input')?.addEventListener('input', () => {
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => _saveNLState('drafting'), 1000);
+  });
+
   $('nl-input')?.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -789,8 +991,26 @@ function bindControls() {
     }
   });
 
+  window.addEventListener('bridge:project-switched', async e => {
+    const newPath = e.detail?.path;
+    if (newPath && newPath !== _nlProjectKey) {
+      _nlProjectKey = newPath;
+      // We might want to clear existing UI if switching projects while on Run page
+      _currentBrief = null;
+      _nlTasks = [];
+      _nlSummary = '';
+      _confirmedPlanFile = '';
+      
+      // Optionally reset form if it doesn't match the new project root in settings
+      // but usually settings are updated by the project switcher already.
+      await _restoreNLState();
+    }
+  });
+
   // Launch / stop
   $('btn-launch-run')?.addEventListener('click', launchRun);
+  $('btn-launch-nl-run')?.addEventListener('click', launchNLRun);
+  $('f-nl-safety-ack')?.addEventListener('change', validateSafety);
   $('btn-stop-run')?.addEventListener('click', async () => {
     try {
       await apiPost('/api/run/stop');
@@ -894,6 +1114,8 @@ function bindControls() {
     if (e.key === 'Enter') { e.preventDefault(); sendStdin(); }
   });
   btnSend?.addEventListener('click', sendStdin);
+
+  $('btn-transfer-to-relay')?.addEventListener('click', transferToRelay);
 
   // Advanced accordion
   const trigger = $('adv-trigger');
