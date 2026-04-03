@@ -124,7 +124,7 @@ class BridgeConfig:
     idea_file: Optional[Path]
     idea_text: Optional[str]
     plan_output_file: Optional[Path]
-    task_timeout_seconds: int = 300
+    task_timeout_seconds: int = 600  # 10 minutes — 7B models can be slow
     aider_no_map: bool = False
     auto_approve: bool = False  # skip supervisor review; use mechanical validation only
     auto_split_threshold: int = 0  # 0 = disabled; N = split tasks with N+ files into single-file sub-tasks

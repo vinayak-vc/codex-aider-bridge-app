@@ -255,6 +255,7 @@ class AiderRunner:
                 timeout=self._timeout,
                 env=_subprocess_env,
                 creationflags=_WIN_NO_WINDOW,
+                stdin=subprocess.DEVNULL,  # Never wait for input — prevents hang on hidden prompts
             )
         except subprocess.TimeoutExpired as ex:
             # ex.process is not always set (Python 3.11 bug on Windows)

@@ -46,7 +46,7 @@ DEFAULT_SETTINGS: dict = {
     "validation_command": "",
     "max_plan_attempts": 3,
     "max_task_retries": 2,
-    "task_timeout": 300,
+    "task_timeout": 600,
     "plan_output_file": "",
     "plan_file": "",
     "dry_run": False,
