@@ -848,8 +848,8 @@ def execute_task_with_review(
             logger.info("[dry-run] Task %s: %s", current_task.id, current_instruction)
             return
 
-        # ── Read-only task: skip Aider, send file content to supervisor ──────
-        if current_task.type == "read":
+        # ── Read/Investigate task: skip Aider, send file content to supervisor ─
+        if current_task.type in ("read", "investigate"):
             if diagnostics:
                 diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
             logger.info("Task %s: read-only — reading files without Aider", current_task.id)
@@ -865,6 +865,42 @@ def execute_task_with_review(
                         file_contents.append(f"=== {fp} === (error reading: {read_ex})")
                 else:
                     file_contents.append(f"=== {fp} === (file not found)")
+
+            # For investigate tasks: also scan related files (imports, references)
+            if current_task.type == "investigate":
+                import re as _re
+                _seen = set(current_task.files)
+                for fp in list(current_task.files):
+                    abs_fp = config.repo_root / fp
+                    if not abs_fp.exists():
+                        continue
+                    try:
+                        source = abs_fp.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        continue
+                    # Extract imports/requires
+                    related = set()
+                    for m in _re.finditer(r'(?:from|import)\s+([.\w]+)', source):
+                        mod = m.group(1).replace(".", "/") + ".py"
+                        if (config.repo_root / mod).exists():
+                            related.add(mod)
+                    for m in _re.finditer(r'require\(["\']([^"\']+)["\']\)', source):
+                        req = m.group(1)
+                        for ext in ("", ".js", ".ts", ".jsx", ".tsx"):
+                            if (config.repo_root / (req + ext)).exists():
+                                related.add(req + ext)
+                                break
+                    # Add related files (up to 5 extra)
+                    for rel in sorted(related)[:5]:
+                        if rel not in _seen:
+                            _seen.add(rel)
+                            rel_fp = config.repo_root / rel
+                            try:
+                                text = rel_fp.read_text(encoding="utf-8", errors="replace")
+                                file_contents.append(f"=== {rel} (related) ===\n{text[:3000]}")
+                            except Exception:
+                                pass
+                logger.info("Task %s: investigate — read %d files (including related)", current_task.id, len(file_contents))
 
             combined_content = "\n\n".join(file_contents)
 

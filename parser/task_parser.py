@@ -111,10 +111,10 @@ class TaskParser:
             raise PlanParseError(f"Task {task_id} contains an invalid file path.")
         if not isinstance(instruction, str) or not instruction.strip():
             raise PlanParseError(f"Task {task_id} must include a non-empty 'instruction'.")
-        if not isinstance(task_type, str) or task_type not in {"create", "modify", "delete", "validate", "read"}:
+        if not isinstance(task_type, str) or task_type not in {"create", "modify", "delete", "validate", "read", "investigate"}:
             raise PlanParseError(
                 f"Task {task_id} has an unsupported type {task_type!r}. "
-                "Must be one of: create, modify, delete, validate, read."
+                "Must be one of: create, modify, delete, validate, read, investigate."
             )
 
         normalized_files = [fp.strip() for fp in files]

@@ -168,9 +168,14 @@ class SupervisorAgent:
             "- Each task targets exactly one concern and one or more specific files.\n"
             "- Use only relative file paths that are visible in the repo structure below.\n"
             "  If a file does not yet exist, use the path it should be created at.\n"
-            "- Task type must be one of: create, modify, delete, validate, read\n"
-            "- Use type 'read' for analysis-only tasks that read files without modifying them.\n"
-            "  Read tasks return file content to the supervisor for analysis — Aider is NOT invoked.\n"
+            "- Task type must be one of: create, modify, delete, validate, read, investigate\n"
+            "- Use type 'read' for simple file reading — returns file content for analysis.\n"
+            "  Read tasks skip Aider entirely. Use for: list features, check status, read config.\n"
+            "- Use type 'investigate' for multi-file analysis that requires understanding code.\n"
+            "  Investigate tasks read multiple files + their imports/dependencies and send\n"
+            "  everything to the supervisor for deep analysis. Use for: find bugs, review security,\n"
+            "  trace data flow, identify impact of changes, find missing tests.\n"
+            "  Investigate tasks can be followed by create/modify tasks to fix what was found.\n"
             "- Tasks execute sequentially. Later tasks may depend on earlier ones.\n"
             "- Instructions must be concrete but code-free: say WHAT to build, never HOW.\n"
             "- Use must_exist / must_not_exist when the task has a clear post-condition.\n"
@@ -447,7 +452,7 @@ class SupervisorAgent:
             '            "items": { "type": "string", "minLength": 1 }\n'
             "          },\n"
             '          "instruction": { "type": "string", "minLength": 1 },\n'
-            '          "type": { "type": "string", "enum": ["create", "modify", "delete", "validate", "read"] },\n'
+            '          "type": { "type": "string", "enum": ["create", "modify", "delete", "validate", "read", "investigate"] },\n'
             '          "must_exist": { "type": "array", "items": { "type": "string" } },\n'
             '          "must_not_exist": { "type": "array", "items": { "type": "string" } }\n'
             "        }\n"
