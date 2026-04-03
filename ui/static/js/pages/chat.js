@@ -10,6 +10,14 @@ let _selectedModel = '';
 let _abortController = null;
 
 const $ = id => document.getElementById(id);
+const AUTO_SCROLL_THRESHOLD_PX = 48;
+
+function isNearBottom(el) {
+  if (!el) {
+    return true;
+  }
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) <= AUTO_SCROLL_THRESHOLD_PX;
+}
 
 function renderMarkdown(raw) {
   const lines = raw.split('\n');
@@ -84,6 +92,46 @@ function esc(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+async function copyText(text) {
+  const value = String(text || '');
+  if (!value.trim()) {
+    return false;
+  }
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (_) {}
+
+  try {
+    const area = document.createElement('textarea');
+    area.value = value;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const success = document.execCommand('copy');
+    document.body.removeChild(area);
+    return success;
+  } catch (_) {
+    return false;
+  }
+}
+
+function copyButtonMarkup() {
+  return (
+    '<button class="chat-copy-btn" type="button" aria-label="Copy response" title="Copy response">' +
+      '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="14" height="14" aria-hidden="true">' +
+        '<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125H5.625A1.125 1.125 0 0 1 4.5 20.625V9.375c0-.621.504-1.125 1.125-1.125H9m6.75 9V6.75A2.25 2.25 0 0 0 13.5 4.5h-3A2.25 2.25 0 0 0 8.25 6.75v10.5m7.5 0h-7.5" />' +
+      '</svg>' +
+      '<span>Copy</span>' +
+    '</button>'
+  );
 }
 
 function updateHistoryBadge() {
@@ -183,11 +231,43 @@ function renderAssistantMessage(text, isStreaming) {
   meta.textContent = isStreaming ? 'Assistant is typing…' : 'Assistant';
 
   div.appendChild(bubble);
-  div.appendChild(meta);
+  const footer = document.createElement('div');
+  footer.className = 'chat-msg-footer';
+  footer.appendChild(meta);
+
+  if (String(text || '').trim()) {
+    const actions = document.createElement('div');
+    actions.className = 'chat-msg-actions';
+    actions.innerHTML = copyButtonMarkup();
+
+    const copyButton = actions.querySelector('.chat-copy-btn');
+    copyButton?.addEventListener('click', async () => {
+      const ok = await copyText(text);
+      if (!ok) {
+        toast('Could not copy response.', 'error', 1800);
+        return;
+      }
+      const label = copyButton.querySelector('span');
+      if (label) {
+        label.textContent = 'Copied';
+      }
+      copyButton.classList.add('chat-copy-btn--copied');
+      window.setTimeout(() => {
+        copyButton.classList.remove('chat-copy-btn--copied');
+        if (label) {
+          label.textContent = 'Copy';
+        }
+      }, 1800);
+    });
+
+    footer.appendChild(actions);
+  }
+
+  div.appendChild(footer);
   msgs.appendChild(div);
 }
 
-function renderConversation() {
+function renderConversation(options = {}) {
   clearRenderedMessages();
   showWelcomeIfEmpty();
 
@@ -195,6 +275,8 @@ function renderConversation() {
   if (!msgs) {
     return;
   }
+
+  const shouldStickToBottom = options.forceScroll === true || isNearBottom(msgs);
 
   for (let i = 0; i < history.length; i++) {
     const entry = history[i];
@@ -206,18 +288,20 @@ function renderConversation() {
     }
   }
 
-  msgs.scrollTop = msgs.scrollHeight;
+  if (shouldStickToBottom) {
+    msgs.scrollTop = msgs.scrollHeight;
+  }
   updateHistoryBadge();
 }
 
 function appendUserMessage(text) {
   history.push({ role: 'user', content: text });
-  renderConversation();
+  renderConversation({ forceScroll: true });
 }
 
 function createAssistantStreamHandle() {
   history.push({ role: 'assistant', content: '' });
-  renderConversation();
+  renderConversation({ forceScroll: true });
   void persistHistory();
 
   return {
@@ -249,7 +333,7 @@ function createAssistantStreamHandle() {
 
 function appendErrorMessage(msg) {
   history.push({ role: 'assistant', content: msg });
-  renderConversation();
+  renderConversation({ forceScroll: true });
   void persistHistory();
 }
 
