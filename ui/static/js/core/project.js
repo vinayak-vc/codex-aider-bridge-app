@@ -362,6 +362,11 @@ export async function initProjectBar() {
     });
   }
 
+  // Download action log
+  $('sb-download-log')?.addEventListener('click', () => {
+    if (window.__bridgeActionLog) window.__bridgeActionLog.downloadLog();
+  });
+
   // VS Code button in status bar
   $('sb-open-vscode')?.addEventListener('click', async () => {
     try {

@@ -1131,6 +1131,10 @@ async function launchNLRun() {
   connectSSE();
 
   try {
+    // Save current UI settings so the backend uses the correct supervisor
+    const currentSettings = collectSettings();
+    await apiPost('/api/settings', currentSettings);
+
     play('launch');
     const res = await fetch('/api/run/nl/launch', {
       method: 'POST',
