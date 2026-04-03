@@ -1638,6 +1638,21 @@ def api_reports_tokens():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/reports/diagnostics")
+def api_reports_diagnostics():
+    """Run diagnostics for a specific project (reads bridge_progress/RUN_DIAGNOSTICS.json)."""
+    progress_dir = _project_progress_dir(request.args)
+    if progress_dir is None:
+        return jsonify({"error": "repo_root not set"}), 400
+    diag_file = progress_dir / "RUN_DIAGNOSTICS.json"
+    if not diag_file.exists():
+        return jsonify({"error": "No diagnostics available. Complete a run first."}), 404
+    try:
+        return jsonify(json.loads(diag_file.read_text(encoding="utf-8")))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/reports/knowledge")
 def api_reports_knowledge():
     """Project knowledge cache (reads bridge_progress/project_knowledge.json)."""

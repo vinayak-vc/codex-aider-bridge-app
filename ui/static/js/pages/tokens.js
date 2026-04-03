@@ -348,14 +348,69 @@ function connectSSE() {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+// ── Diagnostics panel ────────────────────────────────────────────────────────
+
+async function loadDiagnostics() {
+  const panel = $('diagnostics-panel');
+  if (!panel) return;
+
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    const repo = _repoRoot || settings?.repo_root || '';
+    if (!repo) { panel.style.display = 'none'; return; }
+
+    const resp = await fetch(`/api/reports/diagnostics?repo_root=${encodeURIComponent(repo)}`);
+    if (!resp.ok) { panel.style.display = 'none'; return; }
+    const diag = await resp.json();
+
+    // Status badge
+    const badge = $('diag-status-badge');
+    if (badge) {
+      const s = diag.status || 'unknown';
+      badge.textContent = s;
+      badge.className = `badge ${s === 'success' ? 'badge--success' : 'badge--warning'}`;
+    }
+
+    // Summary
+    const sumEl = $('diag-summary');
+    if (sumEl) sumEl.textContent = diag.ai_summary || 'No summary available.';
+
+    // Blocking patterns
+    const patternsEl = $('diag-patterns');
+    if (patternsEl) {
+      const patterns = diag.blocking_patterns || [];
+      if (patterns.length) {
+        patternsEl.innerHTML = `
+          <div class="detail-section-title" style="margin-bottom:8px">Blocking Patterns Detected</div>
+          ${patterns.map(p => `
+            <div style="padding:8px 12px;margin-bottom:8px;background:color-mix(in srgb, var(--color-warning) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);border-radius:var(--radius-md);font-size:var(--font-size-xs);line-height:1.5">
+              <strong>${esc(p.pattern)}</strong> (${p.count}x, tasks: ${p.tasks.join(', ')})<br>
+              ${esc(p.suggestion)}
+            </div>
+          `).join('')}
+        `;
+      } else {
+        patternsEl.innerHTML = '<div style="font-size:var(--font-size-xs);color:var(--color-text-subtle)">No blocking patterns detected.</div>';
+      }
+    }
+
+    panel.style.display = '';
+  } catch (_) {
+    panel.style.display = 'none';
+  }
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
 function init() {
-  $('btn-refresh-tokens')?.addEventListener('click', loadTokens);
+  $('btn-refresh-tokens')?.addEventListener('click', () => { loadTokens(); loadDiagnostics(); });
   window.addEventListener('bridge:project-switched', event => {
     _repoRoot = event?.detail?.path || '';
     scheduleRefresh();
   });
   connectSSE();
   loadTokens();
+  loadDiagnostics();
 }
 
 init();

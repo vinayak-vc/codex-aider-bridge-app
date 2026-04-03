@@ -27,6 +27,7 @@ from models.task import SubTask
 from utils.manual_supervisor import ManualSupervisorError, ManualSupervisorSession
 from utils.token_tracker import TokenTracker, save_session_to_log
 from utils.report_generator import generate_run_report
+from utils.run_diagnostics import RunDiagnostics
 from utils.project_knowledge import (
     load_knowledge,
     save_knowledge,
@@ -731,6 +732,7 @@ def execute_task_with_review(
     validator: MechanicalValidator,
     logger: logging.Logger,
     aider_context: Optional[AiderContext] = None,
+    diagnostics: Optional[RunDiagnostics] = None,
 ) -> str:
     """Run one task through the Aider → diff → mechanical check loop.
 
@@ -842,6 +844,8 @@ def execute_task_with_review(
             return
 
         # ── Step 1: Execute via Aider ────────────────────────────────────────
+        if diagnostics:
+            diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
         execution_result = runner.run(current_task, selected_files.all_paths, aider_context)
 
         if execution_result.exit_code == -1:
@@ -878,6 +882,18 @@ def execute_task_with_review(
                 wait_seconds = min(2 ** attempt, 30)
                 time.sleep(wait_seconds)
                 continue
+
+        # Record Aider execution result for diagnostics
+        if diagnostics:
+            diagnostics.record_aider_result(
+                task_id=current_task.id,
+                attempt=attempt + 1,
+                exit_code=execution_result.exit_code,
+                succeeded=execution_result.succeeded,
+                stdout=execution_result.stdout,
+                stderr=execution_result.stderr,
+                duration_seconds=execution_result.duration_seconds,
+            )
 
         # ── Step 2: Collect diff ─────────────────────────────────────────────
         diff = diff_collector.collect()
@@ -925,6 +941,13 @@ def execute_task_with_review(
                     must_not_exist=current_task.must_not_exist + unexpected_files,
                 ),
                 selected_files.all_paths,
+            )
+
+        # Record validation result for diagnostics
+        if diagnostics:
+            diagnostics.record_validation(
+                current_task.id, attempt + 1,
+                validation_result.succeeded, validation_result.message,
             )
 
         if not validation_result.succeeded:
@@ -1059,6 +1082,8 @@ def execute_task_with_review(
             review = manual_supervisor.wait_for_decision(current_task.id)
             if review.verdict == "PASS":
                 logger.info("Task %s: manual supervisor approved", current_task.id)
+                if diagnostics:
+                    diagnostics.record_review(current_task.id, attempt + 1, "pass")
                 manual_supervisor.record_completed_review(
                     current_task.id,
                     current_task.instruction,
@@ -1086,6 +1111,8 @@ def execute_task_with_review(
                 time.sleep(wait_seconds)
                 continue
 
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
             logger.warning(
                 "Task %s: manual supervisor requested rework (attempt %s): %s",
                 current_task.id,
@@ -1103,6 +1130,8 @@ def execute_task_with_review(
 
         if config.auto_approve or supervisor is None:
             # Auto-approve mode: mechanical pass = done. No external AI call.
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "pass")
             logger.info("Task %s: mechanical checks passed — auto-approved", current_task.id)
             _emit_structured({
                 "type": "task_complete",
@@ -1121,6 +1150,8 @@ def execute_task_with_review(
 
         if review.verdict == "PASS":
             logger.info("Task %s: supervisor approved", current_task.id)
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "pass")
             _emit_structured({
                 "type": "task_complete",
                 "task_id": current_task.id,
@@ -1128,6 +1159,8 @@ def execute_task_with_review(
             })
             return diff
 
+        if diagnostics:
+            diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
         logger.warning(
             "Task %s: supervisor requested rework (attempt %s): %s",
             current_task.id, attempt + 1, review.new_instruction,
@@ -1735,6 +1768,12 @@ def main() -> int:
     run_start = time.monotonic()
 
     token_tracker = TokenTracker()
+    diagnostics = RunDiagnostics(
+        goal=config.goal,
+        aider_model=config.aider_model or "",
+        supervisor=config.supervisor_command or "manual",
+        task_timeout=config.task_timeout_seconds,
+    )
     repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
@@ -1929,6 +1968,7 @@ def main() -> int:
                 task, config, supervisor, manual_supervisor, selector,
                 runner, diff_collector, validator, logger,
                 aider_context=aider_context,
+                diagnostics=diagnostics,
             )
             failed_task_id = None
             commit_sha = _auto_commit_task_changes(repo_root, task, logger)
@@ -2046,6 +2086,16 @@ def main() -> int:
         except Exception as _rep_ex:
             logger.warning("Could not generate run report: %s", _rep_ex)
 
+        # Write run diagnostics
+        try:
+            diag_report = diagnostics.finalize(
+                "success", list(completed_ids), None, total_tasks=len(tasks),
+            )
+            diagnostics.write(_progress_dir / "RUN_DIAGNOSTICS.json", diag_report)
+            logger.info("Run diagnostics written to %s", _progress_dir / "RUN_DIAGNOSTICS.json")
+        except Exception as _diag_ex:
+            logger.warning("Could not write run diagnostics: %s", _diag_ex)
+
         _emit_structured({"type": "token_report", "report": token_report})
         _emit_structured({"type": "knowledge_updated", "files": len(knowledge["files"])})
 
@@ -2162,6 +2212,16 @@ def main() -> int:
 
             try:
                 generate_run_report(failure_token_report, repo_root)
+            except Exception:
+                pass
+
+            # Write run diagnostics for failure analysis
+            try:
+                diag_report = diagnostics.finalize(
+                    "failure", list(completed_ids), failed_task_id,
+                    error_message=str(ex), total_tasks=len(tasks) if tasks else 0,
+                )
+                diagnostics.write(repo_root / "bridge_progress" / "RUN_DIAGNOSTICS.json", diag_report)
             except Exception:
                 pass
 
