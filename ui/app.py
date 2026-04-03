@@ -1492,6 +1492,58 @@ def api_run_progress():
     })
 
 
+@app.route("/api/run/import-plan", methods=["POST"])
+def api_run_import_plan():
+    """Read a plan JSON file and return tasks with checkpoint status overlay."""
+    data = request.json or {}
+    plan_file = (data.get("plan_file") or "").strip()
+    repo_root = (data.get("repo_root") or "").strip()
+
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+
+    if not plan_file or not Path(plan_file).exists():
+        return jsonify({"error": "Plan file not found"}), 404
+
+    # Load checkpoint
+    completed = set()
+    if repo_root:
+        checkpoint_file = Path(repo_root) / "bridge_progress" / "checkpoint.json"
+        if checkpoint_file.exists():
+            try:
+                completed = set(json.loads(checkpoint_file.read_text(encoding="utf-8")).get("completed", []))
+            except Exception:
+                pass
+
+    # Read plan file
+    try:
+        plan_data = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+        plan_tasks = plan_data.get("tasks", [])
+    except Exception as ex:
+        return jsonify({"error": f"Failed to parse plan: {ex}"}), 400
+
+    tasks = []
+    for pt in plan_tasks:
+        tid = pt.get("id", 0)
+        tasks.append({
+            "id": tid,
+            "type": pt.get("type", ""),
+            "files": pt.get("files", []),
+            "instruction": pt.get("instruction", ""),
+            "status": "done" if tid in completed else "pending",
+        })
+
+    can_resume = bool(completed) and len(completed) < len(tasks)
+
+    return jsonify({
+        "tasks": tasks,
+        "total_tasks": len(tasks),
+        "completed": sorted(completed),
+        "can_resume": can_resume,
+    })
+
+
 @app.route("/api/run/pause", methods=["POST"])
 def api_pause_run():
     """Create the pause file so the bridge stops between tasks."""

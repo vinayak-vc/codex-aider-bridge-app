@@ -1857,7 +1857,26 @@ function bindControls() {
         });
       }
 
-      toast('Plan file loaded: ' + d.path.split(/[\\/]/).pop(), 'success');
+      // Load plan tasks directly via the import API for immediate display
+      try {
+        const planResp = await fetch('/api/run/import-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan_file: d.path }),
+        }).then(r => r.json());
+
+        if (planResp.tasks?.length) {
+          _progressTasks = planResp.tasks;
+          renderProgressPanel({
+            total_tasks: planResp.tasks.length,
+            completed: planResp.completed || [],
+            tasks: planResp.tasks,
+            can_resume: planResp.can_resume || false,
+          });
+        }
+      } catch (_) {}
+
+      toast('Plan loaded: ' + d.path.split(/[\\/]/).pop() + ' — ' + (_progressTasks.length || 0) + ' tasks', 'success');
       await loadProgress();
     } catch (err) {
       toast(err.message || 'Failed to load plan file.', 'error');
