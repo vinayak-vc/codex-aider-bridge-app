@@ -3,11 +3,11 @@
 /* Two-column layout: settings | log */
 .run-layout {
   display: grid;
-  grid-template-columns: 380px 1fr;
-  gap: 20px;
+  grid-template-columns: minmax(380px, 420px) 1fr;
+  gap: 24px;
   align-items: start;
 }
-@media (max-width: 960px) {
+@media (max-width: 1024px) {
   .run-layout { grid-template-columns: 1fr; }
 }
 
@@ -169,7 +169,12 @@
 .command-preview .cmd-flag { color: var(--color-warning); }
 
 /* ── Log panel ── */
-.run-log-panel { display: flex; flex-direction: column; gap: 12px; }
+.run-log-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 600px;
+}
 
 .log-toolbar {
   display: flex;
@@ -241,6 +246,11 @@
 .run-status-banner.--stopped  { background: var(--color-warning-bg); border: 1px solid var(--color-warning); color: var(--color-warning); }
 
 /* ── Mode toggle ── */
+.run-mode-toggle-row {
+  margin-bottom: 24px;
+  position: relative;
+  z-index: 10;
+}
 .run-mode-toggle {
   display: flex;
   border: 1px solid var(--color-border);

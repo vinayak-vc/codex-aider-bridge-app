@@ -917,6 +917,43 @@ def api_run_brief():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/relay/import-from-nl", methods=["POST"])
+def api_relay_import_from_nl():
+    """Import a plan generated in NL mode into the Relay state."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    tasks = data.get("tasks", [])
+    brief = data.get("brief", {})
+    summary = str(data.get("plan_summary", "")).strip()
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+    if not tasks:
+        return jsonify({"error": "No tasks to import"}), 400
+
+    # Ensure project exists
+    state_store.add_project(repo_root)
+
+    # 1. Update Relay-specific state
+    # We simulate a "completed Step 2" in Relay wizard
+    relay_session_id = str(uuid.uuid4())[:8] # New session for this run
+    
+    relay_state = {
+        "step": 2, # Jump straight to task confirmation
+        "goal": brief.get("goal", ""),
+        "repo_root": repo_root,
+        "aider_model": state_store.load_settings().get("aider_model", "ollama/qwen2.5-coder:14b"),
+        "relay_session_id": relay_session_id,
+        "tasks": tasks,
+        "plan_summary": summary,
+        "live_run_active": False,
+    }
+    state_store.save_relay_ui_state(relay_state)
+    state_store.save_relay_tasks(tasks)
+
+    return jsonify({"ok": True, "redirect": "/relay"})
+
+
 @app.route("/api/run/nl/plan", methods=["POST"])
 def api_run_nl_plan():
     """Generate a structured task plan from an NL brief via Ollama."""
@@ -1059,11 +1096,9 @@ def api_run_nl_state_save():
         repo_root = settings.get("repo_root", "").strip()
     if not repo_root:
         return jsonify({"error": "repo_root is required"}), 400
-    state_store.save_run_nl_state(repo_root, {
-        "message": str(data.get("message", "")),
-        "brief":   data.get("brief") or {},
-        "status":  str(data.get("status", "drafting")),
-    })
+    
+    # Save the entire data blob (state_store will filter for allowed keys)
+    state_store.save_run_nl_state(repo_root, data)
     return jsonify({"ok": True})
 
 

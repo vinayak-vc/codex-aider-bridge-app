@@ -30,14 +30,15 @@
   </div>
 </div>
 
+<div class="run-mode-toggle-row">
+  <div class="run-mode-toggle">
+    <button class="run-mode-btn --active" id="btn-mode-structured">Structured</button>
+    <button class="run-mode-btn" id="btn-mode-nl">Natural Language</button>
+  </div>
+</div>
+
 <!-- Run status banner -->
 <div id="run-status-banner" style="display:none;margin-bottom:16px"></div>
-
-<!-- Mode toggle -->
-<div class="run-mode-toggle">
-  <button class="run-mode-btn --active" id="btn-mode-structured">Structured</button>
-  <button class="run-mode-btn" id="btn-mode-nl">Natural Language</button>
-</div>
 
 <div class="run-layout">
 
@@ -212,7 +213,13 @@
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/>
               </svg>
-              Launch This Run
+            Launch This Run
+            </button>
+            <button class="btn btn--secondary" id="btn-transfer-to-relay" style="width:100%;margin-top:8px">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.288 15.038a5.25 5.25 0 0 1 7.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 0 1 1.06 0Z"/>
+              </svg>
+              Start Supervised Run (AI Relay)
             </button>
           </div>
         </div>
