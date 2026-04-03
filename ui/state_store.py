@@ -330,12 +330,17 @@ def load_run_nl_state(project_key: str) -> dict:
 def save_run_nl_state(project_key: str, state: dict) -> None:
     """Persist NL conversation state for a project.
 
-    Allowed keys: message, brief, status, updated_at.
+    Allowed keys: message, brief, status, tasks, plan_summary, plan_file,
+    plan_status, updated_at.
     """
     if not project_key:
         return
     import time as _time
-    allowed = {"message", "brief", "status", "updated_at"}
+    allowed = {
+        "message", "brief", "status",
+        "tasks", "plan_summary", "plan_file", "plan_status",
+        "updated_at",
+    }
     cleaned = {k: state[k] for k in allowed if k in state}
     cleaned.setdefault("updated_at", _time.time())
     states = _load_run_nl_states()

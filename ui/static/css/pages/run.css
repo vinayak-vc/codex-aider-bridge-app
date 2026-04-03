@@ -348,6 +348,130 @@
 }
 .nl-clarification .nl-brief-label { color: var(--color-warning); }
 
+/* ── NL plan section ── */
+.nl-plan-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 10px;
+  color: var(--color-text-subtle);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.nl-plan-divider::before,
+.nl-plan-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-muted);
+}
+
+.nl-plan-summary {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.55;
+  margin: 8px 0 10px;
+  font-style: italic;
+}
+
+/* NL task list */
+.nl-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.nl-task-list::-webkit-scrollbar { width: 4px; }
+.nl-task-list::-webkit-scrollbar-track { background: transparent; }
+.nl-task-list::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+
+.nl-task-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  animation: task-in .15s ease-out;
+}
+.nl-task-num {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  min-width: 18px;
+  padding-top: 1px;
+  flex-shrink: 0;
+}
+.nl-task-body { flex: 1; min-width: 0; }
+.nl-task-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.nl-task-title {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nl-task-instruction {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.nl-task-files {
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
+
+/* Type badges — same colours as relay page (relay.css not loaded here) */
+.relay-task-type-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+.relay-task-type-badge[data-type="create"]   { background: rgba(34,197,94,.15);   color: #22c55e; border: 1px solid rgba(34,197,94,.3);   }
+.relay-task-type-badge[data-type="modify"]   { background: rgba(225,29,72,.12);   color: var(--color-accent); border: 1px solid rgba(225,29,72,.3);  }
+.relay-task-type-badge[data-type="delete"]   { background: rgba(251,113,133,.12); color: var(--color-danger); border: 1px solid rgba(251,113,133,.3);}
+.relay-task-type-badge[data-type="validate"] { background: rgba(249,115,22,.12);  color: var(--color-info);   border: 1px solid rgba(249,115,22,.3); }
+
+/* Status chip info modifier */
+.nl-status-chip.--info {
+  border-color: var(--color-info, #06b6d4);
+  background: rgba(6,182,212,.06);
+  color: var(--color-info, #06b6d4);
+}
+
+/* Plan confirmed banner */
+.nl-plan-confirmed-banner {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-success);
+  background: var(--color-success-bg, rgba(34,197,94,.06));
+  color: var(--color-success);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
 /* ── Stdin input row ── */
 .log-input-row {
   display: flex;

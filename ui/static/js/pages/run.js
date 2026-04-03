@@ -144,11 +144,13 @@ let _nlMode = false;
 let _currentBrief = null;
 let _nlProjectKey  = '';   // repo_root used as project key
 
-// Status: 'drafting' | 'needs_clarification' | 'ready_to_run'
+// Status chip states
 const NL_STATUS = {
-  drafting:           { label: 'Drafting',             mod: '' },
-  needs_clarification:{ label: 'Needs clarification',  mod: '--warning' },
-  ready_to_run:       { label: 'Ready to run',         mod: '--success' },
+  drafting:           { label: 'Drafting',            mod: '' },
+  needs_clarification:{ label: 'Needs clarification', mod: '--warning' },
+  ready_to_run:       { label: 'Ready to run',        mod: '--success' },
+  plan_ready:         { label: 'Plan ready',          mod: '--info' },
+  plan_confirmed:     { label: 'Plan confirmed',      mod: '--success' },
 };
 
 function _nlStatusFor(brief) {
@@ -166,7 +168,7 @@ function setNLStatusChip(status) {
   row.style.display = '';
 }
 
-async function _saveNLState(status) {
+async function _saveNLState(status, extra = {}) {
   if (!_nlProjectKey) return;
   try {
     await fetch('/api/run/nl/state', {
@@ -177,6 +179,7 @@ async function _saveNLState(status) {
         message:   $('nl-input')?.value || '',
         brief:     _currentBrief || {},
         status,
+        ...extra,
       }),
     });
   } catch (_) {}
@@ -203,10 +206,27 @@ async function _restoreNLState() {
     // Restore textarea
     if ($('nl-input')) $('nl-input').value = state.message;
 
-    // Restore brief if present
+    // Restore brief
     if (state.brief && state.brief.goal) {
       _currentBrief = state.brief;
       renderBrief(state.brief);
+    }
+
+    // Restore plan tasks if present
+    if (Array.isArray(state.tasks) && state.tasks.length) {
+      renderNLTaskList(state.tasks, state.plan_summary || '');
+
+      if (state.plan_status === 'plan_confirmed') {
+        _confirmedPlanFile = state.plan_file || '';
+        const banner = $('nl-plan-confirmed-banner');
+        if (banner) {
+          banner.textContent = _confirmedPlanFile
+            ? `Plan saved → ${_confirmedPlanFile}`
+            : 'Plan confirmed.';
+        }
+        $('nl-plan-confirmed-wrap').style.display = '';
+        $('nl-plan-actions').style.display = 'none';
+      }
     }
 
     // Restore status chip
@@ -332,6 +352,129 @@ async function applyBrief() {
   await _saveNLState('ready_to_run');
   $('f-goal')?.focus();
   toast('Brief applied — review the fields and launch when ready.', 'success');
+}
+
+// ── Plan generation ───────────────────────────────────────────────────────────
+
+let _confirmedPlanFile = '';
+
+function renderNLTaskList(tasks, summary) {
+  const list = $('nl-task-list');
+  if (!list) return;
+
+  list.innerHTML = tasks.map(t => {
+    const type  = t.type || 'modify';
+    const files = (t.files || []).join(', ');
+    return `<div class="nl-task-item">
+      <div class="nl-task-num">${t.id}</div>
+      <div class="nl-task-body">
+        <div class="nl-task-head">
+          <span class="nl-task-title">${escHtml(t.title || t.instruction?.slice(0, 60) || '')}</span>
+          <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
+        </div>
+        <div class="nl-task-instruction">${escHtml(t.instruction || '')}</div>
+        ${files ? `<div class="nl-task-files">${escHtml(files)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const summaryEl = $('nl-plan-summary');
+  if (summaryEl) {
+    summaryEl.textContent = summary || '';
+    summaryEl.style.display = summary ? '' : 'none';
+  }
+
+  $('nl-plan-output').style.display = '';
+  $('nl-plan-actions').style.display = 'flex';
+  $('nl-plan-confirmed-wrap').style.display = 'none';
+}
+
+async function generatePlan() {
+  if (!_currentBrief?.goal) {
+    toast('Generate a brief first, then generate a plan.', 'warning');
+    return;
+  }
+
+  const btn = $('btn-generate-plan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating plan…'; }
+  $('nl-plan-output').style.display = 'none';
+
+  try {
+    const res  = await fetch('/api/run/nl/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey, brief: _currentBrief }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Plan generation failed.');
+
+    renderNLTaskList(data.tasks, data.plan_summary);
+    setNLStatusChip('plan_ready');
+    await _saveNLState('plan_ready', {
+      tasks:        data.tasks,
+      plan_summary: data.plan_summary,
+      plan_status:  'plan_ready',
+    });
+    _confirmedPlanFile = '';
+  } catch (err) {
+    toast(err.message || 'Plan generation failed.', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg> Generate Plan';
+    }
+  }
+}
+
+async function confirmPlan() {
+  const taskItems = $('nl-task-list')?.querySelectorAll('.nl-task-item');
+  if (!taskItems?.length) {
+    toast('No plan to confirm.', 'warning');
+    return;
+  }
+
+  const btn = $('btn-confirm-plan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  // Extract current tasks from the rendered list (use the saved state)
+  try {
+    const stateRes = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
+    const state    = await stateRes.json();
+    const tasks    = state.tasks || [];
+    const summary  = state.plan_summary || '';
+
+    const res  = await fetch('/api/run/nl/plan/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo_root:    _nlProjectKey,
+        tasks,
+        plan_summary: summary,
+        brief:        _currentBrief || {},
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Confirm failed.');
+
+    _confirmedPlanFile = data.plan_file || '';
+
+    // Show confirmed banner
+    const banner = $('nl-plan-confirmed-banner');
+    if (banner) {
+      banner.textContent = _confirmedPlanFile
+        ? `Plan saved → ${_confirmedPlanFile}`
+        : 'Plan confirmed.';
+    }
+    $('nl-plan-confirmed-wrap').style.display = '';
+    $('nl-plan-actions').style.display = 'none';
+
+    setNLStatusChip('plan_confirmed');
+    toast('Plan confirmed and saved.', 'success');
+  } catch (err) {
+    toast(err.message || 'Failed to confirm plan.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Plan'; }
+  }
 }
 
 // ── Settings → form ──────────────────────────────────────────────────────────
@@ -609,19 +752,32 @@ function bindControls() {
   $('btn-generate-brief')?.addEventListener('click', generateBrief);
   $('btn-apply-brief')?.addEventListener('click', applyBrief);
 
-  // Regenerate — clear brief output only, keep textarea message
+  // Regenerate brief — clear brief + plan, keep textarea message
   $('btn-regenerate-brief')?.addEventListener('click', () => {
     $('nl-brief-output').style.display = 'none';
+    $('nl-plan-output').style.display = 'none';
     _currentBrief = null;
+    _confirmedPlanFile = '';
     $('nl-input')?.focus();
+  });
+
+  // Plan controls
+  $('btn-generate-plan')?.addEventListener('click', generatePlan);
+  $('btn-confirm-plan')?.addEventListener('click', confirmPlan);
+  $('btn-regenerate-plan')?.addEventListener('click', () => {
+    $('nl-plan-output').style.display = 'none';
+    _confirmedPlanFile = '';
+    setNLStatusChip(_nlStatusFor(_currentBrief));
   });
 
   // New Conversation — clear everything including server state
   $('btn-new-conversation')?.addEventListener('click', async () => {
     if ($('nl-input')) $('nl-input').value = '';
     $('nl-brief-output').style.display = 'none';
+    $('nl-plan-output').style.display = 'none';
     $('nl-status-row').style.display = 'none';
     _currentBrief = null;
+    _confirmedPlanFile = '';
     await _clearNLState();
     $('nl-input')?.focus();
   });

@@ -856,6 +856,127 @@ def api_run_brief():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/run/nl/plan", methods=["POST"])
+def api_run_nl_plan():
+    """Generate a structured task plan from an NL brief via Ollama."""
+    import urllib.request
+    import urllib.error
+
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    brief = data.get("brief") or {}
+
+    if not brief or not brief.get("goal"):
+        return jsonify({"error": "brief with goal is required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = settings.get("repo_root", "").strip()
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
+
+    # Build a rich goal string from the brief fields
+    goal_parts = [str(brief.get("goal", "")).strip()]
+    constraints = brief.get("constraints") or []
+    if constraints:
+        goal_parts.append("Constraints:\n" + "\n".join(f"- {c}" for c in constraints))
+    acceptance = brief.get("acceptance_criteria") or []
+    if acceptance:
+        goal_parts.append("Acceptance criteria:\n" + "\n".join(f"- {a}" for a in acceptance))
+    goal_text = "\n\n".join(goal_parts)
+
+    knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
+
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from utils.relay_formatter import build_plan_prompt, parse_plan
+
+    prompt = build_plan_prompt(goal_text, knowledge_ctx, repo_root)
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": [
+            {"role": "system", "content": "You are a software planning assistant. Output only the JSON requested."},
+            {"role": "user",   "content": prompt},
+        ],
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        content = result.get("message", {}).get("content", "").strip()
+        tasks = parse_plan(content)
+        plan_summary = ""
+        try:
+            plan_summary = str(json.loads(content).get("plan_summary", ""))
+        except Exception:
+            pass
+        return jsonify({"plan_summary": plan_summary, "tasks": tasks})
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", str(exc))
+        return jsonify({"error": f"Ollama not reachable: {reason}. Is Ollama running?"}), 503
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/run/nl/plan/confirm", methods=["POST"])
+def api_run_nl_plan_confirm():
+    """Write the confirmed plan JSON to the project's taskJsons/ directory and persist state."""
+    import datetime
+
+    data = request.get_json(force=True) or {}
+    repo_root    = str(data.get("repo_root", "")).strip()
+    tasks        = data.get("tasks") or []
+    plan_summary = str(data.get("plan_summary", "")).strip()
+    brief        = data.get("brief") or {}
+
+    if not tasks:
+        return jsonify({"error": "tasks are required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = settings.get("repo_root", "").strip()
+
+    plan_file = ""
+    if repo_root:
+        try:
+            tasks_dir = Path(repo_root) / "taskJsons"
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            plan_path = tasks_dir / f"nl_plan_{stamp}.json"
+            plan_payload = {"plan_summary": plan_summary, "tasks": tasks}
+            plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
+            plan_file = str(plan_path)
+        except Exception as exc:
+            return jsonify({"error": f"Could not write plan file: {exc}"}), 500
+
+    # Persist the confirmed plan in NL state
+    if repo_root:
+        state_store.save_run_nl_state(repo_root, {
+            "brief":        brief,
+            "tasks":        tasks,
+            "plan_summary": plan_summary,
+            "plan_file":    plan_file,
+            "plan_status":  "plan_confirmed",
+            "status":       "plan_confirmed",
+        })
+
+    return jsonify({"ok": True, "plan_file": plan_file})
+
+
 @app.route("/api/run/nl/state", methods=["GET"])
 def api_run_nl_state_get():
     """Return the persisted NL conversation state for the current project."""

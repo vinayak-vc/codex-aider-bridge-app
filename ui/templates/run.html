@@ -86,8 +86,39 @@
             </svg>
             Apply to Run
           </button>
-          <button class="btn btn--secondary" id="btn-regenerate-brief">Regenerate</button>
+          <button class="btn btn--secondary" id="btn-regenerate-brief">Regenerate Brief</button>
         </div>
+
+        <!-- ── Plan section ── -->
+        <div class="nl-plan-divider">
+          <span>Plan</span>
+        </div>
+
+        <button class="btn btn--secondary" id="btn-generate-plan" style="width:100%">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>
+          </svg>
+          Generate Plan
+        </button>
+
+        <!-- Plan output (hidden until plan generated) -->
+        <div id="nl-plan-output" style="display:none">
+          <p class="nl-plan-summary" id="nl-plan-summary"></p>
+          <div class="nl-task-list" id="nl-task-list"></div>
+          <div id="nl-plan-actions" style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn btn--primary" id="btn-confirm-plan" style="flex:1">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+              </svg>
+              Confirm Plan
+            </button>
+            <button class="btn btn--secondary" id="btn-regenerate-plan">Regenerate Plan</button>
+          </div>
+          <div id="nl-plan-confirmed-wrap" style="display:none">
+            <div class="nl-plan-confirmed-banner" id="nl-plan-confirmed-banner"></div>
+          </div>
+        </div>
+
       </div>
 
     </div><!-- /nl-panel -->
