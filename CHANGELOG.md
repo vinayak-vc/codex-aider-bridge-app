@@ -2,6 +2,28 @@
 
 ---
 
+## [2026-04-03] - Universal Pipeline and Supervisor Proxy
+
+### Added
+- **Universal Pipeline**: all supervisor types now use `--manual-supervisor` under the hood; the UI backend dispatches review decisions via a `SupervisorProxyThread`
+- **`SupervisorProxyThread`**: background thread that polls for bridge review requests and auto-dispatches to the correct supervisor (CLI subprocess for Codex/Claude/Cursor/Windsurf, SSE events for Chatbot/Manual)
+- **Mid-run supervisor switching**: supervisor radio buttons stay interactive during a run; changing supervisor takes effect on the next review point without restarting the bridge process
+- **`POST /api/run/supervisor` route**: accepts `{ supervisor, supervisor_command? }` to switch supervisor mid-run
+- **Role indicator strip**: shows Planner/Reviewer role status during runs with active/done states and animated transitions
+- **SSE events**: `planner_active`, `planner_done`, `reviewer_active`, `reviewer_done`, `supervisor_review_requested`, `supervisor_review_submitted`
+
+### Changed
+- `bridge_runner.py` no longer conditionally selects between `--manual-supervisor` and `--supervisor-command`; all runs append `--manual-supervisor`
+- Removed `_relay_mode` flag from `BridgeRun` — proxy thread handles chatbot vs CLI dispatch
+- Command preview always shows `--manual-supervisor`, never `--supervisor-command`
+- `collectSettings()` in run.js always sets `manual_supervisor: true`
+
+### Removed
+- `POST /api/relay/import-from-nl` route (stale, unused by frontend)
+- `POST /api/relay/state` route (stale, unused by frontend)
+
+---
+
 ## [2026-04-02] - Chat Drawer Persistence and AI Relay Restore
 
 ### Added

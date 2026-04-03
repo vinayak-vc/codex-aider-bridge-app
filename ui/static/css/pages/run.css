@@ -869,3 +869,61 @@
 .relay-done-icon[data-failed="true"] { color: var(--color-danger); }
 .relay-done-title { font-size: var(--font-size-lg); font-weight: 700; margin-bottom: 6px; }
 .relay-done-sub   { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+
+/* ── Role indicator strip ── */
+.role-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  transition: all 0.2s ease;
+}
+
+.role-badge-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.role-badge[data-state="active"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+.role-badge[data-state="active"] .role-badge-icon {
+  animation: role-pulse 1.4s infinite;
+}
+
+.role-badge[data-state="done"] {
+  color: var(--color-success);
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+@keyframes role-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+.role-strip-connector {
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.5;
+}
