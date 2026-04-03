@@ -590,16 +590,24 @@ def api_browse_folder():
 
 @app.route("/api/browse/file")
 def api_browse_file():
+    filter_type = request.args.get("filter", "docs")
     try:
         import tkinter as tk
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
+
+        filters = {
+            "docs": ([("Markdown", "*.md"), ("Text", "*.txt"), ("All files", "*.*")], "Select idea / brief file"),
+            "json": ([("JSON files", "*.json"), ("All files", "*.*")], "Select plan file (JSON)"),
+        }
+        filetypes, title = filters.get(filter_type, filters["docs"])
+
         path = filedialog.askopenfilename(
             parent=root,
-            title="Select idea / brief file",
-            filetypes=[("Markdown", "*.md"), ("Text", "*.txt"), ("All files", "*.*")],
+            title=title,
+            filetypes=filetypes,
         )
         root.destroy()
         return jsonify({"path": path or ""})

@@ -1833,10 +1833,10 @@ function bindControls() {
   // Task progress panel
   $('btn-refresh-progress')?.addEventListener('click', loadProgress);
 
-  // Load plan file from disk
+  // Load plan file from disk (JSON filter)
   $('btn-load-plan')?.addEventListener('click', async () => {
     try {
-      const d = await fetch('/api/browse/file').then(r => r.json());
+      const d = await fetch('/api/browse/file?filter=json').then(r => r.json());
       if (!d.path) return;
 
       // Save as the plan file in settings and NL state
