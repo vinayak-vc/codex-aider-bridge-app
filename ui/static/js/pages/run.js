@@ -155,7 +155,9 @@ const NL_STATUS = {
 
 function _nlStatusFor(brief) {
   if (!brief) return 'drafting';
-  return brief.needs_clarification ? 'needs_clarification' : 'ready_to_run';
+  const confidence = brief.confidence_score ?? 100;
+  if (brief.needs_clarification || confidence < 60) return 'needs_clarification';
+  return 'ready_to_run';
 }
 
 function setNLStatusChip(status) {
@@ -179,6 +181,9 @@ async function _saveNLState(status, extra = {}) {
         message:   $('nl-input')?.value || '',
         brief:     _currentBrief || {},
         status,
+        confidence_score: _currentBrief?.confidence_score,
+        risks:            _currentBrief?.risks,
+        risk_level:       _currentBrief?.risk_level,
         ...extra,
       }),
     });
@@ -269,6 +274,18 @@ function renderBrief(brief) {
     ${_renderBriefSection('Acceptance Criteria', brief.acceptance_criteria)}
   `;
 
+  // Confidence badge
+  const confBadge = $('nl-confidence-badge');
+  if (confBadge) {
+    const score = brief.confidence_score ?? 100;
+    confBadge.textContent = `${score}% Confidence`;
+    confBadge.style.display = '';
+    confBadge.className = 'nl-confidence-badge'; // Reset
+    if (score >= 80) confBadge.classList.add('--high');
+    else if (score >= 60) confBadge.classList.add('--medium');
+    else confBadge.classList.add('--low');
+  }
+
   const qWrap = $('nl-questions-wrap');
   const qCard = $('nl-questions-card');
   if (qWrap && qCard) {
@@ -284,7 +301,52 @@ function renderBrief(brief) {
     }
   }
 
+  // Risk alert
+  const riskAlert = $('nl-risk-alert');
+  if (riskAlert) {
+    if (brief.risks?.length) {
+      riskAlert.innerHTML = `
+        <div class="nl-brief-section">
+          <div class="nl-brief-label">Potential Risks Detected</div>
+          ${brief.risks.map(r => `<div class="nl-brief-item">• ${escHtml(r)}</div>`).join('')}
+        </div>`;
+      riskAlert.style.display = '';
+    } else {
+      riskAlert.style.display = 'none';
+    }
+  }
+
+  validateSafety();
   $('nl-brief-output').style.display = '';
+}
+
+function validateSafety() {
+  if (!_currentBrief) return;
+
+  const confidence = _currentBrief.confidence_score ?? 100;
+  const isConfident = confidence >= 60;
+  const isClarified = !(_currentBrief.needs_clarification || _currentBrief.clarification_questions?.length);
+  const riskVerified = !_currentBrief.requires_confirmation || $('f-nl-safety-ack')?.checked;
+
+  const canProceed = isConfident && isClarified && riskVerified;
+
+  const btnApply = $('btn-apply-brief');
+  const btnPlan = $('btn-generate-plan');
+
+  if (btnApply) btnApply.disabled = !canProceed;
+  if (btnPlan) btnPlan.disabled = !canProceed;
+
+  // Show/hide safety wrap if risky or low confidence
+  const safetyWrap = $('nl-safety-wrap');
+  if (safetyWrap) {
+    const shouldShow = _currentBrief.requires_confirmation || !isConfident;
+    safetyWrap.style.display = shouldShow ? '' : 'none';
+    
+    // If low confidence and no risks, hide the alert box itself but keep wrap for clarify info
+    const risks = _currentBrief.risks || [];
+    const riskAlert = $('nl-risk-alert');
+    if (riskAlert) riskAlert.style.display = risks.length ? '' : 'none';
+  }
 }
 
 async function generateBrief() {
@@ -827,6 +889,7 @@ function bindControls() {
   // Launch / stop
   $('btn-launch-run')?.addEventListener('click', launchRun);
   $('btn-launch-nl-run')?.addEventListener('click', launchNLRun);
+  $('f-nl-safety-ack')?.addEventListener('change', validateSafety);
   $('btn-stop-run')?.addEventListener('click', async () => {
     try {
       await apiPost('/api/run/stop');

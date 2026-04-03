@@ -472,7 +472,7 @@
   word-break: break-all;
 }
 
-/* ── Stdin input row ── */
+/* Stdin input row */
 .log-input-row {
   display: flex;
   gap: 8px;
@@ -484,3 +484,39 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
+
+/* ── NL safety layer ── */
+.nl-confidence-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  margin-left: 8px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.nl-confidence-badge.--high   { background: rgba(34,197,94,.15); color: #22c55e; border: 1px solid rgba(34,197,94,.3); }
+.nl-confidence-badge.--medium { background: rgba(245,158,11,.15); color: var(--color-warning); border: 1px solid rgba(245,158,11,.3); }
+.nl-confidence-badge.--low    { background: rgba(239,68,68,.15);  color: var(--color-danger);  border: 1px solid rgba(239,68,68,.3); }
+
+.nl-safety-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.4;
+  margin-top: 8px;
+}
+.nl-safety-confirm input {
+  margin-top: 2px;
+  accent-color: var(--color-accent);
+}
+
+.nl-risk {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg, rgba(239,68,68,.04));
+}
+.nl-risk .nl-brief-label { color: var(--color-danger); }

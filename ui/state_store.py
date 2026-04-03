@@ -339,7 +339,7 @@ def save_run_nl_state(project_key: str, state: dict) -> None:
     allowed = {
         "message", "brief", "status",
         "tasks", "plan_summary", "plan_file", "plan_status",
-        "last_run_id", "updated_at",
+        "last_run_id", "confidence_score", "risks", "risk_level", "updated_at",
     }
     cleaned = {k: state[k] for k in allowed if k in state}
     cleaned.setdefault("updated_at", _time.time())

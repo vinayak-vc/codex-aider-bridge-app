@@ -850,7 +850,10 @@ def api_run_brief():
         '  "constraints": ["Do not touch X"],\n'
         '  "acceptance_criteria": ["User can do A"],\n'
         '  "clarification_questions": [],\n'
-        '  "needs_clarification": false\n'
+        '  "needs_clarification": false,\n'
+        '  "confidence_score": 85,\n'
+        '  "risks": ["Potential risk 1"],\n'
+        '  "risk_level": "low"\n'
         "}\n\n"
         "Rules:\n"
         "- goal: single precise technical statement, not a question\n"
@@ -859,6 +862,9 @@ def api_run_brief():
         "- acceptance_criteria: observable, testable outcomes\n"
         "- clarification_questions: ONLY when something critical is ambiguous; leave [] when clear\n"
         "- needs_clarification: true only when clarification_questions is non-empty\n"
+        "- confidence_score: 0 to 100 based on how well you understand the request\n"
+        "- risks: identify patterns like bulk deletion, massive refactors, or sensitive file edits\n"
+        "- risk_level: 'low', 'medium', or 'high'\n"
         "- Be concise. One item per list entry. No generic items like 'code should work'."
     )
     if knowledge_ctx:
@@ -897,6 +903,10 @@ def api_run_brief():
         brief.setdefault("acceptance_criteria", [])
         brief.setdefault("clarification_questions", [])
         brief["needs_clarification"] = bool(brief.get("clarification_questions"))
+        brief.setdefault("confidence_score", 100)
+        brief.setdefault("risks", [])
+        brief.setdefault("risk_level", "low")
+        brief["requires_confirmation"] = brief.get("risk_level") in ("medium", "high")
         return jsonify(brief)
     except urllib.error.URLError as exc:
         reason = getattr(exc, "reason", str(exc))
