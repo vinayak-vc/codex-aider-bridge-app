@@ -5,6 +5,54 @@ import { apiPost }   from '/static/js/core/api.js';
 import { toast }     from '/static/js/core/toast.js';
 import { play }      from '/static/js/core/sounds.js';
 
+// ── Tab switching ────────────────────────────────────────────────────────────
+
+let _activeTab = 'settings';
+let _logBadgeCount = 0;
+
+function switchRunTab(tabName) {
+  _activeTab = tabName;
+  document.querySelectorAll('#run-tabs .tab').forEach(btn => {
+    btn.classList.toggle('--active', btn.dataset.tab === tabName);
+  });
+  const settingsPanel = $('run-tab-settings');
+  const logPanel      = $('run-tab-log');
+  if (settingsPanel) {
+    settingsPanel.classList.toggle('--active', tabName === 'settings');
+    settingsPanel.style.display = tabName === 'settings' ? '' : 'none';
+  }
+  if (logPanel) {
+    logPanel.classList.toggle('--active', tabName === 'log');
+    logPanel.style.display = tabName === 'log' ? '' : 'none';
+  }
+  // Clear log badge when switching to log tab
+  if (tabName === 'log') {
+    _logBadgeCount = 0;
+    _updateLogBadge();
+    // Scroll to bottom when switching to log
+    const terminal = $('log-terminal');
+    if (terminal) terminal.scrollTop = terminal.scrollHeight;
+  }
+}
+
+function _updateLogBadge() {
+  const badge = $('run-tab-log-badge');
+  if (!badge) return;
+  if (_logBadgeCount > 0 && _activeTab !== 'log') {
+    badge.textContent = _logBadgeCount > 99 ? '99+' : String(_logBadgeCount);
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function _incrementLogBadge() {
+  if (_activeTab !== 'log') {
+    _logBadgeCount++;
+    _updateLogBadge();
+  }
+}
+
 // ── Supervisor presets ────────────────────────────────────────────────────────
 
 const SUPERVISOR_CMDS = {
@@ -731,6 +779,7 @@ function appendLog(rawLine) {
   terminal.appendChild(span);
 
   if (_autoScroll) terminal.scrollTop = terminal.scrollHeight;
+  _incrementLogBadge();
 }
 
 function clearLog() {
@@ -799,6 +848,7 @@ function connectSSE() {
       showBanner('running', 'Run in progress…');
       _setRoleState('role-planner', 'active', 'Planner — generating...');
       showRoleStrip(true);
+      switchRunTab('log');
     })
     .on('complete', d => {
       const ok  = d.status === 'success';
@@ -1146,7 +1196,6 @@ async function _cbLaunchRun() {
   _sse = new SSEClient('/api/run/stream');
   _sse
     .on('log',                 d => appendLog(d.line || ''))
-    .on('relay_review_needed', d => _cbOnReviewNeeded(d))
     .on('review_required',     d => _cbOnReviewNeeded(d))
     .on('progress',  d => _cbUpdateProgress(d.completed, d.total))
     .on('plan_ready', d => { _cbTotalTasks = d.task_count || 0; _cbUpdateProgress(0, _cbTotalTasks); })
@@ -1578,6 +1627,11 @@ function bindControls() {
     body?.classList.toggle('--hidden', expanded);
   });
 
+  // Tab switching
+  document.querySelectorAll('#run-tabs .tab').forEach(btn => {
+    btn.addEventListener('click', () => switchRunTab(btn.dataset.tab));
+  });
+
   // Chatbot wizard controls
   bindChatbotControls();
 }
@@ -1595,6 +1649,9 @@ async function hydrateExistingRun() {
     // Always replay logged lines so the terminal is populated
     const log = await fetch('/api/run/log').then(r => r.json());
     if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
+
+    // Switch to log tab since there's run data to show
+    switchRunTab('log');
 
     if (alive) {
       setRunning(true);

@@ -609,6 +609,7 @@ _SUPERVISOR_CLI_CMDS: dict[str, str] = {
 
 # Active proxy threads keyed by run_id
 _active_proxy_threads: dict[str, "SupervisorProxyThread"] = {}
+_proxy_lock = threading.Lock()
 
 
 class SupervisorProxyThread(threading.Thread):
@@ -892,7 +893,8 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
             })
             run.remove_listener(on_event)
             # Stop the supervisor proxy thread
-            proxy = _active_proxy_threads.pop(run_id, None)
+            with _proxy_lock:
+                proxy = _active_proxy_threads.pop(run_id, None)
             if proxy:
                 proxy.stop()
 
@@ -915,7 +917,8 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
     )
     if supervisor == "custom" and supervisor_command:
         proxy.set_supervisor("custom", supervisor_command)
-    _active_proxy_threads[run_id] = proxy
+    with _proxy_lock:
+        _active_proxy_threads[run_id] = proxy
 
     run.start(settings, run_id)
     proxy.start()
@@ -993,7 +996,8 @@ def api_stop_run():
     run = get_run()
     # Stop any active proxy thread
     if run.run_id:
-        proxy = _active_proxy_threads.pop(run.run_id, None)
+        with _proxy_lock:
+            proxy = _active_proxy_threads.pop(run.run_id, None)
         if proxy:
             proxy.stop()
     run.stop()
@@ -1011,7 +1015,8 @@ def api_switch_supervisor():
     if not run.is_running or not run.run_id:
         return jsonify({"error": "No active run."}), 409
 
-    proxy = _active_proxy_threads.get(run.run_id)
+    with _proxy_lock:
+        proxy = _active_proxy_threads.get(run.run_id)
     if proxy:
         proxy.set_supervisor(new_supervisor, new_command)
 

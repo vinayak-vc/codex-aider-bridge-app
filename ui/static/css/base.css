@@ -95,7 +95,7 @@ code {
   transition: opacity 1.2s ease, background-image 0.6s ease;
   pointer-events: none;
   /* Dim the image: dark overlay baked in via brightness + a colour tint */
-  filter: brightness(0.18) saturate(0.8);
+  filter: brightness(0.10) saturate(0.5);
 }
 
 /* ── Scrollbar ── */
@@ -160,11 +160,16 @@ code {
   justify-content: center;
   padding: 48px 24px;
   text-align: center;
-  color: var(--color-text-subtle);
+  color: var(--color-text-muted);
   gap: 12px;
+  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-lg);
+  max-width: 420px;
+  margin: 40px auto;
 }
-.empty-state svg { opacity: .4; }
-.empty-state p { font-size: var(--font-size-sm); max-width: 280px; }
+.empty-state svg { opacity: .5; }
+.empty-state p { font-size: var(--font-size-sm); max-width: 320px; line-height: 1.5; }
 
 /* Divider */
 .divider { height: 1px; background: var(--color-border-muted); margin: 20px 0; }

@@ -20,7 +20,13 @@
 
 ### Removed
 - `POST /api/relay/import-from-nl` route (stale, unused by frontend)
-- `POST /api/relay/state` route (stale, unused by frontend)
+- `POST /api/relay/state` save route (stale, unused by frontend; GET and DELETE kept)
+- Orphaned `relay_review_needed` SSE handler (replaced by universal `review_required`)
+
+### Fixed
+- Race condition: `_active_proxy_threads` registry now protected by threading lock
+- `generate_run_report()` now called in the failure path too (not just success)
+
 
 ---
 

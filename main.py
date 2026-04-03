@@ -26,6 +26,7 @@ from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
 from models.task import SubTask
 from utils.manual_supervisor import ManualSupervisorError, ManualSupervisorSession
 from utils.token_tracker import TokenTracker, save_session_to_log
+from utils.report_generator import generate_run_report
 from utils.project_knowledge import (
     load_knowledge,
     save_knowledge,
@@ -881,6 +882,23 @@ def execute_task_with_review(
         # ── Step 2: Collect diff ─────────────────────────────────────────────
         diff = diff_collector.collect()
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
+
+        # Track Aider token usage (estimated from task instruction + file sizes + diff)
+        _input_file_chars = 0
+        for fp in current_task.files:
+            _fp = config.repo_root / fp
+            if _fp.exists():
+                try:
+                    _input_file_chars += _fp.stat().st_size
+                except OSError:
+                    pass
+        token_tracker.record_aider_task(
+            task_id=current_task.id,
+            instruction=current_instruction,
+            input_file_chars=_input_file_chars,
+            diff_chars=len(diff),
+        )
+
         repo_after = _snapshot_repo_files(config.repo_root)
         unexpected_files = _find_unexpected_files(
             repo_before, repo_after, current_task,
@@ -2021,6 +2039,13 @@ def main() -> int:
         except Exception as _tok_ex:
             logger.warning("Could not save token log: %s", _tok_ex)
 
+        # Generate Markdown run report
+        try:
+            generate_run_report(token_report, repo_root)
+            logger.info("Run report written to %s", _progress_dir / "RUN_REPORT.md")
+        except Exception as _rep_ex:
+            logger.warning("Could not generate run report: %s", _rep_ex)
+
         _emit_structured({"type": "token_report", "report": token_report})
         _emit_structured({"type": "knowledge_updated", "files": len(knowledge["files"])})
 
@@ -2134,6 +2159,11 @@ def main() -> int:
                 save_session_to_log(failure_token_report, repo_root / "bridge_progress" / "token_log.json")
             except Exception as token_ex:
                 logger.warning("Could not save token log after failure: %s", token_ex)
+
+            try:
+                generate_run_report(failure_token_report, repo_root)
+            except Exception:
+                pass
 
         _safe_stdout_write(json.dumps(failure_summary, ensure_ascii=False), logger)
         return 1

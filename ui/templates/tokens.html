@@ -63,7 +63,11 @@
       <span class="stat-chip__value" id="stat-ai-total">0</span>
     </div>
     <div class="stat-chip">
-      <span class="stat-chip__label">Tokens saved</span>
+      <span class="stat-chip__label">Aider tokens (local)</span>
+      <span class="stat-chip__value" style="color:var(--color-info)" id="stat-aider">~0</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip__label">Cloud AI saved</span>
       <span class="stat-chip__value" style="color:var(--color-success)" id="stat-saved">0</span>
     </div>
   </div>
@@ -109,7 +113,8 @@
             <tr>
               <th>Goal</th>
               <th>Tasks</th>
-              <th>AI tokens</th>
+              <th>Cloud AI</th>
+              <th>Aider (local)</th>
               <th>Saved</th>
               <th>Savings %</th>
               <th>When</th>
@@ -134,12 +139,49 @@
             <div style="font-size:var(--font-size-sm);font-weight:600;color:var(--color-text)" id="detail-goal"></div>
             <div style="font-size:var(--font-size-xs);color:var(--color-text-subtle);margin-top:3px" id="detail-meta"></div>
           </div>
+          <!-- Savings comparison card -->
+          <div class="savings-comparison" id="detail-comparison" style="display:none">
+            <div class="detail-section-title">Savings Comparison</div>
+            <div class="comparison-row">
+              <div class="comparison-block comparison-block--without">
+                <div class="comparison-label">Without Bridge</div>
+                <div class="comparison-value" id="cmp-without">0</div>
+                <div class="comparison-desc">All tokens via cloud AI</div>
+              </div>
+              <div class="comparison-arrow">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
+                </svg>
+              </div>
+              <div class="comparison-block comparison-block--with">
+                <div class="comparison-label">With Bridge</div>
+                <div class="comparison-value" id="cmp-with">0</div>
+                <div class="comparison-desc" id="cmp-with-desc">Supervisor (cloud) + Aider (local)</div>
+              </div>
+            </div>
+            <div class="comparison-saved">
+              <span>Cloud AI saved:</span>
+              <strong id="cmp-saved">0</strong>
+              <span class="badge badge--success" id="cmp-pct" style="font-size:11px;margin-left:6px">0%</span>
+            </div>
+          </div>
+
           <div class="session-detail-grid">
             <div class="detail-section" id="detail-supervisor"></div>
             <div class="detail-section" id="detail-savings"></div>
             <div class="detail-section" id="detail-aider"></div>
             <div class="detail-section" id="detail-session"></div>
           </div>
+
+          <!-- Per-task Aider breakdown -->
+          <div id="detail-per-task" style="display:none">
+            <div class="detail-section-title" style="margin-top:16px">Per-Task Aider Usage</div>
+            <table class="per-task-table">
+              <thead><tr><th>Task</th><th>Est. Tokens</th></tr></thead>
+              <tbody id="per-task-tbody"></tbody>
+            </table>
+          </div>
+
           <div class="savings-note" id="detail-note" style="display:none"></div>
         </div>
       </div>
