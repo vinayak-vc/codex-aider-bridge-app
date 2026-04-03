@@ -1562,6 +1562,20 @@ def api_telemetry_save():
     return jsonify({"ok": True, "path": str(path)})
 
 
+@app.route("/api/system/recommend-model")
+def api_recommend_model():
+    """Detect system specs and recommend the best Ollama coding model."""
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from utils.model_advisor import recommend
+    try:
+        result = recommend()
+        return jsonify(result)
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/run/import-plan", methods=["POST"])
 def api_run_import_plan():
     """Read a plan JSON file and return tasks with checkpoint status overlay."""

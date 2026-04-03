@@ -93,6 +93,7 @@ a = Analysis(
         "utils.project_type_prompt",
         "utils.checkpoint",
         "utils.telemetry",
+        "utils.model_advisor",
         "context.project_understanding",
         "bridge_logging",
         "bridge_logging.logger",
