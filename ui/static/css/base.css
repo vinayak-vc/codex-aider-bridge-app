@@ -137,6 +137,49 @@ button.status-item:hover {
   50%      { opacity: 0.3; }
 }
 
+/* Status bar mini toggle (auto-commit) */
+.status-item--toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 0 8px;
+  height: 28px;
+}
+.status-item--toggle input { display: none; }
+.status-toggle-track {
+  width: 24px;
+  height: 12px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  position: relative;
+  transition: background 0.15s;
+}
+.status-toggle-track::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  top: 1px;
+  left: 1px;
+  transition: transform 0.15s, background 0.15s;
+}
+.status-item--toggle input:checked ~ .status-toggle-track {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+.status-item--toggle input:checked ~ .status-toggle-track::after {
+  transform: translateX(12px);
+  background: #fff;
+}
+.status-toggle-label {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+}
+
 @media (max-width: 900px) {
   .status-bar { left: var(--nav-width-collapsed); }
 }

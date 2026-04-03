@@ -337,6 +337,31 @@ export async function initProjectBar() {
     saveModel(e.target.value);
   });
 
+  // Auto-commit toggle in status bar — sync with settings
+  const acToggle = $('sb-auto-commit');
+  if (acToggle) {
+    // Load initial state from settings
+    try {
+      const s = await fetch('/api/settings').then(r => r.json());
+      acToggle.checked = s.auto_commit !== false;
+    } catch (_) {}
+
+    acToggle.addEventListener('change', async () => {
+      try {
+        const s = await fetch('/api/settings').then(r => r.json());
+        s.auto_commit = acToggle.checked;
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(s),
+        });
+        // Also sync the Run page toggle if it exists
+        const runToggle = $('f-auto-commit');
+        if (runToggle) runToggle.checked = acToggle.checked;
+      } catch (_) {}
+    });
+  }
+
   // VS Code button in status bar
   $('sb-open-vscode')?.addEventListener('click', async () => {
     try {
