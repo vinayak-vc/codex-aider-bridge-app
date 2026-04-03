@@ -297,6 +297,9 @@ async function saveModel(value) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
+    // Sync the Run page model input if it exists
+    const runInput = $('f-aider-model');
+    if (runInput) runInput.value = value;
   } catch (_) {}
 }
 
