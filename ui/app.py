@@ -808,6 +808,43 @@ def api_git_diff():
         return jsonify({"error": str(ex)}), 500
 
 
+# ── VS Code Integration ───────────────────────────────────────────────────────
+
+@app.route("/api/vscode/open", methods=["POST"])
+def api_vscode_open():
+    """Open a file or folder in VS Code."""
+    data = request.json or {}
+    target = (data.get("path") or "").strip()
+    repo_root = (data.get("repo_root") or "").strip()
+
+    if not target and not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+
+    # Determine what to open
+    open_path = target or repo_root
+    if not open_path:
+        return jsonify({"error": "No path specified"}), 400
+
+    # If target is relative, make it absolute using repo_root
+    from pathlib import Path as _Path
+    p = _Path(open_path)
+    if not p.is_absolute() and repo_root:
+        p = _Path(repo_root) / p
+
+    try:
+        cmd = ["code"]
+        if p.is_file():
+            cmd.append("--goto")
+        cmd.append(str(p))
+        subprocess.Popen(cmd, creationflags=_WIN_CREATE_FLAGS)
+        return jsonify({"ok": True, "path": str(p)})
+    except FileNotFoundError:
+        return jsonify({"error": "VS Code ('code' command) not found. Install it or add to PATH."}), 404
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 # ── Supervisor Proxy Thread ────────────────────────────────────────────────────
 
 # CLI command templates for each supervisor type (mirrors run.js SUPERVISOR_CMDS)

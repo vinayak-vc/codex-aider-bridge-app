@@ -336,4 +336,16 @@ export async function initProjectBar() {
   $('global-model-select')?.addEventListener('change', e => {
     saveModel(e.target.value);
   });
+
+  // VS Code button in status bar
+  $('sb-open-vscode')?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/vscode/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_root: _currentPath }),
+      }).then(r => r.json());
+      if (res.error) alert(res.error);
+    } catch (_) {}
+  });
 }
