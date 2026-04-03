@@ -1,0 +1,63 @@
+/* tokens.css — design system custom properties (dark-red theme) */
+
+:root {
+  /* ── Backgrounds / surfaces ──────────────────────────────── */
+  --color-bg:           #0b0608;
+  --color-surface:      #100b0c;
+  --color-surface-2:    #1a1012;
+  --color-surface-3:    #231518;
+  --color-surface-raised: #1e1214;
+  --color-border:       #3d1e22;
+  --color-border-muted: #281315;
+
+  /* ── Accent — crimson red ────────────────────────────────── */
+  --color-accent:       #e11d48;
+  --color-accent-hover: #be123c;
+  --color-accent-glow:  rgba(225, 29, 72, .18);
+
+  /* ── Semantic colours ────────────────────────────────────── */
+  --color-success:      #22c55e;
+  --color-success-bg:   rgba(34, 197, 94, .12);
+  --color-warning:      #f59e0b;
+  --color-warning-bg:   rgba(245, 158, 11, .12);
+  --color-danger:       #fb7185;
+  --color-danger-bg:    rgba(251, 113, 133, .15);
+  --color-info:         #f97316;
+  --color-info-bg:      rgba(249, 115, 22, .12);
+
+  /* ── Typography ──────────────────────────────────────────── */
+  --color-text:         #f5dde2;
+  --color-text-muted:   #a07880;
+  --color-text-subtle:  #694a52;
+
+  /* ── Radii ───────────────────────────────────────────────── */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-pill: 999px;
+
+  /* ── Shadows ─────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .5);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, .65);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, .75);
+
+  /* ── Typography scale ────────────────────────────────────── */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+
+  --font-size-xs:   11px;
+  --font-size-sm:   12px;
+  --font-size-base: 13px;
+  --font-size-md:   14px;
+  --font-size-lg:   16px;
+  --font-size-xl:   20px;
+  --font-size-2xl:  24px;
+
+  /* ── Layout ──────────────────────────────────────────────── */
+  --nav-width: 220px;
+  --nav-width-collapsed: 52px;
+  --header-height: 48px;
+
+  --transition: 150ms ease;
+}

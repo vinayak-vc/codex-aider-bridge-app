@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% set active_page = "knowledge" %}
+
+{% block title %}Knowledge{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/knowledge.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Knowledge</h1>
+    <p class="page-subtitle">Project understanding, file registry, and context signals</p>
+  </div>
+  <button class="btn btn--secondary btn--sm" id="btn-refresh-knowledge" title="Refresh">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+    </svg>
+    Refresh
+  </button>
+</div>
+
+<!-- Tabs -->
+<div class="knowledge-tabs" role="tablist">
+  <button class="knowledge-tab --active" role="tab" data-tab="overview">Overview</button>
+  <button class="knowledge-tab" role="tab" data-tab="understanding">AI Understanding</button>
+  <button class="knowledge-tab" role="tab" data-tab="files">
+    File Registry
+    <span class="badge badge--muted" id="file-count-badge" style="margin-left:6px">0</span>
+  </button>
+</div>
+
+<!-- ── Overview panel ── -->
+<div class="knowledge-panel --active" id="panel-overview">
+
+  <div id="overview-empty" style="display:none">
+    <div class="empty-state">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25"/>
+      </svg>
+      <p>No project knowledge yet. Run the bridge once to populate this page.</p>
+      <a href="/run" class="btn btn--primary btn--sm">Start a Run</a>
+    </div>
+  </div>
+
+  <div id="overview-content">
+    <!-- Project summary + stats -->
+    <div class="knowledge-overview-grid">
+
+      <div class="card">
+        <div class="section-header"><span class="section-title">Project</span></div>
+        <div class="project-summary-row" id="project-badges" style="margin-bottom:8px"></div>
+        <p id="project-summary" class="text-muted" style="font-size:var(--font-size-sm);margin:0"></p>
+      </div>
+
+      <div class="card">
+        <div class="section-header"><span class="section-title">Stats</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="stat-chip">
+            <span class="stat-chip__label">Files scanned</span>
+            <span class="stat-chip__value" id="stat-files">—</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-chip__label">Features done</span>
+            <span class="stat-chip__value" id="stat-features">—</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-chip__label">Patterns</span>
+            <span class="stat-chip__value" id="stat-patterns">—</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-chip__label">Docs indexed</span>
+            <span class="stat-chip__value" id="stat-docs">—</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Patterns detected -->
+    <div class="card" id="card-patterns" style="margin-bottom:16px;display:none">
+      <div class="section-header"><span class="section-title">Detected Patterns</span></div>
+      <div class="chip-list" id="patterns-list"></div>
+    </div>
+
+    <!-- Features done -->
+    <div class="card" id="card-features" style="margin-bottom:16px;display:none">
+      <div class="section-header"><span class="section-title">Features Done</span></div>
+      <div class="chip-list" id="features-list"></div>
+    </div>
+
+    <!-- Documentation signals -->
+    <div class="card" id="card-docs" style="margin-bottom:16px;display:none">
+      <div class="section-header">
+        <span class="section-title">Documentation Signals</span>
+        <span class="text-subtle" style="font-size:var(--font-size-xs)">Files read during onboarding</span>
+      </div>
+      <div class="chip-list" id="docs-list"></div>
+    </div>
+
+    <!-- Clarifications -->
+    <div class="card" id="card-clarifications" style="display:none">
+      <div class="section-header">
+        <span class="section-title">Pending Clarifications</span>
+        <span class="badge badge--warning" style="font-size:10px">User-defined</span>
+      </div>
+      <ul class="clarify-list" id="clarifications-list"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- ── AI Understanding panel ── -->
+<div class="knowledge-panel" id="panel-understanding">
+
+  <div id="understanding-empty" style="display:none">
+    <div class="empty-state">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+      </svg>
+      <p>AI_UNDERSTANDING.md has not been generated yet.</p>
+      <p class="text-subtle" style="font-size:var(--font-size-xs)">It is created automatically on the first run. You can also run the bridge with <code>--skip-onboarding-scan</code> to skip it.</p>
+      <a href="/run" class="btn btn--primary btn--sm">Start a Run</a>
+    </div>
+  </div>
+
+  <div id="understanding-content" style="display:none">
+    <div class="understanding-header">
+      <span class="badge badge--info">AI_UNDERSTANDING.md</span>
+      <span class="badge" id="understanding-confirmed-badge" style="display:none"></span>
+      <span class="text-subtle" style="font-size:var(--font-size-xs);flex:1;text-align:right" id="understanding-path"></span>
+    </div>
+    <div class="card">
+      <div class="md-body" id="understanding-md"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── File registry panel ── -->
+<div class="knowledge-panel" id="panel-files">
+
+  <div class="file-registry-toolbar">
+    <input class="input file-search" id="file-search" type="search" placeholder="Search files…">
+    <select class="input" id="file-type-filter" style="width:auto;min-width:120px">
+      <option value="">All types</option>
+      <option value="scan">Scanned</option>
+      <option value="task">Task</option>
+    </select>
+    <span class="text-subtle" style="font-size:var(--font-size-xs)" id="file-showing-label">0 files</span>
+  </div>
+
+  <div class="file-table-wrap">
+    <table class="file-table" id="file-table">
+      <thead>
+        <tr>
+          <th data-col="path">Path <span class="sort-icon"></span></th>
+          <th data-col="role">Role <span class="sort-icon"></span></th>
+          <th data-col="task_type">Type <span class="sort-icon"></span></th>
+          <th data-col="last_modified">Last modified <span class="sort-icon"></span></th>
+        </tr>
+      </thead>
+      <tbody id="file-table-body">
+        <tr><td colspan="4" class="file-table-empty">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div class="file-pagination" id="file-pagination" style="display:none">
+      <span id="file-page-label"></span>
+      <div class="file-pagination-btns">
+        <button class="btn btn--secondary btn--sm" id="btn-file-prev">Prev</button>
+        <button class="btn btn--secondary btn--sm" id="btn-file-next">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_script %}
+<script type="module" src="{{ url_for('static', filename='js/pages/knowledge.js') }}"></script>
+{% endblock %}

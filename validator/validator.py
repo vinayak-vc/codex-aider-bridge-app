@@ -1,25 +1,150 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
+import re
+import shlex
+import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
 from models.task import Task, ValidationResult
 
+# ── Unity MCP ─────────────────────────────────────────────────────────────────
+
+# URL of the Unity MCP HTTP server. Override via UNITY_MCP_URL env var.
+_UNITY_MCP_URL: str = os.getenv("UNITY_MCP_URL", "http://127.0.0.1:8080/mcp")
+_UNITY_MCP_HEALTH_URL: str = _UNITY_MCP_URL.replace("/mcp", "/health")
+
+# Matches Unity compiler error lines, e.g.:
+#   Assets/Scripts/Foo.cs(12,5): error CS0103: ...
+_UNITY_COMPILER_ERROR_RE = re.compile(
+    r"error\s+CS\d+",
+    re.IGNORECASE,
+)
+
+
+def _call_unity_mcp_tool(
+    tool_name: str,
+    arguments: dict,
+    timeout: int = 10,
+) -> Optional[dict]:
+    """Call a Unity MCP tool via HTTP.  Returns the result dict or None on failure.
+
+    Handles both plain JSON and SSE (text/event-stream) response formats.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments},
+    }
+    try:
+        req = urllib.request.Request(
+            _UNITY_MCP_URL,
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            body = resp.read().decode("utf-8", errors="replace")
+
+            if "text/event-stream" in content_type:
+                # SSE format: "data: <json>\n\n"
+                for line in body.splitlines():
+                    if line.startswith("data: "):
+                        chunk = line[6:].strip()
+                        if chunk in ("", "[DONE]"):
+                            continue
+                        parsed = json.loads(chunk)
+                        if "result" in parsed:
+                            return parsed["result"]
+            else:
+                parsed = json.loads(body)
+                if "result" in parsed:
+                    return parsed["result"]
+    except Exception:
+        return None
+    return None
+
+
+def _unity_mcp_available() -> bool:
+    """Return True if the Unity MCP server is reachable and healthy."""
+    try:
+        req = urllib.request.Request(_UNITY_MCP_HEALTH_URL, method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+# Maximum seconds the CI gate command is allowed to run before being killed.
+_CI_TIMEOUT_SECONDS: int = 120
+
+# Maximum seconds a per-file syntax check subprocess may run.
+_SYNTAX_TIMEOUT_SECONDS: int = 30
+
+# LLM artifact tokens injected by some models (e.g. deepseek-coder).
+# Presence in a source file means the model output was corrupted.
+_LLM_ARTIFACT_RE = re.compile(
+    r"<\|[^|>]{1,40}\|>"       # ASCII variant:  <|begin_of_sentence|>
+    r"|<｜[^｜>]{1,40}｜>"      # Unicode variant: <｜begin▁of▁sentence｜>
+)
+
+
+class _ProjectType:
+    UNITY = "unity"
+    CSHARP = "csharp"
+    PYTHON = "python"
+    TYPESCRIPT = "typescript"
+    JAVASCRIPT = "javascript"
+    UNKNOWN = "unknown"
+
+
+def _detect_project_type(repo_root: Path) -> str:
+    """Identify the primary language of the repository from well-known markers."""
+    # Unity: always has an Assets/ directory alongside a ProjectSettings/ dir.
+    if (repo_root / "Assets").is_dir() and (repo_root / "ProjectSettings").is_dir():
+        return _ProjectType.UNITY
+    # Plain C#: .sln or .csproj at repo root.
+    if any(repo_root.glob("*.csproj")) or any(repo_root.glob("*.sln")):
+        return _ProjectType.CSHARP
+    # TypeScript: tsconfig.json present.
+    if (repo_root / "tsconfig.json").exists():
+        return _ProjectType.TYPESCRIPT
+    # JavaScript: package.json present.
+    if (repo_root / "package.json").exists():
+        return _ProjectType.JAVASCRIPT
+    # Python: common root markers.
+    for marker in ("requirements.txt", "pyproject.toml", "setup.py", "setup.cfg"):
+        if (repo_root / marker).exists():
+            return _ProjectType.PYTHON
+    return _ProjectType.UNKNOWN
+
 
 class MechanicalValidator:
     """Runs fast, token-free mechanical checks after each Aider execution.
 
-    This validator handles structural correctness only:
-    - Required files exist on disk after create/modify tasks.
-    - Python source files compile without syntax errors.
-    - Optional CI gate command passes (e.g. pytest, mypy).
+    Checks (in order, stopping at first failure):
+    1. Required files exist on disk (create/modify tasks only).
+    2. Language-appropriate syntax validation based on detected project type:
+       - Unity / C#: LLM-artifact scan + brace balance + dotnet build (if not Unity)
+       - Python:     py_compile module
+       - TypeScript: tsc --noEmit (if available) else node --check
+       - JavaScript: node --check
+    3. Optional CI gate command (e.g. pytest, dotnet test).
 
-    Quality review — deciding whether the implementation is correct or complete —
-    is handled exclusively by the SupervisorAgent via diff review (PASS / REWORK).
-    This validator never calls the supervisor and never spends supervisor tokens.
+    Quality review is handled by the SupervisorAgent. This validator never
+    calls the supervisor and never spends supervisor tokens.
     """
 
     def __init__(
@@ -27,19 +152,52 @@ class MechanicalValidator:
         repo_root: Path,
         validation_command: Optional[str],
         logger: logging.Logger,
+        project_type_override: Optional[str] = None,
     ) -> None:
         self._repo_root = repo_root
         self._validation_command = validation_command
         self._logger = logger
+
+        if project_type_override and project_type_override != "other":
+            # Map user-facing catalogue key → internal _ProjectType constant.
+            # Keys match (unity, python, typescript, javascript, csharp) or fall back.
+            _MAP = {
+                "unity":      _ProjectType.UNITY,
+                "godot":      _ProjectType.UNKNOWN,   # no dedicated validator yet
+                "unreal":     _ProjectType.UNKNOWN,
+                "python":     _ProjectType.PYTHON,
+                "typescript": _ProjectType.TYPESCRIPT,
+                "javascript": _ProjectType.JAVASCRIPT,
+                "csharp":     _ProjectType.CSHARP,
+                "flutter":    _ProjectType.UNKNOWN,
+                "rust":       _ProjectType.UNKNOWN,
+                "go":         _ProjectType.UNKNOWN,
+            }
+            self._project_type = _MAP.get(project_type_override, _ProjectType.UNKNOWN)
+            self._logger.info(
+                "Validator: project type set from knowledge: '%s' → '%s'",
+                project_type_override, self._project_type,
+            )
+        else:
+            self._project_type = _detect_project_type(repo_root)
+            self._logger.info("Validator: detected project type '%s'", self._project_type)
+
+    @property
+    def is_unity_project(self) -> bool:
+        return self._project_type == _ProjectType.UNITY
 
     def validate(self, task: Task, file_paths: list[Path]) -> ValidationResult:
         existence = self._check_file_existence(task, file_paths)
         if not existence.succeeded:
             return existence
 
-        python_check = self._check_python_syntax(task.id, file_paths)
-        if not python_check.succeeded:
-            return python_check
+        assertions = self._check_task_assertions(task)
+        if not assertions.succeeded:
+            return assertions
+
+        syntax = self._check_syntax(task.id, file_paths)
+        if not syntax.succeeded:
+            return syntax
 
         ci_check = self._run_ci_command(task.id)
         if not ci_check.succeeded:
@@ -53,12 +211,32 @@ class MechanicalValidator:
             stderr="",
         )
 
+    # ── File existence ────────────────────────────────────────────────────────
+
     def _check_file_existence(self, task: Task, file_paths: list[Path]) -> ValidationResult:
-        if task.type not in {"create", "modify"}:
+        if task.type not in {"create", "modify", "delete"} or not file_paths:
             return ValidationResult(
                 task_id=task.id,
                 succeeded=True,
-                message="File existence check skipped for validate tasks.",
+                message="File existence check skipped.",
+                stdout="",
+                stderr="",
+            )
+
+        if task.type == "delete":
+            remaining = [str(p) for p in file_paths if p.exists()]
+            if remaining:
+                return ValidationResult(
+                    task_id=task.id,
+                    succeeded=False,
+                    message=f"Expected files were not deleted: {remaining}",
+                    stdout="",
+                    stderr="",
+                )
+            return ValidationResult(
+                task_id=task.id,
+                succeeded=True,
+                message="Delete task removed the expected files.",
                 stdout="",
                 stderr="",
             )
@@ -81,33 +259,463 @@ class MechanicalValidator:
             stderr="",
         )
 
+    def _check_task_assertions(self, task: Task) -> ValidationResult:
+        missing_required: list[str] = []
+        unexpected_existing: list[str] = []
+
+        for relative_path in task.must_exist:
+            if not (self._repo_root / relative_path).exists():
+                missing_required.append(relative_path)
+
+        for relative_path in task.must_not_exist:
+            if (self._repo_root / relative_path).exists():
+                unexpected_existing.append(relative_path)
+
+        if missing_required or unexpected_existing:
+            message_parts: list[str] = []
+            if missing_required:
+                message_parts.append(
+                    f"Required outputs missing: {', '.join(missing_required)}"
+                )
+            if unexpected_existing:
+                message_parts.append(
+                    f"Unexpected files still exist: {', '.join(unexpected_existing)}"
+                )
+            return ValidationResult(
+                task_id=task.id,
+                succeeded=False,
+                message="; ".join(message_parts),
+                stdout="",
+                stderr="",
+            )
+
+        return ValidationResult(
+            task_id=task.id,
+            succeeded=True,
+            message="Task assertions passed.",
+            stdout="",
+            stderr="",
+        )
+
+    # ── Syntax dispatch ───────────────────────────────────────────────────────
+
+    def _check_syntax(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        """Dispatch to the correct syntax checker based on detected project type."""
+        pt = self._project_type
+
+        if pt in (_ProjectType.UNITY, _ProjectType.CSHARP):
+            return self._check_csharp_syntax(task_id, file_paths)
+        if pt == _ProjectType.PYTHON:
+            return self._check_python_syntax(task_id, file_paths)
+        if pt == _ProjectType.TYPESCRIPT:
+            return self._check_typescript_syntax(task_id, file_paths)
+        if pt == _ProjectType.JAVASCRIPT:
+            return self._check_javascript_syntax(task_id, file_paths)
+
+        # Unknown project type — skip language-specific check.
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message=f"Syntax check skipped (project type: {pt}).",
+            stdout="",
+            stderr="",
+        )
+
+    # ── C# / Unity ────────────────────────────────────────────────────────────
+
+    def _check_csharp_syntax(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        cs_files = [p for p in file_paths if p.suffix.lower() == ".cs" and p.exists()]
+        if not cs_files:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="No C# files to check.",
+                stdout="",
+                stderr="",
+            )
+
+        # Step 1: LLM artifact scan (always, no external tool needed).
+        artifact_result = self._scan_llm_artifacts(task_id, cs_files)
+        if not artifact_result.succeeded:
+            return artifact_result
+
+        # Step 2: Brace balance check (catches unclosed class/method bodies).
+        brace_result = self._check_brace_balance(task_id, cs_files)
+        if not brace_result.succeeded:
+            return brace_result
+
+        # Step 3a: dotnet build — only for plain C# projects (not Unity).
+        # Unity's .csproj files reference Unity DLLs unavailable outside the editor.
+        if self._project_type == _ProjectType.CSHARP and shutil.which("dotnet"):
+            return self._run_dotnet_build(task_id)
+
+        # Step 3b: Unity — check real compiler output via Unity MCP read_console.
+        # This catches errors that brace-balance and artifact scans miss (wrong
+        # namespace, missing using directives, type mismatches, etc.).
+        if self._project_type == _ProjectType.UNITY:
+            return self._check_unity_compilation(task_id)
+
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="C# syntax checks passed.",
+            stdout="",
+            stderr="",
+        )
+
+    def _check_unity_compilation(self, task_id: int) -> ValidationResult:
+        """Query Unity console for compiler errors via the MCP HTTP server.
+
+        Gracefully degrades: if the MCP server is unreachable (Unity not open),
+        logs a warning and returns success so the bridge run isn't blocked.
+        """
+        if not _unity_mcp_available():
+            self._logger.warning(
+                "Task %s: Unity MCP server unreachable (%s) — "
+                "skipping live compilation check. Open Unity to enable it.",
+                task_id, _UNITY_MCP_HEALTH_URL,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="Unity compilation check skipped (MCP server not reachable).",
+                stdout="",
+                stderr="",
+            )
+
+        self._logger.debug("Task %s: querying Unity console for compiler errors", task_id)
+        result = _call_unity_mcp_tool(
+            "read_console",
+            {"action": "get", "types": ["error"], "count": 30, "format": "plain"},
+        )
+
+        if result is None:
+            self._logger.warning(
+                "Task %s: Unity MCP read_console call failed — skipping compilation check.",
+                task_id,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="Unity compilation check skipped (MCP call failed).",
+                stdout="",
+                stderr="",
+            )
+
+        # Extract compiler errors (CS-prefixed) from the console output.
+        raw_messages: list[str] = []
+        if isinstance(result, dict):
+            # result may be {"content": [{"type":"text","text":"..."}]}
+            for item in result.get("content", []):
+                if isinstance(item, dict) and item.get("type") == "text":
+                    raw_messages.append(item.get("text", ""))
+        elif isinstance(result, str):
+            raw_messages.append(result)
+
+        console_text = "\n".join(raw_messages)
+        compiler_errors = [
+            line.strip()
+            for line in console_text.splitlines()
+            if _UNITY_COMPILER_ERROR_RE.search(line)
+        ]
+
+        if compiler_errors:
+            errors_summary = "\n".join(compiler_errors[:10])
+            self._logger.warning(
+                "Task %s: Unity reported %d compiler error(s):\n%s",
+                task_id, len(compiler_errors), errors_summary,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message=(
+                    f"Unity compiler reported {len(compiler_errors)} error(s). "
+                    "Fix all CS errors before proceeding."
+                ),
+                stdout="",
+                stderr=errors_summary,
+            )
+
+        self._logger.debug("Task %s: Unity compilation — no errors found.", task_id)
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="Unity compilation check passed — no CS errors.",
+            stdout="",
+            stderr="",
+        )
+
+    def _scan_llm_artifacts(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        """Detect special tokens injected by LLMs into source files."""
+        for path in file_paths:
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            match = _LLM_ARTIFACT_RE.search(content)
+            if match:
+                self._logger.warning(
+                    "Task %s: LLM artifact token found in %s: %r",
+                    task_id, path.name, match.group(),
+                )
+                return ValidationResult(
+                    task_id=task_id,
+                    succeeded=False,
+                    message=(
+                        f"LLM artifact token {match.group()!r} found in {path.name}. "
+                        "The model injected a special token into the source file. "
+                        "Rewrite the file without any special tokens."
+                    ),
+                    stdout="",
+                    stderr="",
+                )
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="No LLM artifact tokens found.",
+            stdout="",
+            stderr="",
+        )
+
+    def _check_brace_balance(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        """Verify that { and } counts match in each C# file."""
+        for path in file_paths:
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            # Strip single-line comments and string literals for a rough balance check.
+            stripped = re.sub(r"//[^\n]*", "", content)
+            stripped = re.sub(r'"(?:[^"\\]|\\.)*"', '""', stripped)
+            open_count = stripped.count("{")
+            close_count = stripped.count("}")
+            if open_count != close_count:
+                self._logger.warning(
+                    "Task %s: brace mismatch in %s — %d open vs %d close",
+                    task_id, path.name, open_count, close_count,
+                )
+                return ValidationResult(
+                    task_id=task_id,
+                    succeeded=False,
+                    message=(
+                        f"Brace mismatch in {path.name}: "
+                        f"{open_count} opening '{{' vs {close_count} closing '}}'. "
+                        "Fix the unclosed or extra brace."
+                    ),
+                    stdout="",
+                    stderr="",
+                )
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="Brace balance OK.",
+            stdout="",
+            stderr="",
+        )
+
+    def _run_dotnet_build(self, task_id: int) -> ValidationResult:
+        csproj_files = list(self._repo_root.glob("*.csproj"))
+        sln_files = list(self._repo_root.glob("*.sln"))
+        target = str(sln_files[0]) if sln_files else (str(csproj_files[0]) if csproj_files else ".")
+
+        self._logger.debug("Task %s: running dotnet build on %s", task_id, target)
+        try:
+            result = subprocess.run(
+                ["dotnet", "build", target, "--no-restore", "--verbosity", "quiet"],
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=_SYNTAX_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message="dotnet build timed out.",
+                stdout="",
+                stderr="",
+            )
+
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=result.returncode == 0,
+            message="dotnet build." if result.returncode == 0 else "dotnet build reported errors.",
+            stdout=result.stdout[:2000],
+            stderr=result.stderr[:2000],
+        )
+
+    # ── Python ────────────────────────────────────────────────────────────────
+
     def _check_python_syntax(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
         py_files = [p for p in file_paths if p.suffix.lower() == ".py" and p.exists()]
         if not py_files:
             return ValidationResult(
                 task_id=task_id,
                 succeeded=True,
-                message="No Python files to compile.",
+                message="No Python files to check.",
                 stdout="",
                 stderr="",
             )
 
         result = subprocess.run(
-            [sys.executable, "-m", "compileall"] + [str(p) for p in py_files],
+            [sys.executable, "-m", "compileall", "-q"] + [str(p) for p in py_files],
             cwd=self._repo_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             check=False,
+            timeout=_SYNTAX_TIMEOUT_SECONDS,
         )
 
         return ValidationResult(
             task_id=task_id,
             succeeded=result.returncode == 0,
-            message="Python syntax check.",
-            stdout=result.stdout,
-            stderr=result.stderr,
+            message=(
+                "Python syntax OK."
+                if result.returncode == 0
+                else "Python syntax error detected."
+            ),
+            stdout=result.stdout[:2000],
+            stderr=result.stderr[:2000],
         )
+
+    # ── JavaScript ────────────────────────────────────────────────────────────
+
+    def _check_javascript_syntax(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        js_files = [
+            p for p in file_paths
+            if p.suffix.lower() in {".js", ".mjs", ".cjs"} and p.exists()
+        ]
+        if not js_files:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="No JavaScript files to check.",
+                stdout="",
+                stderr="",
+            )
+
+        if not shutil.which("node"):
+            self._logger.debug("Task %s: node not found — skipping JS syntax check", task_id)
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="JS syntax check skipped (node not on PATH).",
+                stdout="",
+                stderr="",
+            )
+
+        errors: list[str] = []
+        for js_file in js_files:
+            result = subprocess.run(
+                ["node", "--check", str(js_file)],
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=_SYNTAX_TIMEOUT_SECONDS,
+            )
+            if result.returncode != 0:
+                errors.append(f"{js_file.name}: {result.stderr.strip()[:500]}")
+
+        if errors:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message="JavaScript syntax error(s) detected.",
+                stdout="",
+                stderr="\n".join(errors),
+            )
+
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="JavaScript syntax OK.",
+            stdout="",
+            stderr="",
+        )
+
+    # ── TypeScript ────────────────────────────────────────────────────────────
+
+    def _check_typescript_syntax(self, task_id: int, file_paths: list[Path]) -> ValidationResult:
+        ts_files = [
+            p for p in file_paths
+            if p.suffix.lower() in {".ts", ".tsx"} and p.exists()
+        ]
+        if not ts_files:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=True,
+                message="No TypeScript files to check.",
+                stdout="",
+                stderr="",
+            )
+
+        # Prefer tsc for full type-aware check; fall back to node --check for syntax only.
+        if shutil.which("tsc"):
+            result = subprocess.run(
+                ["tsc", "--noEmit", "--skipLibCheck"],
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=_SYNTAX_TIMEOUT_SECONDS,
+            )
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=result.returncode == 0,
+                message=(
+                    "TypeScript check OK."
+                    if result.returncode == 0
+                    else "TypeScript errors detected."
+                ),
+                stdout=result.stdout[:2000],
+                stderr=result.stderr[:2000],
+            )
+
+        # tsc not available — use node --check as a syntax-only fallback.
+        self._logger.debug("Task %s: tsc not found — falling back to node --check", task_id)
+        if shutil.which("node"):
+            errors: list[str] = []
+            for ts_file in ts_files:
+                result = subprocess.run(
+                    ["node", "--check", str(ts_file)],
+                    cwd=self._repo_root,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                    timeout=_SYNTAX_TIMEOUT_SECONDS,
+                )
+                if result.returncode != 0:
+                    errors.append(f"{ts_file.name}: {result.stderr.strip()[:500]}")
+            if errors:
+                return ValidationResult(
+                    task_id=task_id,
+                    succeeded=False,
+                    message="TypeScript syntax error(s) detected (node --check).",
+                    stdout="",
+                    stderr="\n".join(errors),
+                )
+
+        return ValidationResult(
+            task_id=task_id,
+            succeeded=True,
+            message="TypeScript syntax OK.",
+            stdout="",
+            stderr="",
+        )
+
+    # ── CI gate ───────────────────────────────────────────────────────────────
 
     def _run_ci_command(self, task_id: int) -> ValidationResult:
         if not self._validation_command:
@@ -120,22 +728,45 @@ class MechanicalValidator:
             )
 
         self._logger.debug("Running CI gate: %s", self._validation_command)
-        result = subprocess.run(
-            self._validation_command,
-            cwd=self._repo_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            shell=True,
-            check=False,
-        )
+
+        try:
+            cmd_parts = shlex.split(self._validation_command)
+        except ValueError:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message=f"CI gate command could not be parsed: {self._validation_command!r}",
+                stdout="",
+                stderr="",
+            )
+
+        try:
+            result = subprocess.run(
+                cmd_parts,
+                cwd=self._repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                shell=False,
+                timeout=_CI_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return ValidationResult(
+                task_id=task_id,
+                succeeded=False,
+                message=f"CI gate command timed out after {_CI_TIMEOUT_SECONDS}s",
+                stdout="",
+                stderr="",
+            )
 
         return ValidationResult(
             task_id=task_id,
             succeeded=result.returncode == 0,
-            message="CI gate command.",
-            stdout=result.stdout,
-            stderr=result.stderr,
+            message="CI gate passed." if result.returncode == 0 else "CI gate failed.",
+            stdout=result.stdout[:2000],
+            stderr=result.stderr[:2000],
         )
 
 

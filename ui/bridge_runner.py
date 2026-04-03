@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -9,11 +10,21 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from . import state_store
+
 BRIDGE_ROOT = Path(__file__).parent.parent
 
 # When running as a PyInstaller bundle, sys.executable is the .exe itself,
 # not the Python interpreter.  We detect this once at import time.
 _FROZEN = getattr(sys, "frozen", False)
+
+# Capture the real working directory at import time — before PyInstaller can
+# change it.  Used as a safe fallback cwd for the bridge subprocess when the
+# user has not yet configured a repo root.
+_STARTUP_CWD: str = os.getcwd()
+
+# On Windows, prevent the bridge subprocess from opening a visible CMD window.
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class BridgeRun:
@@ -30,6 +41,12 @@ class BridgeRun:
         self.status = "idle"   # idle | running | success | failure | stopped
         self.run_id: Optional[str] = None
         self.command_preview: str = ""
+        self.total_tasks: int = 0
+        self.completed_tasks: int = 0
+        self.token_data: Optional[dict] = None
+        self._relay_mode: bool = False
+        self.repo_root: str = ""
+        self.driver: str = ""
 
     # ── Listener management ────────────────────────────────────────────────
 
@@ -65,12 +82,32 @@ class BridgeRun:
 
         if settings.get("repo_root", "").strip():
             cmd.extend(["--repo-root", settings["repo_root"].strip()])
+        if settings.get("relay_session_id", "").strip():
+            cmd.extend(["--relay-session-id", settings["relay_session_id"].strip()])
         if settings.get("idea_file", "").strip():
             cmd.extend(["--idea-file", settings["idea_file"].strip()])
         if settings.get("aider_model", "").strip():
             cmd.extend(["--aider-model", settings["aider_model"].strip()])
-        if settings.get("supervisor_command", "").strip():
+        supervisor = settings.get("supervisor", "")
+        if settings.get("manual_supervisor") or supervisor == "ai_relay":
+            cmd.append("--manual-supervisor")
+            # For AI Relay, write the pre-imported tasks to a temporary plan file
+            if supervisor == "ai_relay" and not settings.get("plan_file", "").strip():
+                tasks = [
+                    task for task in state_store.load_relay_tasks()
+                    if str(task.get("status", "")).strip().lower() != "skipped"
+                ]
+                if tasks:
+                    plan_path = state_store.DATA_DIR / "relay_active_plan.json"
+                    plan_path.write_text(
+                        json.dumps({"tasks": tasks}, indent=2), encoding="utf-8"
+                    )
+                    if "--plan-file" not in cmd:
+                        cmd.extend(["--plan-file", str(plan_path)])
+        elif settings.get("supervisor_command", "").strip():
             cmd.extend(["--supervisor-command", settings["supervisor_command"].strip()])
+        if settings.get("manual_review_poll_seconds"):
+            cmd.extend(["--manual-review-poll-seconds", str(int(settings["manual_review_poll_seconds"]))])
         if settings.get("validation_command", "").strip():
             cmd.extend(["--validation-command", settings["validation_command"].strip()])
         if settings.get("max_plan_attempts"):
@@ -83,6 +120,11 @@ class BridgeRun:
             cmd.extend(["--plan-file", settings["plan_file"].strip()])
         if settings.get("dry_run"):
             cmd.append("--dry-run")
+        if settings.get("task_timeout"):
+            cmd.extend(["--task-timeout", str(int(settings["task_timeout"]))])
+        for c in settings.get("clarifications", []):
+            if str(c).strip():
+                cmd.extend(["--clarification", str(c).strip()])
 
         cmd.extend(["--log-level", "INFO"])
         return cmd
@@ -98,31 +140,51 @@ class BridgeRun:
             self.log_lines = []
             self.status = "running"
             self.run_id = run_id
+            self.total_tasks = 0
+            self.completed_tasks = 0
+            self.token_data = None
+            self._relay_mode = settings.get("supervisor") == "ai_relay"
+            self.repo_root = str(settings.get("repo_root", "")).strip()
+            self.driver = str(settings.get("supervisor", "")).strip()
+            cmd = self.build_command(settings)
+            self.command_preview = " ".join(cmd)
+            # Determine a safe working directory for the subprocess.
+            # When frozen, BRIDGE_ROOT is the PyInstaller temp extraction dir —
+            # useless as a cwd.  Prefer the configured repo root; fall back to
+            # the directory the exe was launched from.
+            _repo = settings.get("repo_root", "").strip()
+            if _FROZEN:
+                subprocess_cwd = _repo or _STARTUP_CWD or str(Path.home())
+            else:
+                subprocess_cwd = str(BRIDGE_ROOT)
+            thread = threading.Thread(
+                target=self._run_process, args=(cmd, subprocess_cwd), daemon=True
+            )
+            thread.start()
 
-        cmd = self.build_command(settings)
-        self.command_preview = " ".join(cmd)
+        self._emit("start", {
+            "command": self.command_preview,
+            "run_id": run_id,
+            "repo_root": self.repo_root,
+            "driver": self.driver,
+        })
 
-        self._emit("start", {"command": self.command_preview, "run_id": run_id})
-
-        thread = threading.Thread(
-            target=self._run_process, args=(cmd,), daemon=True
-        )
-        thread.start()
-
-    def _run_process(self, cmd: list[str]) -> None:
+    def _run_process(self, cmd: list[str], subprocess_cwd: str) -> None:
         start_time = time.time()
         final_json: Optional[dict] = None
 
         try:
             self._process = subprocess.Popen(
                 cmd,
-                cwd=str(BRIDGE_ROOT),
+                cwd=subprocess_cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                creationflags=_WIN_NO_WINDOW,
             )
 
             for raw_line in self._process.stdout:  # type: ignore[union-attr]
@@ -171,6 +233,42 @@ class BridgeRun:
     # ── Log parser — extracts structured task events from INFO lines ───────
 
     def _parse_log_line(self, line: str) -> None:
+        # ── Structured JSON events emitted by main._emit_structured() ────────
+        stripped_line = line.strip()
+        if stripped_line.startswith('{"_bridge_event"'):
+            try:
+                event = json.loads(stripped_line)
+                event_type = event.get("type", "")
+                if event_type == "task_complete":
+                    task_id = int(event.get("task_id", 0))
+                    diff = event.get("diff", "")
+                    if task_id in self.tasks:
+                        self.tasks[task_id]["diff"] = diff
+                    self._emit("task_diff", {"task_id": task_id, "diff": diff})
+                elif event_type == "paused":
+                    self.status = "paused"
+                    self._emit("paused", {"pause_file": event.get("pause_file", "")})
+                elif event_type == "resumed":
+                    self.status = "running"
+                    self._emit("resumed", {})
+                elif event_type == "token_report":
+                    report = event.get("report", {})
+                    self.token_data = {"source": "live", "session": report}
+                    self._emit("token_report", {"report": report})
+                elif event_type == "review_required":
+                    self.status = "waiting_review"
+                    payload = {
+                        "task_id": event.get("task_id", 0),
+                        "request_file": event.get("request_file", ""),
+                        "validation_message": event.get("validation_message", ""),
+                        "mode": event.get("mode", "manual"),
+                    }
+                    emit_type = "relay_review_needed" if self._relay_mode else "review_required"
+                    self._emit(emit_type, payload)
+            except Exception:
+                pass
+            return
+
         # Strip the log prefix: "YYYY-MM-DD HH:MM:SS | LEVEL | name | <message>"
         msg_match = re.search(r"\|\s*bridge_app\s*\|\s*(.+)$", line)
         msg = msg_match.group(1).strip() if msg_match else line.strip()
@@ -205,6 +303,14 @@ class BridgeRun:
             if task_id in self.tasks:
                 self.tasks[task_id]["status"] = "approved"
                 self._emit("task_update", {"task": dict(self.tasks[task_id])})
+            self.completed_tasks += 1
+            if self.total_tasks > 0:
+                pct = round(self.completed_tasks / self.total_tasks * 100)
+                self._emit("progress", {
+                    "completed": self.completed_tasks,
+                    "total": self.total_tasks,
+                    "percent": pct,
+                })
             return
 
         # ── Supervisor REWORK ─────────────────────────────────────────────
@@ -252,7 +358,9 @@ class BridgeRun:
         # ── Plan ready ────────────────────────────────────────────────────
         m = re.search(r"Supervisor produced (\d+) task", msg)
         if m:
-            self._emit("plan_ready", {"task_count": int(m.group(1))})
+            self.total_tasks = int(m.group(1))
+            self._emit("plan_ready", {"task_count": self.total_tasks})
+            self._emit("progress", {"completed": 0, "total": self.total_tasks, "percent": 0})
             return
 
         # ── Bridge started ────────────────────────────────────────────────
@@ -279,6 +387,20 @@ class BridgeRun:
             self.is_running = False
             self.status = "stopped"
         self._emit("stopped", {})
+
+    def send_input(self, text: str) -> bool:
+        """Write a line of text to the running subprocess stdin. Returns True if sent."""
+        with self._lock:
+            proc = self._process
+        if proc and proc.stdin:
+            try:
+                proc.stdin.write(text + "\n")
+                proc.stdin.flush()
+                self._emit("log", {"line": f"[user input] {text}"})
+                return True
+            except Exception:
+                pass
+        return False
 
 
 # Module-level singleton — one run at a time (local tool)

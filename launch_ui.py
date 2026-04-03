@@ -65,7 +65,7 @@ def _ensure_deps() -> None:
     except ImportError:
         missing.append("pywebview>=4.0")
     if missing:
-        print(f"[bridge] Installing: {', '.join(missing)} …")
+        print(f"[bridge] Installing: {', '.join(missing)} ...")
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "--quiet", *missing]
         )

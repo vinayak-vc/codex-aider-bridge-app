@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>{% block title %}Bridge{% endblock %} — Bridge</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/nav.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/chat-drawer.css') }}">
+  {% block extra_css %}{% endblock %}
+  <script>
+    // Theme is locked to dark-red — no toggle.
+    document.documentElement.dataset.theme = 'dark';
+  </script>
+</head>
+<body data-page="{{ active_page | default('') }}">
+<!-- Per-page space wallpaper — sits behind all content -->
+<div id="page-wallpaper" aria-hidden="true"></div>
+<div class="page-shell">
+
+  <!-- ── Sidebar Navigation ── -->
+  <nav class="nav" aria-label="Main navigation">
+    <div class="nav-header">
+      <div class="nav-logo" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/>
+        </svg>
+      </div>
+      <span class="nav-brand">Bridge</span>
+      <div class="nav-status-chip" id="nav-status-chip" data-status="idle">
+        <span class="nav-status-dot"></span>
+        <span id="nav-status-label">Idle</span>
+      </div>
+    </div>
+
+    <div class="nav-items">
+      <a href="/dashboard" class="nav-item {% if active_page == 'dashboard' %}--active{% endif %}" data-page="dashboard">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Dashboard</span>
+      </a>
+
+      <a href="/run" class="nav-item {% if active_page == 'run' %}--active{% endif %}" data-page="run">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Run</span>
+      </a>
+
+      <a href="/knowledge" class="nav-item {% if active_page == 'knowledge' %}--active{% endif %}" data-page="knowledge">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Knowledge</span>
+      </a>
+
+      <a href="/history" class="nav-item {% if active_page == 'history' %}--active{% endif %}" data-page="history">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">History</span>
+      </a>
+
+      <a href="/tokens" class="nav-item {% if active_page == 'tokens' %}--active{% endif %}" data-page="tokens">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Tokens</span>
+      </a>
+
+      <a href="/setup" class="nav-item {% if active_page == 'setup' %}--active{% endif %}" data-page="setup">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l5.654-4.654m5.65-4.647 2.58-2.58m0 0A2.252 2.252 0 0 0 16.5 5.25c-1.244 0-2.25 1.006-2.25 2.25 0 .414.112.8.308 1.13M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Z"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Setup</span>
+        <span class="nav-item-badge" id="setup-issues-badge" style="display:none"></span>
+      </a>
+    </div>
+
+    <div class="nav-footer">
+      <span class="text-subtle" style="font-size:var(--font-size-xs)">Bridge v0.1</span>
+      <div class="nav-footer-actions">
+        <button class="btn-icon-sm" id="sound-toggle" title="Toggle sounds" aria-label="Toggle sounds">
+          <svg id="sound-icon-on" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z"/>
+          </svg>
+          <svg id="sound-icon-off" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="display:none">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6 4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z"/>
+          </svg>
+        </button>
+        <button class="btn-icon-sm" id="page-help-btn" title="Help for this page (H)" aria-label="Page help">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/>
+          </svg>
+        </button>
+        <button class="btn-icon-sm" id="kb-help-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Project top-bar ── -->
+  <header class="project-bar" id="project-bar" aria-label="Active project">
+    <div class="project-bar-inner">
+      <button class="project-switcher" id="project-switcher" aria-haspopup="listbox" aria-expanded="false">
+        <span class="project-switcher-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0v.243a2.25 2.25 0 0 1-2.25 2.25H4.5a2.25 2.25 0 0 1-2.25-2.25V6.75"/>
+          </svg>
+        </span>
+        <span class="project-name" id="project-name">No project selected</span>
+        <span class="project-switcher-caret" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+          </svg>
+        </span>
+      </button>
+
+      <!-- Dropdown -->
+      <div class="project-dropdown" id="project-dropdown" role="listbox" hidden>
+        <div class="project-dropdown-list" id="project-dropdown-list">
+          <!-- filled by project.js -->
+        </div>
+        <div class="project-dropdown-footer">
+          <button class="project-dropdown-add" id="btn-project-add">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+            </svg>
+            Add project…
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Global model selector -->
+    <div class="model-selector-wrap" id="model-selector-wrap">
+      <svg class="model-selector-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/>
+      </svg>
+      <select id="global-model-select" class="model-selector-select" title="Active LLM model (applies globally)">
+        <option value="">Loading…</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- ── Main Content ── -->
+  <main class="main-content">
+    <div class="page-body">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<button id="chat-drawer-toggle" class="chat-drawer-toggle" type="button" aria-label="Open chat">
+  <span class="chat-drawer-toggle__label">Chat</span>
+  <span class="chat-drawer-toggle__icon" aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="16" height="16">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z"/>
+    </svg>
+  </span>
+</button>
+
+<aside id="chat-drawer" class="chat-drawer" aria-label="Project chat">
+  <div class="chat-drawer__header">
+    <div>
+      <div class="chat-drawer__title">Project Chat</div>
+      <div id="chat-drawer-project" class="chat-drawer__project">No project selected</div>
+    </div>
+    <div class="chat-drawer__actions">
+      <button id="chat-drawer-new" class="btn btn--secondary btn--sm" type="button">New Chat</button>
+      <button id="chat-drawer-stop" class="btn btn--secondary btn--sm" type="button" style="display:none">Stop</button>
+      <button id="chat-drawer-close" class="btn-icon-sm" type="button" aria-label="Collapse chat">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="chat-drawer-status" class="chat-drawer__status" style="display:none"></div>
+
+  <div id="chat-drawer-messages" class="chat-drawer__messages">
+    <div id="chat-drawer-empty" class="chat-drawer__empty">
+      Ask about architecture, files, bugs, or how to implement a feature.
+    </div>
+  </div>
+
+  <div class="chat-drawer__footer">
+    <textarea id="chat-drawer-input" class="chat-drawer__input" rows="1" maxlength="8000" placeholder="Ask about the selected project…"></textarea>
+    <div class="chat-drawer__footer-actions">
+      <button id="chat-drawer-send" class="btn btn--primary" type="button">Send</button>
+    </div>
+  </div>
+</aside>
+
+<script type="module">
+  import { initShortcuts }  from '/static/js/core/shortcuts.js';
+  import { initWallpaper }  from '/static/js/core/wallpaper.js';
+  import { initProjectBar } from '/static/js/core/project.js';
+  import { initChatDrawer } from '/static/js/core/chat-drawer.js';
+  import { initEventNotifications } from '/static/js/core/event-notifier.js';
+  import { isMuted, toggleMute } from '/static/js/core/sounds.js';
+  import { initHelp, openHelp }  from '/static/js/core/help.js';
+
+  initShortcuts();
+  initWallpaper();
+  initProjectBar();
+  initChatDrawer();
+  initEventNotifications();
+  initHelp();
+
+  // Page help button — opens contextual help for the current page
+  document.getElementById('page-help-btn')?.addEventListener('click', () => {
+    openHelp(document.body.dataset.page || 'dashboard');
+  });
+
+  // Sound mute toggle
+  function updateSoundIcon() {
+    const muted = isMuted();
+    document.getElementById('sound-icon-on').style.display  = muted ? 'none' : '';
+    document.getElementById('sound-icon-off').style.display = muted ? '' : 'none';
+    document.getElementById('sound-toggle').title = muted ? 'Sounds muted (click to enable)' : 'Sounds on (click to mute)';
+  }
+  updateSoundIcon();
+  document.getElementById('sound-toggle')?.addEventListener('click', () => {
+    toggleMute();
+    updateSoundIcon();
+  });
+
+  // Wire ? button in nav footer
+  document.getElementById('kb-help-btn')?.addEventListener('click', () => {
+    const overlay = document.getElementById('kb-help-overlay');
+    if (overlay) overlay.style.display = overlay.style.display === 'none' ? '' : 'none';
+  });
+
+  // Keep nav status chip in sync (poll /api/run/status every 5s)
+  async function updateNavStatus() {
+    try {
+      const r = await fetch('/api/run/status');
+      if (!r.ok) return;
+      const d = await r.json();
+      const chip  = document.getElementById('nav-status-chip');
+      const label = document.getElementById('nav-status-label');
+      if (!chip || !label) return;
+      const status = d.status || 'idle';
+      chip.dataset.status = status;
+      label.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    } catch (_) {}
+  }
+  updateNavStatus();
+  setInterval(updateNavStatus, 5000);
+
+  // Setup issues badge — poll /api/check on load, update badge once
+  (async () => {
+    try {
+    
+      const checks = await fetch('/api/check').then(r => r.json());
+      const issues = Object.values(checks).filter(c => !c.installed || c.hint || c.ok === false).length;
+      const badge  = document.getElementById('setup-issues-badge');
+      if (!badge) return;
+      if (issues > 0) { badge.textContent = issues; badge.style.display = ''; }
+      else              badge.style.display = 'none';
+    } catch (_) {}
+  })();
+</script>
+
+{% block page_script %}{% endblock %}
+</body>
+</html>

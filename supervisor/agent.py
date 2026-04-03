@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
 
-from models.task import ReviewResult, TaskReport
+from models.task import ReviewResult, SubTask, Task, TaskReport
 from utils.command_resolution import resolve_command_arguments
+from utils.token_tracker import TokenTracker
 
 
 class SupervisorError(Exception):
     pass
+
+
+# Maximum characters of idea/brief text injected into the planning prompt.
+# Keeps prompts within typical context-window budgets for local models.
+_IDEA_MAX_CHARS: int = 2000
 
 
 class SupervisorAgent:
@@ -25,10 +32,19 @@ class SupervisorAgent:
     It only decides WHAT to build (planning) and WHETHER it was built correctly (review).
     """
 
-    def __init__(self, repo_root: Path, command: str, logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        repo_root: Path,
+        command: str,
+        logger: logging.Logger,
+        timeout: int = 300,
+        token_tracker: Optional[TokenTracker] = None,
+    ) -> None:
         self._repo_root = repo_root
         self._command = command
         self._logger = logger
+        self._timeout = timeout
+        self._tracker = token_tracker
 
     # ------------------------------------------------------------------
     # Public API
@@ -40,15 +56,60 @@ class SupervisorAgent:
         repo_tree: str,
         idea_text: Optional[str] = None,
         feedback: Optional[str] = None,
+        knowledge_context: Optional[str] = None,
+        workflow_profile: str = "standard",
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
-        prompt = self._build_plan_prompt(goal, repo_tree, idea_text, feedback)
-        return self._run(prompt, self._plan_schema())
+        prompt = self._build_plan_prompt(
+            goal,
+            repo_tree,
+            idea_text,
+            feedback,
+            knowledge_context,
+            workflow_profile,
+        )
+        self._logger.debug(
+            "Plan prompt (%d chars): %.500s%s",
+            len(prompt),
+            prompt,
+            "..." if len(prompt) > 500 else "",
+        )
+        response = self._run(prompt, self._plan_schema())
+        if self._tracker is not None:
+            self._tracker.record_plan(prompt, response)
+        return response
+
+    def generate_subplan(self, task: Task, error_message: str) -> list[SubTask]:
+        """Ask the supervisor for micro-tasks to fix a mechanical validation failure.
+
+        Called when a task fails mechanical checks (syntax error, missing file, CI
+        failure) and simple retry is unlikely to succeed. The supervisor returns
+        1–3 atomic correction sub-tasks targeting the same files.
+        """
+        prompt = self._build_subplan_prompt(task, error_message)
+        self._logger.debug(
+            "Sub-plan prompt for task %s (%d chars): %.300s%s",
+            task.id, len(prompt), prompt, "..." if len(prompt) > 300 else "",
+        )
+        raw = self._run(prompt)
+        if self._tracker is not None:
+            self._tracker.record_subplan(prompt, raw)
+        return self._parse_subplan(task, raw)
 
     def review_task(self, report: TaskReport) -> ReviewResult:
         """Ask the supervisor to review a completed task and return PASS or REWORK."""
         prompt = self._build_review_prompt(report)
+        self._logger.debug(
+            "Review prompt for task %s (%d chars): %.300s%s",
+            report.task.id,
+            len(prompt),
+            prompt,
+            "..." if len(prompt) > 300 else "",
+        )
         response = self._run(prompt)
+        if self._tracker is not None:
+            is_rework = response.strip().upper().startswith("REWORK")
+            self._tracker.record_review(prompt, response, is_rework=is_rework)
         return self._parse_review(report.task.id, response)
 
     # ------------------------------------------------------------------
@@ -61,11 +122,19 @@ class SupervisorAgent:
         repo_tree: str,
         idea_text: Optional[str],
         feedback: Optional[str],
+        knowledge_context: Optional[str] = None,
+        workflow_profile: str = "standard",
     ) -> str:
         idea_block = ""
         if idea_text:
-            trimmed = idea_text[:2000]
+            trimmed = idea_text[:_IDEA_MAX_CHARS]
             idea_block = f"\nProject brief:\n{trimmed}\n"
+
+        # Project knowledge — what each file does, what's already built.
+        # This lets the supervisor plan without reading individual source files.
+        knowledge_block = ""
+        if knowledge_context:
+            knowledge_block = f"\nProject knowledge (file roles and history):\n{knowledge_context}\n"
 
         feedback_block = ""
         if feedback:
@@ -73,6 +142,19 @@ class SupervisorAgent:
                 "\nThe previous plan was rejected for the following reason. "
                 "Fix these issues and return only the corrected plan:\n"
                 f"{feedback}\n"
+            )
+
+        profile_block = ""
+        if workflow_profile == "micro":
+            profile_block = (
+                "\nMICRO-TASK PROFILE (STRICT):\n"
+                "- One file per task. Do not produce multi-file tasks.\n"
+                "- One concern per task.\n"
+                "- Prefer create/modify/delete tasks over broad validate tasks.\n"
+                "- Every create task must include must_exist.\n"
+                "- Every delete task must include must_not_exist.\n"
+                "- Every modify task should include at least one assertion when the output is observable.\n"
+                "- Assume a small local coding model is implementing the task, so keep instructions surgical.\n"
             )
 
         return (
@@ -83,14 +165,35 @@ class SupervisorAgent:
             "- Each task targets exactly one concern and one or more specific files.\n"
             "- Use only relative file paths that are visible in the repo structure below.\n"
             "  If a file does not yet exist, use the path it should be created at.\n"
-            "- Task type must be one of: create, modify, validate\n"
+            "- Task type must be one of: create, modify, delete, validate\n"
             "- Tasks execute sequentially. Later tasks may depend on earlier ones.\n"
             "- Instructions must be concrete but code-free: say WHAT to build, never HOW.\n"
-            "- Do not ask questions. Do not explain. Return the plan only.\n\n"
+            "- Use must_exist / must_not_exist when the task has a clear post-condition.\n"
+            "- Do not ask questions. Do not explain. Return the plan only.\n"
+            "- Use the FILE REGISTRY below to reference existing file roles correctly.\n"
+            "  Do not duplicate work that is already marked as done.\n\n"
+            f"{profile_block}"
             f"Repo structure:\n{repo_tree}\n"
+            f"{knowledge_block}"
             f"{idea_block}"
             f"\nGoal: {goal}\n"
             f"{feedback_block}"
+        )
+
+    def _build_subplan_prompt(self, task: Task, error_message: str) -> str:
+        return (
+            "You are a Tech Supervisor. A development task failed mechanical validation.\n\n"
+            "Create 1–3 atomic correction sub-tasks that fix the specific error.\n\n"
+            "STRICT RULES:\n"
+            "- Return ONLY JSON. No prose. No code. No questions.\n"
+            "- Sub-tasks must target only files from the parent task's file list.\n"
+            "- Instructions must be concrete but code-free: say WHAT to fix, never HOW.\n"
+            "- Maximum 3 sub-tasks. Prefer fewer.\n\n"
+            f"Parent Task {task.id} ({task.type})\n"
+            f"Files: {', '.join(task.files)}\n"
+            f"Original instruction: {task.instruction}\n\n"
+            f"Mechanical validation error:\n{error_message}\n\n"
+            'Return format: {"sub_tasks": [{"instruction": "...", "files": ["..."], "type": "modify"}]}'
         )
 
     def _build_review_prompt(self, report: TaskReport) -> str:
@@ -126,6 +229,7 @@ class SupervisorAgent:
                 verdict="PASS",
                 new_instruction=None,
                 message="Supervisor approved.",
+                sub_tasks=[],
             )
 
         if upper.startswith("REWORK:"):
@@ -139,6 +243,7 @@ class SupervisorAgent:
                 verdict="REWORK",
                 new_instruction=new_instruction,
                 message="Supervisor requested rework.",
+                sub_tasks=[],
             )
 
         raise SupervisorError(
@@ -146,11 +251,71 @@ class SupervisorAgent:
             f"{stripped[:140]!r}"
         )
 
+    def _parse_subplan(self, parent: Task, raw: str) -> list[SubTask]:
+        """Parse supervisor sub-plan JSON into a list of SubTask objects."""
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if len(lines) >= 3:
+                cleaned = "\n".join(lines[1:-1]).strip()
+
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as ex:
+            raise SupervisorError(
+                f"Sub-plan response was not valid JSON: {ex}. Raw: {raw[:200]!r}"
+            ) from ex
+
+        sub_tasks_raw = payload.get("sub_tasks", [])
+        if not isinstance(sub_tasks_raw, list) or not sub_tasks_raw:
+            raise SupervisorError(
+                "Sub-plan must contain a non-empty 'sub_tasks' array."
+            )
+
+        sub_tasks: list[SubTask] = []
+        for i, item in enumerate(sub_tasks_raw[:3]):   # cap at 3 sub-tasks
+            if not isinstance(item, dict):
+                continue
+            instruction = str(item.get("instruction", "")).strip()
+            files = item.get("files", parent.files)
+            task_type = str(item.get("type", "modify"))
+            if not instruction:
+                continue
+            sub_tasks.append(SubTask(
+                parent_id=parent.id,
+                step=i + 1,
+                instruction=instruction,
+                files=files if isinstance(files, list) else parent.files,
+                type=task_type if task_type in {"create", "modify", "delete", "validate"} else "modify",
+            ))
+
+        if not sub_tasks:
+            raise SupervisorError(
+                f"Sub-plan for task {parent.id} contained no valid sub-tasks."
+            )
+
+        return sub_tasks
+
     # ------------------------------------------------------------------
     # Subprocess runner
     # ------------------------------------------------------------------
 
     def _run(self, prompt: str, output_schema: Optional[str] = None) -> str:
+        if self._command == "interactive":
+            print("\n" + "="*80)
+            print("INTERACTIVE SUPERVISOR REQUIRED")
+            print("="*80)
+            print(prompt)
+            print("="*80)
+            if output_schema:
+                import sys
+                print("\nEXPECTED SCHEMA:")
+                print(output_schema)
+                print("\nPlease enter your JSON plan below (Press Ctrl+Z/Ctrl+D and Enter to finish):")
+                return sys.stdin.read().strip()
+            else:
+                return input("\nReview Result (PASS / REWORK: <instruction>): ").strip()
+
         with tempfile.TemporaryDirectory(prefix="supervisor-bridge-") as tmp_dir:
             output_file = Path(tmp_dir) / "supervisor-output.txt"
             schema_file: Optional[Path] = None
@@ -160,7 +325,7 @@ class SupervisorAgent:
                 schema_file.write_text(output_schema, encoding="utf-8")
 
             try:
-                arguments = self._build_command(prompt, output_file, schema_file)
+                arguments, stdin_prompt = self._build_command(prompt, output_file, schema_file)
             except (FileNotFoundError, ValueError) as ex:
                 raise SupervisorError(
                     f"Cannot resolve supervisor command '{self._command}': {ex}"
@@ -171,12 +336,21 @@ class SupervisorAgent:
             try:
                 result = subprocess.run(
                     arguments,
+                    input=stdin_prompt,
                     cwd=self._repo_root,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
                     check=False,
+                    timeout=self._timeout,
                 )
+            except subprocess.TimeoutExpired as ex:
+                if ex.process:
+                    ex.process.kill()
+                raise SupervisorError(
+                    f"Supervisor timed out after {self._timeout}s — "
+                    "command may be hung or waiting for input."
+                ) from ex
             except OSError as ex:
                 raise SupervisorError(
                     f"Cannot start supervisor command '{self._command}': {ex}"
@@ -189,7 +363,7 @@ class SupervisorAgent:
                 )
 
             if output_file.exists():
-                output = output_file.read_text(encoding="utf-8").strip()
+                output = output_file.read_text(encoding="utf-8", errors="replace").strip()
                 if output:
                     return output
 
@@ -204,29 +378,42 @@ class SupervisorAgent:
         prompt: str,
         output_file: Path,
         schema_file: Optional[Path],
-    ) -> list[str]:
+    ) -> tuple[list[str], Optional[str]]:
+        """Build the supervisor subprocess arguments and determine prompt delivery mode.
+
+        Returns a (arguments, stdin_prompt) tuple:
+          - exec-style commands (Codex): prompt appended as final argument, stdin=None.
+          - non-exec commands (Claude CLI, etc.): prompt delivered via stdin to avoid
+            Windows .cmd argument mangling of multi-line strings.
+        """
         command_text = self._command
 
-        if "{prompt}" in command_text:
-            command_text = command_text.replace("{prompt}", prompt)
+        # Substitute {output_file} inline — it is a safe file path we control.
         if "{output_file}" in command_text:
             command_text = command_text.replace("{output_file}", str(output_file))
 
+        # Strip any {prompt} placeholder from the template — the prompt is
+        # delivered separately (as arg or stdin) to prevent injection.
+        command_text = command_text.replace("{prompt}", "").strip()
+
         arguments, _ = resolve_command_arguments(command_text, self._repo_root)
 
-        # Auto-append -o <output_file> for codex exec style commands
-        if "{output_file}" not in self._command and "exec" in arguments and "-o" not in arguments:
-            arguments.extend(["-o", str(output_file)])
-
-        # Auto-append --output-schema for codex exec style commands
-        if schema_file is not None and "--output-schema" not in arguments and "exec" in arguments:
-            arguments.extend(["--output-schema", str(schema_file)])
-
-        # Append prompt as final argument when not already embedded
-        if "{prompt}" not in self._command:
+        # Exec-style commands (Codex): append output file, schema, and prompt as args.
+        is_exec_style = "exec" in arguments
+        if is_exec_style:
+            if "{output_file}" not in self._command and "-o" not in arguments:
+                arguments.extend(["-o", str(output_file)])
+            if schema_file is not None and "--output-schema" not in arguments:
+                arguments.extend(["--output-schema", str(schema_file)])
+            # Prompt as final positional argument (Codex exec expects this).
             arguments.append(prompt)
+            return arguments, None
 
-        return arguments
+        # Non-exec commands (Claude CLI, etc.): pass prompt via stdin.
+        # On Windows, .cmd files mangle multi-line strings passed as CLI
+        # arguments — newlines are dropped, producing a truncated prompt.
+        # Piping via stdin bypasses this limitation entirely.
+        return arguments, prompt
 
     # ------------------------------------------------------------------
     # JSON schema for plan output
@@ -254,7 +441,9 @@ class SupervisorAgent:
             '            "items": { "type": "string", "minLength": 1 }\n'
             "          },\n"
             '          "instruction": { "type": "string", "minLength": 1 },\n'
-            '          "type": { "type": "string", "enum": ["create", "modify", "validate"] }\n'
+            '          "type": { "type": "string", "enum": ["create", "modify", "delete", "validate"] },\n'
+            '          "must_exist": { "type": "array", "items": { "type": "string" } },\n'
+            '          "must_not_exist": { "type": "array", "items": { "type": "string" } }\n'
             "        }\n"
             "      }\n"
             "    }\n"

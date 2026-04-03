@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% set active_page = "setup" %}
+
+{% block title %}Setup{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/setup.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Setup</h1>
+    <p class="page-subtitle">Dependency checks and tool management</p>
+  </div>
+  <button class="btn btn--secondary btn--sm" id="btn-recheck">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+    </svg>
+    Re-check
+  </button>
+</div>
+
+<!-- ── Dependency check grid ── -->
+<div class="setup-section">
+  <div class="setup-section-title">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+    </svg>
+    Dependencies
+  </div>
+  <div class="check-grid" id="check-grid">
+    <!-- Python -->
+    <div class="check-card --loading" id="card-python">
+      <div class="check-card-header">
+        <span class="check-card-name">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M14.25 9.75 16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z"/>
+          </svg>
+          Python
+        </span>
+        <span class="check-dot --spin" id="dot-python"></span>
+      </div>
+      <div class="check-card-version" id="ver-python">Checking…</div>
+      <div class="check-card-path"   id="path-python"></div>
+      <div class="check-card-hint"   id="hint-python" style="display:none"></div>
+    </div>
+
+    <!-- Aider -->
+    <div class="check-card --loading" id="card-aider">
+      <div class="check-card-header">
+        <span class="check-card-name">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/>
+          </svg>
+          Aider
+        </span>
+        <span class="check-dot --spin" id="dot-aider"></span>
+      </div>
+      <div class="check-card-version" id="ver-aider">Checking…</div>
+      <div class="check-card-path"   id="path-aider"></div>
+      <div class="check-card-hint"   id="hint-aider" style="display:none"></div>
+      <button class="btn btn--primary btn--sm" id="btn-install-aider" style="display:none">
+        Install / upgrade Aider
+      </button>
+    </div>
+
+    <!-- Ollama -->
+    <div class="check-card --loading" id="card-ollama">
+      <div class="check-card-header">
+        <span class="check-card-name">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0 1 12 15a9.065 9.065 0 0 1-6.23-.693L5 14.5m14.8.8 1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0 1 12 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"/>
+          </svg>
+          Ollama
+        </span>
+        <span class="check-dot --spin" id="dot-ollama"></span>
+      </div>
+      <div class="check-card-version" id="ver-ollama">Checking…</div>
+      <div class="check-card-path"   id="path-ollama"></div>
+      <div class="check-card-hint"   id="hint-ollama" style="display:none"></div>
+    </div>
+
+    <!-- Codex -->
+    <div class="check-card --loading" id="card-codex">
+      <div class="check-card-header">
+        <span class="check-card-name">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/>
+          </svg>
+          Codex CLI
+        </span>
+        <span class="check-dot --spin" id="dot-codex"></span>
+      </div>
+      <div class="check-card-version" id="ver-codex">Checking…</div>
+      <div class="check-card-path"   id="path-codex"></div>
+      <div class="check-card-hint"   id="hint-codex" style="display:none"></div>
+    </div>
+
+    <!-- Claude -->
+    <div class="check-card --loading" id="card-claude">
+      <div class="check-card-header">
+        <span class="check-card-name">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+          </svg>
+          Claude CLI
+        </span>
+        <span class="check-dot --spin" id="dot-claude"></span>
+      </div>
+      <div class="check-card-version" id="ver-claude">Checking…</div>
+      <div class="check-card-path"   id="path-claude"></div>
+      <div class="check-card-hint"   id="hint-claude" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Aider install section ── -->
+<div class="setup-section install-section" id="aider-install-section" style="display:none">
+  <div class="setup-section-title">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+    </svg>
+    Install Aider
+  </div>
+  <p class="text-muted" style="font-size:var(--font-size-sm);margin-bottom:10px">
+    Aider is the AI coding engine that applies tasks to your codebase. Click below to install or upgrade via pip.
+  </p>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="btn btn--primary" id="btn-run-install">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+      </svg>
+      pip install aider-chat
+    </button>
+    <span class="text-subtle" style="font-size:var(--font-size-xs)" id="install-status-label"></span>
+  </div>
+  <div class="install-terminal" id="install-terminal"></div>
+</div>
+
+<!-- ── Ollama model manager ── -->
+<div class="setup-section" id="ollama-section" style="display:none">
+  <div class="setup-section-title">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0 1 12 15a9.065 9.065 0 0 1-6.23-.693L5 14.5m14.8.8 1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0 1 12 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"/>
+    </svg>
+    Ollama Models
+  </div>
+
+  <div class="ollama-section">
+    <!-- Installed models list -->
+    <div>
+      <div style="font-size:var(--font-size-sm);color:var(--color-text-muted);margin-bottom:8px">Installed models</div>
+      <div class="model-list" id="model-list">
+        <div class="text-subtle" style="font-size:var(--font-size-sm);padding:8px 0">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Pull new model -->
+    <div>
+      <div style="font-size:var(--font-size-sm);color:var(--color-text-muted);margin-bottom:8px">Pull a model</div>
+      <div class="pull-row">
+        <input class="input" id="pull-model-input" type="text" placeholder="mistral, qwen2.5-coder:14b, deepseek-coder-v2…">
+        <button class="btn btn--primary btn--sm" id="btn-pull-model">Pull</button>
+      </div>
+      <div class="pull-terminal" id="pull-terminal"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_script %}
+<script type="module" src="{{ url_for('static', filename='js/pages/setup.js') }}"></script>
+{% endblock %}

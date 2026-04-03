@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% set active_page = "tokens" %}
+
+{% block title %}Tokens{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/tokens.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="tokens-page">
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Tokens</h1>
+    <p class="page-subtitle">AI token usage and savings analytics</p>
+  </div>
+  <button class="btn btn--secondary btn--sm" id="btn-refresh-tokens">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+    </svg>
+    Refresh
+  </button>
+</div>
+
+<!-- Empty state -->
+<div id="tokens-empty" style="display:none">
+  <div class="empty-state">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/>
+    </svg>
+    <p>No token data yet. Complete a run to see analytics here.</p>
+    <a href="/run" class="btn btn--primary btn--sm">Start a Run</a>
+  </div>
+</div>
+
+<!-- Main content -->
+<div id="tokens-content" style="display:none">
+
+  <!-- Interactive supervisor notice -->
+  <div class="interactive-notice" id="interactive-notice" style="display:none">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/>
+    </svg>
+    <span>Some sessions used an interactive supervisor (Claude / Codex CLI). Session token counts for those runs may be estimates — actual AI usage is typically higher due to file-reading and conversation context.</span>
+  </div>
+
+  <!-- Top stats row -->
+  <div class="token-stats">
+    <div class="stat-chip">
+      <span class="stat-chip__label">Sessions</span>
+      <span class="stat-chip__value" id="stat-sessions">0</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip__label">Tasks executed</span>
+      <span class="stat-chip__value" id="stat-tasks">0</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip__label">Supervisor tokens</span>
+      <span class="stat-chip__value" id="stat-supervisor">0</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip__label">Total AI tokens</span>
+      <span class="stat-chip__value" id="stat-ai-total">0</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-chip__label">Tokens saved</span>
+      <span class="stat-chip__value" style="color:var(--color-success)" id="stat-saved">0</span>
+    </div>
+  </div>
+
+  <!-- Savings bar -->
+  <div class="card savings-bar-wrap">
+    <div class="section-header" style="margin-bottom:12px">
+      <span class="section-title">Average token savings vs. direct coding</span>
+    </div>
+    <div class="savings-bar-labels">
+      <span>0%</span>
+      <span>50%</span>
+      <span>100%</span>
+    </div>
+    <div class="savings-bar-track">
+      <div class="savings-bar-fill" id="savings-bar-fill" style="width:0%"></div>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
+      <span class="savings-bar-pct" id="savings-bar-pct">0%</span>
+      <span class="text-subtle" style="font-size:var(--font-size-xs)">average savings across all sessions</span>
+    </div>
+  </div>
+
+  <!-- Sessions chart + detail panel -->
+  <div class="tokens-layout tokens-sessions-section">
+
+    <!-- Left: chart + table -->
+    <div style="display:flex;flex-direction:column;gap:20px">
+
+      <!-- Bar chart: tokens per session -->
+      <div class="card">
+        <div class="section-header" style="margin-bottom:16px">
+          <span class="section-title">Tokens per session</span>
+          <span class="text-subtle" style="font-size:var(--font-size-xs)">Click a row to see details</span>
+        </div>
+        <div class="sessions-chart" id="sessions-chart"></div>
+      </div>
+
+      <!-- Sessions table -->
+      <div class="sessions-table-wrap">
+        <table class="sessions-table">
+          <thead>
+            <tr>
+              <th>Goal</th>
+              <th>Tasks</th>
+              <th>AI tokens</th>
+              <th>Saved</th>
+              <th>Savings %</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Right: detail panel -->
+    <div>
+      <div class="session-detail" id="session-detail">
+        <div class="empty-state" style="padding:32px 16px" id="detail-empty">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" width="28" height="28">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 15.75l-2.489-2.489m0 0a3.375 3.375 0 1 0-4.773-4.773 3.375 3.375 0 0 0 4.774 4.774ZM21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+          </svg>
+          <p>Select a session to see breakdown</p>
+        </div>
+        <div id="detail-content" style="display:none">
+          <div style="margin-bottom:14px">
+            <div style="font-size:var(--font-size-sm);font-weight:600;color:var(--color-text)" id="detail-goal"></div>
+            <div style="font-size:var(--font-size-xs);color:var(--color-text-subtle);margin-top:3px" id="detail-meta"></div>
+          </div>
+          <div class="session-detail-grid">
+            <div class="detail-section" id="detail-supervisor"></div>
+            <div class="detail-section" id="detail-savings"></div>
+            <div class="detail-section" id="detail-aider"></div>
+            <div class="detail-section" id="detail-session"></div>
+          </div>
+          <div class="savings-note" id="detail-note" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+{% endblock %}
+
+{% block page_script %}
+<script type="module" src="{{ url_for('static', filename='js/pages/tokens.js') }}"></script>
+{% endblock %}

@@ -86,19 +86,35 @@ class TaskParser:
         files: Any = item.get("files")
         instruction: Any = item.get("instruction")
         task_type: Any = item.get("type")
+        context_files: Any = item.get("context_files", [])
+        must_exist: Any = item.get("must_exist", [])
+        must_not_exist: Any = item.get("must_not_exist", [])
 
+        # Fix #5: coerce string IDs like "1" or "task-1" to int where possible.
         if not isinstance(task_id, int):
-            raise PlanParseError("Task 'id' must be an integer.")
-        if not isinstance(files, list) or not files:
-            raise PlanParseError(f"Task {task_id} must include a non-empty 'files' array.")
-        if not all(isinstance(fp, str) and fp.strip() for fp in files):
+            if isinstance(task_id, str):
+                # Strip common prefixes: "task-3" → 3, "step_2" → 2, "3" → 3
+                digits = "".join(c for c in task_id if c.isdigit())
+                if digits:
+                    task_id = int(digits)
+                else:
+                    raise PlanParseError(
+                        f"Task 'id' cannot be coerced to an integer: {task_id!r}"
+                    )
+            else:
+                raise PlanParseError("Task 'id' must be an integer.")
+
+        # Fix #6: allow empty files array — Aider will use repo-map to pick files.
+        if not isinstance(files, list):
+            raise PlanParseError(f"Task {task_id} 'files' must be an array.")
+        if files and not all(isinstance(fp, str) and fp.strip() for fp in files):
             raise PlanParseError(f"Task {task_id} contains an invalid file path.")
         if not isinstance(instruction, str) or not instruction.strip():
             raise PlanParseError(f"Task {task_id} must include a non-empty 'instruction'.")
-        if not isinstance(task_type, str) or task_type not in {"create", "modify", "validate"}:
+        if not isinstance(task_type, str) or task_type not in {"create", "modify", "delete", "validate"}:
             raise PlanParseError(
                 f"Task {task_id} has an unsupported type {task_type!r}. "
-                "Must be one of: create, modify, validate."
+                "Must be one of: create, modify, delete, validate."
             )
 
         normalized_files = [fp.strip() for fp in files]
@@ -115,6 +131,11 @@ class TaskParser:
                 raise PlanParseError(
                     f"Task {task_id} must target specific files, not the repository root."
                 )
+            if ".." in Path(fp).parts:
+                raise PlanParseError(
+                    f"Task {task_id} contains a path traversal sequence: {fp!r}. "
+                    "All file paths must stay within the repository root."
+                )
 
         normalized_instruction = instruction.strip()
         lower = normalized_instruction.lower()
@@ -123,9 +144,58 @@ class TaskParser:
                 f"Task {task_id} asked for clarification instead of specifying implementation work."
             )
 
+        # Feature 4: optional context_files — read-only references passed via --read.
+        normalized_context_files: list[str] = []
+        if isinstance(context_files, list):
+            for cf in context_files:
+                if not isinstance(cf, str) or not cf.strip():
+                    continue
+                cf = cf.strip()
+                if ".." in Path(cf).parts or Path(cf).is_absolute():
+                    raise PlanParseError(
+                        f"Task {task_id} context_files contains invalid path: {cf!r}"
+                    )
+                normalized_context_files.append(cf)
+
+        normalized_must_exist = self._normalize_relative_paths(
+            task_id, must_exist, "must_exist"
+        )
+        normalized_must_not_exist = self._normalize_relative_paths(
+            task_id, must_not_exist, "must_not_exist"
+        )
+
         return Task(
             id=task_id,
             files=normalized_files,
             instruction=normalized_instruction,
             type=task_type,
+            context_files=normalized_context_files,
+            must_exist=normalized_must_exist,
+            must_not_exist=normalized_must_not_exist,
         )
+
+    def _normalize_relative_paths(
+        self,
+        task_id: int,
+        raw_paths: Any,
+        field_name: str,
+    ) -> list[str]:
+        normalized: list[str] = []
+        if raw_paths is None:
+            return normalized
+        if not isinstance(raw_paths, list):
+            raise PlanParseError(
+                f"Task {task_id} field {field_name!r} must be an array of relative paths."
+            )
+        for raw_path in raw_paths:
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                raise PlanParseError(
+                    f"Task {task_id} field {field_name!r} contains an invalid path."
+                )
+            file_path = raw_path.strip()
+            if Path(file_path).is_absolute() or ".." in Path(file_path).parts:
+                raise PlanParseError(
+                    f"Task {task_id} field {field_name!r} contains invalid path: {file_path!r}"
+                )
+            normalized.append(file_path)
+        return normalized

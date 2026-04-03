@@ -27,13 +27,15 @@ a = Analysis(
     pathex=["."],
     binaries=[*_wv_bins],
     datas=[
-        # Flask templates (HTML — not Python, must be explicit)
+        # 🔥 include entire UI folder (CRITICAL FIX)
+        ("ui", "ui"),
+
+        # Optional but safe (can keep or remove if above is used)
         ("ui/templates", "ui/templates"),
-        # Persistent data directory placeholder
+        ("ui/static", "ui/static"),   # add this if exists
         ("ui/data", "ui/data"),
-        # Log directory placeholder
+
         ("logs", "logs"),
-        # pywebview runtime assets
         *_wv_datas,
     ],
     hiddenimports=[

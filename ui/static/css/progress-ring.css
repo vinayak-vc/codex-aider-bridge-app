@@ -1,0 +1,72 @@
+/* progress-ring.css — SVG circular progress indicator */
+
+.progress-ring-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.progress-ring {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  flex-shrink: 0;
+}
+
+.progress-ring svg {
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.progress-ring__track {
+  fill: none;
+  stroke: var(--color-surface-3);
+  stroke-width: 8;
+}
+
+.progress-ring__fill {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
+}
+
+.progress-ring__fill[data-status="success"] { stroke: var(--color-success); }
+.progress-ring__fill[data-status="failure"] { stroke: var(--color-danger); }
+.progress-ring__fill[data-status="stopped"] { stroke: var(--color-warning); }
+
+.progress-ring__center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.progress-ring__pct {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.progress-ring__label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* Running pulse on the fill */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .6; }
+}
+.progress-ring__fill[data-status="running"] {
+  animation: ring-pulse 2s ease-in-out infinite;
+}

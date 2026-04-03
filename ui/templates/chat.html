@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% set active_page = "chat" %}
+
+{% block title %}Chat{% endblock %}
+
+{% block content %}
+<section class="panel" style="max-width:760px">
+  <h1 class="page-title">Chat</h1>
+  <p class="page-subtitle">Use the right-side chat drawer to keep the conversation available while you move between pages.</p>
+  <div class="card" style="margin-top:20px;padding:20px">
+    <p class="text-subtle" style="line-height:1.7;margin:0">
+      The chat now lives in the collapsible panel on the right edge of the app.
+      Open it from the floating <strong>Chat</strong> tab, ask your question, and collapse it again without losing the conversation.
+      If a response is running, it continues on the backend and reconnects when you reopen the drawer or change pages.
+    </p>
+  </div>
+</section>
+{% endblock %}

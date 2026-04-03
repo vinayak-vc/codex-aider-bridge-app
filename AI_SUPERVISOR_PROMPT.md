@@ -1,211 +1,216 @@
-# AI Supervisor Prompt Reference
+# AI Supervisor Reference
 
-This document describes how the bridge communicates with the supervisor agent
-(Codex, Claude CLI, or any coding agent), what prompts are sent, and how to
-configure different backends.
+This document explains how an agentic AI should behave when supervising Aider through this bridge.
 
-> **Web UI users:** Supervisor command and Aider model are configured on the
-> **Run** tab in the web UI (`launch_ui.bat`). The prompts below are sent
-> automatically — you do not need to write them manually.
+The recommended operating mode is no longer “spawn another AI CLI and hope it plans well”.
 
----
+The recommended mode is:
 
-## Supervisor Role
-
-The supervisor is a **Tech Supervisor**, not a developer. It has two and only two jobs:
-
-1. **Plan** — decompose a high-level goal into an atomic sequential JSON task list for Aider.
-2. **Review** — inspect each completed task's git diff and return `PASS` or `REWORK`.
-
-The supervisor **never writes code**, never executes commands, and never makes runtime decisions. All coding is done by Aider using a local LLM.
+- the active AI session creates the task plan
+- the bridge runs Aider
+- the bridge validates and records results
+- the active AI session reviews each task
+- the bridge resumes from the AI’s decision
+- the bridge keeps a structured project memory under `bridge_progress/`
 
 ---
 
-## Planning Prompt
+## The Supervisor Role
 
-Sent once at the start of a bridge run (or once per retry if the plan is rejected).
+The supervisor is the **technical lead**.
 
+The supervisor:
+- reads the user goal
+- reads minimal project context
+- creates an atomic JSON task plan
+- reviews each task diff
+- decides `pass`, `rework`, or `subplan`
+
+The supervisor does **not**:
+- write code directly
+- edit project files directly
+- let tasks continue without review
+
+---
+
+## Recommended Bridge Mode
+
+Use:
+
+```bash
+python main.py "Short goal headline" \
+  --repo-root "D:\ExternalProject" \
+  --plan-file "D:\ExternalProject\taskJsons\plan_001_feature.json" \
+  --workflow-profile micro \
+  --manual-supervisor \
+  --aider-model ollama/qwen2.5-coder:14b
 ```
-You are a Tech Supervisor. Your only job is to decompose a development goal into
-an atomic sequential plan for a developer tool called Aider.
 
-STRICT RULES:
-- Return ONLY the JSON plan. No code. No prose. No questions.
-- Each task targets exactly one concern and one or more specific files.
-- Use only relative file paths that are visible in the repo structure below.
-  If a file does not yet exist, use the path it should be created at.
-- Task type must be one of: create, modify, validate
-- Tasks execute sequentially. Later tasks may depend on earlier ones.
-- Instructions must be concrete but code-free: say WHAT to build, never HOW.
-- Do not ask questions. Do not explain. Return the plan only.
+### Why this mode is preferred
 
-Repo structure:
-<live tree of the target repository>
+- no external supervisor CLI required
+- low supervisor token use
+- Aider does the coding
+- the bridge stays deterministic
+- each task is reviewed before the next one starts
 
-[Project brief: <content of --idea-file if provided>]
+---
 
-Goal: <user-supplied goal>
+## Micro-Task Planning Rules
 
-[Previous plan was rejected for: <parse/validation error> — fix and return only the plan]
-```
+When creating a plan for this bridge, the supervisor should follow these rules:
 
-### Expected response shape
+1. Exactly one file per task
+2. Exactly one concern per task
+3. Use `create`, `modify`, `delete`, or `validate`
+4. Add `must_exist` for create tasks
+5. Add `must_not_exist` for delete tasks
+6. Add at least one observable assertion for modify tasks
+7. Keep instructions specific and code-free
+8. Order tasks by dependency
+
+### Good task example
 
 ```json
 {
-  "tasks": [
+  "id": 3,
+  "files": ["src/server/app.py"],
+  "instruction": "Update the CLI entry point to accept an optional config path argument before bootstrapping the server.",
+  "type": "modify",
+  "must_exist": ["src/server/app.py"],
+  "must_not_exist": []
+}
+```
+
+### Bad task example
+
+```json
+{
+  "id": 3,
+  "files": ["src/server/app.py", "src/server/config.py", "README.md"],
+  "instruction": "Refactor the app and improve config and docs.",
+  "type": "modify"
+}
+```
+
+Why bad:
+- too many files
+- too many concerns
+- no observable assertion
+
+---
+
+## Review Request Files
+
+In manual-supervisor mode the bridge writes review requests to:
+
+```text
+<repo_root>/bridge_progress/manual_supervisor/requests/
+```
+
+Each request contains:
+
+- task id
+- task type
+- files
+- original instruction
+- execution result
+- validator result
+- unexpected files
+- git diff
+
+The supervisor should read the request file and produce exactly one decision file.
+
+The supervisor should also prefer reading these files before opening arbitrary source:
+
+- `bridge_progress/project_knowledge.json`
+- `bridge_progress/project_snapshot.json`
+- `bridge_progress/LATEST_REPORT.md`
+
+---
+
+## Decision File Formats
+
+Write decision files to:
+
+```text
+<repo_root>/bridge_progress/manual_supervisor/decisions/
+```
+
+### PASS
+
+```json
+{
+  "task_id": 12,
+  "decision": "pass"
+}
+```
+
+### REWORK
+
+```json
+{
+  "task_id": 12,
+  "decision": "rework",
+  "instruction": "In src/server/app.py, fix the CLI argument parsing so --help works without requiring runtime-only inputs."
+}
+```
+
+### SUBPLAN
+
+```json
+{
+  "task_id": 12,
+  "decision": "subplan",
+  "sub_tasks": [
     {
-      "id": 1,
-      "files": ["relative/path/to/file.ext"],
-      "instruction": "Create X that does Y with Z behaviour.",
-      "type": "create"
-    },
-    {
-      "id": 2,
-      "files": ["relative/path/to/other.ext"],
-      "instruction": "Add Y to existing X so that Z works.",
+      "instruction": "In src/server/app.py, repair the syntax error near the top of the file.",
+      "files": ["src/server/app.py"],
       "type": "modify"
     }
   ]
 }
 ```
 
-### Field rules
+---
 
-| Field | Type | Constraint |
-|---|---|---|
-| `id` | integer | Sequential, unique |
-| `files` | string[] | Non-empty; relative paths only; never the repo root |
-| `instruction` | string | Non-empty; describes what to build — no code |
-| `type` | string | One of `create`, `modify`, `validate` |
+## External Project Readiness Checklist
+
+Before using this bridge on another repo, the supervising AI should:
+
+1. Read the goal file or project brief
+2. Read only a file tree of the target repo
+3. Read any project knowledge cache if available
+4. Avoid opening arbitrary source files unless required by the workflow
+5. Save the plan under the target repo’s `taskJsons/`
+6. Run the bridge in manual-supervisor mode
+7. Review every task request before allowing the next task
+
+### Preferred context order for follow-up sessions
+
+1. `bridge_progress/LATEST_REPORT.md`
+2. `bridge_progress/project_knowledge.json`
+3. `bridge_progress/project_snapshot.json`
+4. request/decision archive if a specific task needs investigation
+5. only then open source files if still necessary
+
+This keeps supervision token-efficient and preserves the bridge's purpose as a project-memory layer.
+
+This keeps the AI acting as a supervisor, not as the coder.
 
 ---
 
-## Review Prompt
+## External Supervisor CLI Mode
 
-Sent after each task completes (after Aider runs and mechanical checks pass).
-The supervisor sees the task definition and the actual git diff — nothing else.
+External supervisor CLIs are still supported, but they are no longer the recommended default.
 
-```
-You are a Tech Supervisor reviewing completed developer work.
-Reply with exactly one of these two forms (nothing else):
-  PASS
-  REWORK: <one-sentence atomic replacement instruction — no code>
-
-Task <id> (<type>)
-Files: <comma-separated file list>
-Instruction: <original instruction>
-Aider execution: succeeded | failed (exit code N)
-
-Changes made:
---- changed files ---
-<git diff --stat output>
-
---- diff ---
-<git diff output, truncated at 4000 chars>
-```
-
-### Expected response
-
-| Response | Meaning |
-|---|---|
-| `PASS` | Supervisor approves — bridge moves to the next task |
-| `REWORK: <instruction>` | Supervisor rejects — bridge re-runs Aider with the new instruction |
-
-The replacement instruction in `REWORK:` must follow the same rules as a planning
-instruction: concrete, code-free, one concern, same files.
-
----
-
-## Supervisor Backends
-
-### Codex CLI (default)
+Use them only when you explicitly want the bridge to spawn a planning/review subprocess:
 
 ```bash
-python main.py "Build a logging feature" \
-  --supervisor-command "codex.cmd exec --skip-git-repo-check --color never"
+python main.py "Build feature X" \
+  --repo-root "D:\ExternalProject" \
+  --supervisor-command "claude --print" \
+  --aider-model ollama/deepseek-coder
 ```
 
-Or set the environment variable:
-```bash
-set BRIDGE_SUPERVISOR_COMMAND=codex.cmd exec --skip-git-repo-check --color never
-```
-
-### Claude CLI
-
-```bash
-python main.py "Build a logging feature" \
-  --supervisor-command "claude --print"
-```
-
-### Anthropic API / custom agent
-
-You can wire any agent that reads stdin or a prompt argument and writes JSON to stdout:
-
-```bash
-python main.py "Build a logging feature" \
-  --supervisor-command "python my_supervisor.py {prompt}"
-```
-
-The `{prompt}` placeholder is replaced with the full prompt text before execution.
-The `{output_file}` placeholder (if present) is replaced with a temp file path that
-the supervisor should write its response to.
-
----
-
-## Aider Local LLM Configuration
-
-Aider is the developer and runs on a local LLM. Pass the model via `--aider-model`:
-
-```bash
-# Ollama — Mistral (general purpose)
-python main.py "Add error handling" --aider-model ollama/mistral
-
-# Ollama — DeepSeek Coder (code-focused)
-python main.py "Add error handling" --aider-model ollama/deepseek-coder
-
-# Ollama — CodeLlama
-python main.py "Add error handling" --aider-model ollama/codellama
-
-# LM Studio (OpenAI-compatible local server)
-python main.py "Add error handling" \
-  --aider-command "aider --openai-api-base http://localhost:1234/v1" \
-  --aider-model openai/local-model
-```
-
-Or set persistently:
-```bash
-set BRIDGE_AIDER_MODEL=ollama/mistral
-```
-
-When `--aider-model` is not set, Aider uses whatever model is configured in
-its own `.aider.conf.yml` or environment.
-
----
-
-## Token Usage Pattern
-
-The design minimises supervisor token usage:
-
-| Event | Supervisor called? |
-|---|---|
-| Plan generation | Yes (once, or once per retry) |
-| Mechanical check failure (file missing, syntax error) | **No** — retries with same instruction |
-| Aider exit code != 0 | No — diff still sent to supervisor |
-| After mechanical checks pass | Yes — one review call per task |
-| REWORK issued | Yes — one plan refinement per retry |
-
-Aider handles all code generation locally. The supervisor only sees compact
-prompts (repo tree + goal) and compact review payloads (task + diff).
-
----
-
-## Prompt Injection Guidance
-
-Keep the idea file (`--idea-file`) concise. The bridge injects up to 2000
-characters of the idea file into the planning prompt. Put the most important
-architectural constraints at the top of the file.
-
-The repo tree is capped at 100 entries and 4 directory levels. Deeply nested
-or generated directories (node_modules, Library, obj, bin) are automatically
-excluded.
+For Codex-style in-session supervision, prefer manual mode instead.
