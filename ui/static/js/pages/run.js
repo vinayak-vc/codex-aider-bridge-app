@@ -138,6 +138,125 @@ function updateCompatWarnings() {
 
 const $ = id => document.getElementById(id);
 
+// ── Natural Language Mode ─────────────────────────────────────────────────────
+
+let _nlMode = false;
+let _currentBrief = null;
+
+function setMode(mode) {
+  _nlMode = mode === 'nl';
+  $('nl-panel').style.display        = _nlMode ? '' : 'none';
+  $('structured-panel').style.display = _nlMode ? 'none' : '';
+  $('btn-mode-nl').classList.toggle('--active', _nlMode);
+  $('btn-mode-structured').classList.toggle('--active', !_nlMode);
+  // hide the shortcut hint in NL mode (Ctrl+Enter has different meaning there)
+  const hint = $('run-shortcut-hint');
+  if (hint) hint.style.display = _nlMode ? 'none' : '';
+}
+
+function _renderBriefSection(label, items) {
+  if (!items?.length) return '';
+  return `<div class="nl-brief-section">
+    <div class="nl-brief-label">${label}</div>
+    ${items.map(i => `<div class="nl-brief-item">${escHtml(String(i))}</div>`).join('')}
+  </div>`;
+}
+
+function renderBrief(brief) {
+  _currentBrief = brief;
+  const card = $('nl-brief-card');
+  if (!card) return;
+
+  card.innerHTML = `
+    <div class="nl-brief-section">
+      <div class="nl-brief-label">Goal</div>
+      <div class="nl-brief-goal">${escHtml(brief.goal || '')}</div>
+    </div>
+    ${_renderBriefSection('Assumptions', brief.assumptions)}
+    ${_renderBriefSection('Constraints', brief.constraints)}
+    ${_renderBriefSection('Acceptance Criteria', brief.acceptance_criteria)}
+  `;
+
+  const qWrap = $('nl-questions-wrap');
+  const qCard = $('nl-questions-card');
+  if (qWrap && qCard) {
+    if (brief.clarification_questions?.length) {
+      qCard.innerHTML = `
+        <div class="nl-brief-section">
+          <div class="nl-brief-label">Clarification Needed</div>
+          ${brief.clarification_questions.map(q => `<div class="nl-brief-item">• ${escHtml(q)}</div>`).join('')}
+        </div>`;
+      qWrap.style.display = '';
+    } else {
+      qWrap.style.display = 'none';
+    }
+  }
+
+  $('nl-brief-output').style.display = '';
+}
+
+async function generateBrief() {
+  const message = $('nl-input')?.value?.trim();
+  if (!message) {
+    toast('Please describe what you want to build.', 'warning');
+    $('nl-input')?.focus();
+    return;
+  }
+
+  const btn = $('btn-generate-brief');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  $('nl-brief-output').style.display = 'none';
+
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    const res = await fetch('/api/run/brief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, repo_root: settings.repo_root || '' }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to generate brief.');
+    renderBrief(data);
+  } catch (err) {
+    toast(err.message || 'Failed to generate brief.', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/> </svg> Generate Brief';
+    }
+  }
+}
+
+function applyBrief() {
+  if (!_currentBrief) return;
+  setMode('structured');
+
+  $('f-goal').value = _currentBrief.goal || '';
+
+  // Fold constraints + acceptance criteria into the clarifications field
+  const extras = [
+    ...(_currentBrief.constraints || []).map(c => `Constraint: ${c}`),
+    ...(_currentBrief.acceptance_criteria || []).map(a => `Acceptance: ${a}`),
+  ];
+  if (extras.length) {
+    const existing = $('f-clarifications').value.trim();
+    $('f-clarifications').value = existing
+      ? `${existing}\n${extras.join('\n')}`
+      : extras.join('\n');
+    // Auto-open advanced accordion so user sees the filled clarifications
+    const trigger = $('adv-trigger');
+    const body    = $('adv-body');
+    if (trigger?.getAttribute('aria-expanded') !== 'true') {
+      trigger?.setAttribute('aria-expanded', 'true');
+      body?.classList.remove('--hidden');
+    }
+  }
+
+  updateCommandPreview();
+  $('f-goal')?.focus();
+  toast('Brief applied — review the fields and launch when ready.', 'success');
+}
+
 // ── Settings → form ──────────────────────────────────────────────────────────
 
 function populateForm(s) {
@@ -405,6 +524,26 @@ async function launchRun() {
 // ── Bind controls ─────────────────────────────────────────────────────────────
 
 function bindControls() {
+  // Mode toggle
+  $('btn-mode-structured')?.addEventListener('click', () => setMode('structured'));
+  $('btn-mode-nl')?.addEventListener('click',         () => setMode('nl'));
+
+  // NL brief controls
+  $('btn-generate-brief')?.addEventListener('click', generateBrief);
+  $('btn-apply-brief')?.addEventListener('click', applyBrief);
+  $('btn-new-brief')?.addEventListener('click', () => {
+    if ($('nl-input')) $('nl-input').value = '';
+    $('nl-brief-output').style.display = 'none';
+    _currentBrief = null;
+    $('nl-input')?.focus();
+  });
+  $('nl-input')?.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      generateBrief();
+    }
+  });
+
   // Launch / stop
   $('btn-launch-run')?.addEventListener('click', launchRun);
   $('btn-stop-run')?.addEventListener('click', async () => {
@@ -415,9 +554,9 @@ function bindControls() {
     }
   });
 
-  // Ctrl+Enter to launch
+  // Ctrl+Enter to launch (structured mode only; NL mode has its own handler on the textarea)
   document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning && !_nlMode) {
       e.preventDefault();
       launchRun();
     }

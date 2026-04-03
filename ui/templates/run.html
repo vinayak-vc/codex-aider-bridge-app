@@ -33,10 +33,56 @@
 <!-- Run status banner -->
 <div id="run-status-banner" style="display:none;margin-bottom:16px"></div>
 
+<!-- Mode toggle -->
+<div class="run-mode-toggle">
+  <button class="run-mode-btn --active" id="btn-mode-structured">Structured</button>
+  <button class="run-mode-btn" id="btn-mode-nl">Natural Language</button>
+</div>
+
 <div class="run-layout">
 
   <!-- ── Left: Settings form ── -->
   <div class="run-form" id="run-form">
+
+    <!-- ── Natural Language panel (hidden by default) ── -->
+    <div id="nl-panel" style="display:none">
+
+      <div class="field">
+        <label class="field-label" for="nl-input">Describe what you want to build</label>
+        <textarea id="nl-input" class="input" rows="5"
+                  placeholder="Example: I want a login screen with email and password. Keep the current UI style and don't touch multiplayer code."
+                  style="resize:vertical"></textarea>
+        <div class="text-subtle" style="font-size:var(--font-size-xs);margin-top:4px">Ctrl+Enter to generate</div>
+      </div>
+
+      <button class="btn btn--primary" id="btn-generate-brief" style="width:100%">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+        </svg>
+        Generate Brief
+      </button>
+
+      <!-- Brief output (hidden until generated) -->
+      <div id="nl-brief-output" style="display:none">
+        <div class="nl-brief-card" id="nl-brief-card"></div>
+        <div id="nl-questions-wrap" style="display:none">
+          <div class="nl-brief-card nl-clarification" id="nl-questions-card"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn--primary" id="btn-apply-brief" style="flex:1">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
+            </svg>
+            Apply to Run
+          </button>
+          <button class="btn btn--secondary" id="btn-new-brief">New Brief</button>
+        </div>
+      </div>
+
+    </div><!-- /nl-panel -->
+
+    <!-- ── Structured form (default visible) ── -->
+    <div id="structured-panel">
 
     <!-- Instruction / Goal -->
     <div class="field">
@@ -240,6 +286,8 @@
 
       </div>
     </div>
+
+    </div><!-- /structured-panel -->
 
   </div>
 

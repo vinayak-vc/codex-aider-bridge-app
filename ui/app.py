@@ -764,6 +764,98 @@ def api_run_input():
     return jsonify({"ok": True})
 
 
+@app.route("/api/run/brief", methods=["POST"])
+def api_run_brief():
+    """Convert a natural-language request into a structured execution brief via Ollama."""
+    import urllib.request
+    import urllib.error
+
+    data = request.get_json(force=True) or {}
+    message = str(data.get("message", "")).strip()
+    repo_root = str(data.get("repo_root", "")).strip()
+
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
+
+    knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
+
+    system_prompt = (
+        "You are a precise software project planner. "
+        "Convert the developer's request into a structured execution brief.\n\n"
+        "Output ONLY valid JSON with no markdown, no explanation, no code fences. "
+        "Use exactly this shape:\n"
+        "{\n"
+        '  "goal": "One clear technical sentence describing what to build or fix.",\n'
+        '  "assumptions": ["assumption 1"],\n'
+        '  "constraints": ["Do not touch X"],\n'
+        '  "acceptance_criteria": ["User can do A"],\n'
+        '  "clarification_questions": [],\n'
+        '  "needs_clarification": false\n'
+        "}\n\n"
+        "Rules:\n"
+        "- goal: single precise technical statement, not a question\n"
+        "- assumptions: what you assume about the project or intent\n"
+        "- constraints: what must NOT change or must be preserved\n"
+        "- acceptance_criteria: observable, testable outcomes\n"
+        "- clarification_questions: ONLY when something critical is ambiguous; leave [] when clear\n"
+        "- needs_clarification: true only when clarification_questions is non-empty\n"
+        "- Be concise. One item per list entry. No generic items like 'code should work'."
+    )
+    if knowledge_ctx:
+        system_prompt += f"\n\nProject context:\n{knowledge_ctx}"
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": messages,
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        content = result.get("message", {}).get("content", "").strip()
+        # Strip markdown code fences if model wraps output
+        if content.startswith("```"):
+            lines = content.split("\n")
+            end = -1 if lines[-1].strip() == "```" else len(lines)
+            content = "\n".join(lines[1:end])
+        brief = json.loads(content)
+        brief.setdefault("goal", "")
+        brief.setdefault("assumptions", [])
+        brief.setdefault("constraints", [])
+        brief.setdefault("acceptance_criteria", [])
+        brief.setdefault("clarification_questions", [])
+        brief["needs_clarification"] = bool(brief.get("clarification_questions"))
+        return jsonify(brief)
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", str(exc))
+        return jsonify({"error": f"Ollama not reachable: {reason}. Is Ollama running?"}), 503
+    except json.JSONDecodeError as exc:
+        return jsonify({"error": f"Model returned invalid JSON: {exc}. Try again."}), 422
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 def _manual_supervisor_dir() -> Optional[Path]:
     settings = state_store.load_settings()
     repo_root = settings.get("repo_root", "").strip()

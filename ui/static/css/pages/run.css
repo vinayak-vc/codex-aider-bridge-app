@@ -240,6 +240,75 @@
 .run-status-banner.--failure  { background: var(--color-danger-bg);  border: 1px solid var(--color-danger);  color: var(--color-danger); }
 .run-status-banner.--stopped  { background: var(--color-warning-bg); border: 1px solid var(--color-warning); color: var(--color-warning); }
 
+/* ── Mode toggle ── */
+.run-mode-toggle {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  width: fit-content;
+  margin-bottom: 20px;
+}
+.run-mode-btn {
+  padding: 7px 20px;
+  background: var(--color-surface);
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  white-space: nowrap;
+}
+.run-mode-btn.--active {
+  background: var(--color-accent);
+  color: #fff;
+  font-weight: 500;
+}
+.run-mode-btn:hover:not(.--active) {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+/* ── NL brief output ── */
+.nl-brief-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.nl-brief-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nl-brief-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-accent);
+}
+.nl-brief-goal {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.nl-brief-item {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+.nl-clarification {
+  border-color: var(--color-warning);
+  background: var(--color-warning-bg, rgba(245,158,11,.06));
+}
+.nl-clarification .nl-brief-label { color: var(--color-warning); }
+
 /* ── Stdin input row ── */
 .log-input-row {
   display: flex;
