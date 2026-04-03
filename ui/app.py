@@ -1723,7 +1723,10 @@ def api_projects_rename():
 
 @app.route("/relay")
 def relay_page():
-    return render_template("relay.html", active_page="relay")
+    # AI Relay is now inline on the Run page (Milestone B).
+    # Keep this route so old bookmarks / links don't 404.
+    from flask import redirect
+    return redirect("/run", code=302)
 
 
 @app.route("/api/relay/generate-prompt", methods=["POST"])

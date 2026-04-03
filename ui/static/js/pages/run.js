@@ -760,7 +760,8 @@ function setRunning(running) {
   const hint  = $('run-shortcut-hint');
 
   if (form)  form.querySelectorAll('input, textarea, button.model-preset, button.num-btn, .accordion-trigger').forEach(el => {
-    el.disabled = running;
+    // Keep chatbot wizard interactive elements active during run (review paste, decision textarea, etc.)
+    if (!el.closest('#chatbot-relay-panel')) el.disabled = running;
   });
   if (btnL)  { btnL.disabled = running; btnL.style.display = running ? 'none' : ''; }
   if (btnS)  btnS.style.display = running ? '' : 'none';
@@ -859,6 +860,461 @@ async function launchNLRun() {
     _sse?.disconnect();
     toast(err.message || 'Failed to start run.', 'error');
   }
+}
+
+// ── Chatbot Relay Wizard ──────────────────────────────────────────────────────
+// Ported from relay.js — handles the inline copy-paste supervisor flow
+// All IDs are prefixed with "chatbot-" to avoid conflicts with run page IDs.
+
+let _cbStep = 1;
+let _cbTasks = [];
+let _cbCurrentTaskId = null;
+let _cbCompletedTasks = 0;
+let _cbTotalTasks = 0;
+let _cbLiveRunActive = false;
+let _cbRelaySessionId = '';
+
+function _cbExecTaskCount(tasks = _cbTasks) {
+  return (tasks || []).filter(t => String(t?.status || '').toLowerCase() !== 'skipped').length;
+}
+
+function _cbGoToStep(n, force = false) {
+  if (!force && n === 1 && _cbTasks.length > 0) {
+    toast('Use "Discard Tasks" to return to Step 1.', 'warning');
+    return;
+  }
+  _cbStep = n;
+  for (let i = 1; i <= 3; i++) {
+    const panel = $(`chatbot-panel-${i}`);
+    if (panel) panel.style.display = i === n ? '' : 'none';
+    const ind = $(`chatbot-step-indicator-${i}`);
+    if (ind) {
+      ind.dataset.active = String(i === n);
+      ind.dataset.done   = String(i < n);
+    }
+  }
+}
+
+function _cbUpdateProgress(done, total) {
+  _cbCompletedTasks = done;
+  _cbTotalTasks     = total;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  const bar = $('chatbot-progress-bar');
+  const lbl = $('chatbot-progress-label');
+  if (bar) bar.style.width = pct + '%';
+  if (lbl) lbl.textContent = `${done} / ${total}`;
+}
+
+function _cbSetStatus(status, label) {
+  const chip = $('chatbot-status-chip');
+  const lbl  = $('chatbot-status-label');
+  if (chip) chip.dataset.status = status;
+  if (lbl)  lbl.textContent     = label;
+}
+
+function _cbUpdateControls() {
+  const stopBtn    = $('chatbot-btn-stop');
+  const submitBtn  = $('chatbot-btn-submit-decision');
+  const confirmBtn = $('chatbot-btn-confirm-tasks');
+  const discardBtn = $('chatbot-btn-back-to-step1');
+  if (stopBtn)    stopBtn.disabled    = !_cbLiveRunActive;
+  if (submitBtn)  submitBtn.disabled  = !_cbLiveRunActive;
+  if (confirmBtn) confirmBtn.disabled = _cbLiveRunActive || _cbExecTaskCount() === 0;
+  if (discardBtn) discardBtn.disabled = _cbLiveRunActive;
+  document.querySelectorAll('[data-relay-task-action]').forEach(btn => {
+    btn.disabled = _cbLiveRunActive;
+  });
+}
+
+async function _cbGeneratePrompt() {
+  if (_cbTasks.length > 0) {
+    toast('Discard current tasks before generating a new plan.', 'warning');
+    return;
+  }
+  const goal     = ($('nl-input')?.value || '').trim();
+  const repoRoot = ($('f-repo-root')?.value || '').trim();
+  if (!goal) { toast('Please enter a goal first.', 'warning'); $('nl-input')?.focus(); return; }
+
+  const btn = $('chatbot-btn-generate-prompt');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    const data = await apiPost('/api/relay/generate-prompt', { goal, repo_root: repoRoot });
+    const box  = $('chatbot-prompt-output');
+    if (box) box.textContent = data.prompt;
+    const wrap = $('chatbot-prompt-output-wrap');
+    if (wrap) wrap.style.display = '';
+    const pasteWrap = $('chatbot-plan-paste-wrap');
+    if (pasteWrap) pasteWrap.style.display = '';
+  } catch (err) {
+    toast(err.message || 'Failed to generate prompt.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Prompt'; }
+  }
+}
+
+async function _cbImportPlan() {
+  if (_cbTasks.length > 0) {
+    toast('Discard current tasks before importing a new plan.', 'warning');
+    return;
+  }
+  const raw   = ($('chatbot-plan-paste')?.value || '').trim();
+  const errEl = $('chatbot-import-plan-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!raw) { toast('Please paste the AI response first.', 'warning'); return; }
+
+  const btn = $('chatbot-btn-import-plan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const data = await apiPost('/api/relay/import-plan', { raw_text: raw });
+    _cbTasks          = data.tasks || [];
+    _cbRelaySessionId = data.relay_session_id || _cbRelaySessionId;
+    _cbCompletedTasks = 0;
+    _cbTotalTasks     = _cbExecTaskCount(_cbTasks);
+    _cbRenderTaskList(_cbTasks);
+    _cbUpdateProgress(0, _cbTotalTasks);
+    _cbGoToStep(2);
+    _cbUpdateControls();
+  } catch (err) {
+    const msg = err.message || 'Failed to parse plan.';
+    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Plan'; }
+  }
+}
+
+function _cbRenderTaskList(tasks) {
+  const list = $('chatbot-relay-task-list');
+  if (!list) return;
+  if (!tasks?.length) {
+    list.innerHTML = '<p class="text-subtle" style="font-size:var(--font-size-sm)">No tasks found.</p>';
+    return;
+  }
+  list.innerHTML = tasks.map(t => {
+    const type        = String(t.type || 'modify').toLowerCase();
+    const status      = String(t.status || 'not_started').toLowerCase();
+    const statusLabel = String(t.status_label || 'Not started');
+    const canSkip     = !['running','waiting_review','approved','success','skipped'].includes(status);
+    const canRestore  = status === 'skipped';
+    const actionHtml  = canSkip
+      ? `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="skip" data-task-id="${escHtml(t.id)}">Skip</button>`
+      : canRestore
+      ? `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="restore" data-task-id="${escHtml(t.id)}">Restore</button>`
+      : '';
+    return `
+    <div class="relay-task-item" data-status="${escHtml(status)}">
+      <div class="relay-task-num">${t.id}</div>
+      <div class="relay-task-body">
+        <div class="relay-task-head">
+          <div class="relay-task-title">
+            <span>${escHtml(t.title || '')}</span>
+            <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
+            <span class="relay-task-status-badge" data-status="${escHtml(status)}">${escHtml(statusLabel)}</span>
+          </div>
+          <div class="relay-task-actions">${actionHtml}</div>
+        </div>
+        <div class="relay-task-instruction">${escHtml(t.instruction || '')}</div>
+        ${t.files?.length ? `<div class="relay-task-files">${t.files.map(escHtml).join(', ')}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  _cbUpdateControls();
+}
+
+async function _cbToggleSkip(taskId, skip) {
+  if (_cbLiveRunActive) { toast('Stop the run before changing skipped tasks.', 'warning'); return; }
+  try {
+    const data = await apiPost('/api/relay/tasks/skip', { task_id: taskId, skip });
+    _cbTasks          = data.tasks || [];
+    _cbRelaySessionId = data.relay_session_id || _cbRelaySessionId;
+    _cbCompletedTasks = data.completed_tasks || 0;
+    _cbTotalTasks     = data.total_tasks || _cbExecTaskCount(_cbTasks);
+    _cbRenderTaskList(_cbTasks);
+    _cbUpdateProgress(_cbCompletedTasks, _cbTotalTasks);
+    toast(skip ? `Task ${taskId} skipped.` : `Task ${taskId} restored.`, 'success');
+  } catch (err) {
+    toast(err.message || 'Could not update task.', 'error');
+  }
+}
+
+async function _cbDiscardAndReturnToPlan() {
+  if (_cbLiveRunActive) { toast('Stop the run before discarding tasks.', 'warning'); return; }
+  _cbRelaySessionId = '';
+  _cbTasks          = [];
+  _cbCurrentTaskId  = null;
+  _cbCompletedTasks = 0;
+  _cbTotalTasks     = 0;
+  const taskList = $('chatbot-relay-task-list');
+  if (taskList) taskList.innerHTML = '';
+  [$('chatbot-done-panel'), $('chatbot-review-panel')].forEach(el => {
+    if (el) el.style.display = 'none';
+  });
+  await fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
+  _cbSetStatus('idle', 'Ready');
+  _cbUpdateProgress(0, 0);
+  _cbGoToStep(1, true);
+  _cbUpdateControls();
+  toast('Tasks discarded.', 'success');
+}
+
+async function _cbLaunchRun() {
+  const settings = {
+    goal:              ($('nl-input')?.value || '').trim(),
+    repo_root:         ($('f-repo-root')?.value || '').trim(),
+    aider_model:       ($('f-aider-model')?.value || 'ollama/mistral').trim(),
+    supervisor:        'chatbot',
+    manual_supervisor: true,
+    workflow_profile:  'standard',
+    max_task_retries:  Math.max(0, parseInt($('f-max-retries')?.value || 2, 10) || 2),
+    relay_session_id:  _cbRelaySessionId,
+  };
+  _cbGoToStep(3);
+  _cbLiveRunActive = true;
+  _cbUpdateControls();
+  _cbSetStatus('running', 'Running…');
+  _cbUpdateProgress(0, _cbExecTaskCount());
+
+  clearLog();
+  hideBanner();
+  setRunning(true);
+
+  if (_sse) _sse.disconnect();
+  _sse = new SSEClient('/api/run/stream');
+  _sse
+    .on('log',                 d => appendLog(d.line || ''))
+    .on('relay_review_needed', d => _cbOnReviewNeeded(d))
+    .on('review_required',     d => _cbOnReviewNeeded(d))
+    .on('progress',  d => _cbUpdateProgress(d.completed, d.total))
+    .on('plan_ready', d => { _cbTotalTasks = d.task_count || 0; _cbUpdateProgress(0, _cbTotalTasks); })
+    .on('complete',  d => _cbOnRunComplete(d))
+    .on('error',     d => _cbOnRunComplete({ status: 'failure', message: d.message }))
+    .on('stopped',   () => _cbOnRunComplete({ status: 'stopped' }))
+    .connect();
+
+  try {
+    play('launch');
+    await apiPost('/api/run', settings);
+  } catch (err) {
+    _cbSetStatus('failure', 'Failed to start');
+    toast(err.message || 'Failed to start run.', 'error');
+    _sse?.disconnect();
+    setRunning(false);
+    _cbLiveRunActive = false;
+    _cbUpdateControls();
+  }
+}
+
+async function _cbOnReviewNeeded(data) {
+  _cbCurrentTaskId = data.task_id;
+  _cbSetStatus('waiting_review', 'Waiting for review…');
+  _cbGoToStep(3);
+
+  const tidEl    = $('chatbot-review-task-id');
+  const attBadge = $('chatbot-attempt-badge');
+  if (tidEl)    tidEl.textContent    = _cbCurrentTaskId;
+  if (attBadge) attBadge.textContent = `attempt ${data.attempt || 1}`;
+
+  try {
+    const params = new URLSearchParams({
+      task_id:          _cbCurrentTaskId,
+      repo_root:        ($('f-repo-root')?.value || '').trim(),
+      goal:             ($('nl-input')?.value || '').trim(),
+      relay_session_id: _cbRelaySessionId,
+    });
+    const resp    = await fetch(`/api/relay/review-packet?${params}`);
+    const payload = await resp.json();
+    if (resp.ok) {
+      const box = $('chatbot-review-packet');
+      if (box) box.textContent = payload.packet;
+    }
+  } catch (_) {}
+
+  const decPaste = $('chatbot-decision-paste');
+  if (decPaste) decPaste.value = '';
+  const decErr = $('chatbot-decision-error');
+  if (decErr) decErr.style.display = 'none';
+  const replanWrap = $('chatbot-replan-wrap');
+  if (replanWrap) replanWrap.style.display = 'none';
+
+  const panel = $('chatbot-review-panel');
+  if (panel) panel.style.display = '';
+}
+
+async function _cbSubmitDecision() {
+  if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
+  const raw   = ($('chatbot-decision-paste')?.value || '').trim();
+  const errEl = $('chatbot-decision-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!raw)  { toast("Please paste the AI's decision.", 'warning'); return; }
+
+  const btn = $('chatbot-btn-submit-decision');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+  try {
+    const data = await apiPost('/api/relay/submit-decision', {
+      raw_text:         raw,
+      task_id:          _cbCurrentTaskId,
+      repo_root:        ($('f-repo-root')?.value || '').trim(),
+      relay_session_id: _cbRelaySessionId,
+    });
+    if (data.decision === 'fail') {
+      await _cbLoadReplanPrompt();
+    } else {
+      const panel = $('chatbot-review-panel');
+      if (panel) panel.style.display = 'none';
+      _cbSetStatus('running', 'Running…');
+      toast(`Decision submitted: ${data.decision}`, 'success');
+    }
+  } catch (err) {
+    const msg = err.message || 'Failed to submit decision.';
+    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit Decision'; }
+  }
+}
+
+async function _cbLoadReplanPrompt() {
+  try {
+    const data = await apiPost('/api/relay/replan-prompt', {
+      task_id:          _cbCurrentTaskId,
+      repo_root:        ($('f-repo-root')?.value || '').trim(),
+      goal:             ($('nl-input')?.value || '').trim(),
+      relay_session_id: _cbRelaySessionId,
+      failed_reason:    ($('chatbot-decision-paste')?.value || '').replace(/^FAILED:\s*/i, '').trim(),
+    });
+    const box  = $('chatbot-replan-packet');
+    if (box) box.textContent = data.prompt;
+    const wrap = $('chatbot-replan-wrap');
+    if (wrap) wrap.style.display = '';
+  } catch (err) {
+    toast('Could not generate replan prompt: ' + err.message, 'error');
+  }
+}
+
+async function _cbSubmitReplan() {
+  if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
+  const raw   = ($('chatbot-replan-paste')?.value || '').trim();
+  const errEl = $('chatbot-replan-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!raw)  { toast('Please paste the replacement tasks.', 'warning'); return; }
+
+  const btn = $('chatbot-btn-submit-replan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const data = await apiPost('/api/relay/import-replan', {
+      raw_text: raw,
+      task_id:  _cbCurrentTaskId,
+    });
+    _cbTasks      = data.tasks || [];
+    _cbTotalTasks = _cbExecTaskCount(_cbTasks);
+    _cbRenderTaskList(_cbTasks);
+    _cbUpdateProgress(_cbCompletedTasks, _cbTotalTasks);
+    toast(`Replan imported: ${data.count} tasks remaining.`, 'success');
+    const panel = $('chatbot-review-panel');
+    if (panel) panel.style.display = 'none';
+    _cbSetStatus('running', 'Running…');
+  } catch (err) {
+    const msg = err.message || 'Failed to import replan.';
+    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Replacement Tasks'; }
+  }
+}
+
+function _cbOnRunComplete(data) {
+  const status  = data.status || 'failure';
+  const elapsed = data.elapsed ? ` in ${data.elapsed}s` : '';
+  _cbLiveRunActive = false;
+  _cbUpdateControls();
+  _cbSetStatus(status, _cbStatusLabel(status));
+  setRunning(false);
+  if (_sse) { _sse.disconnect(); _sse = null; }
+
+  const panel = $('chatbot-review-panel');
+  if (panel) panel.style.display = 'none';
+  const done = $('chatbot-done-panel');
+  if (done)  done.style.display = '';
+
+  const icon = done?.querySelector('.relay-done-icon');
+  if (icon) icon.dataset.failed = String(status === 'failure');
+  const title = $('chatbot-done-title');
+  const sub   = $('chatbot-done-sub');
+  if (title) title.textContent = status === 'success' ? 'Run complete!' : status === 'stopped' ? 'Run stopped' : 'Run failed';
+  if (sub)   sub.textContent   = `${_cbCompletedTasks} / ${_cbTotalTasks} tasks completed${elapsed}.`;
+}
+
+function _cbStatusLabel(status) {
+  return String(status || 'idle').replace(/_/g, ' ')
+    .split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+function _cbCopyText(elementId, btnId) {
+  const text = $(elementId)?.textContent || '';
+  navigator.clipboard?.writeText(text).then(() => {
+    const btn = $(btnId);
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }
+  }).catch(() => toast('Copy failed — please copy manually.', 'warning'));
+}
+
+function _cbReset() {
+  _cbStep           = 1;
+  _cbTasks          = [];
+  _cbCurrentTaskId  = null;
+  _cbCompletedTasks = 0;
+  _cbTotalTasks     = 0;
+  _cbLiveRunActive  = false;
+  _cbRelaySessionId = '';
+  if (_sse) { _sse.disconnect(); _sse = null; }
+  ['chatbot-plan-paste','chatbot-decision-paste','chatbot-replan-paste'].forEach(id => {
+    const el = $(id);
+    if (el) el.value = '';
+  });
+  ['chatbot-prompt-output-wrap','chatbot-plan-paste-wrap','chatbot-review-panel',
+   'chatbot-done-panel','chatbot-replan-wrap','chatbot-import-plan-error',
+   'chatbot-decision-error','chatbot-replan-error'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = 'none';
+  });
+  const log = $('chatbot-log');
+  if (log) log.textContent = '';
+  fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
+  _cbGoToStep(1, true);
+  _cbUpdateControls();
+}
+
+function _cbShowOrHide() {
+  const sup   = document.querySelector('input[name="supervisor"]:checked')?.value || '';
+  const panel = $('chatbot-relay-panel');
+  if (panel) panel.style.display = sup === 'chatbot' ? '' : 'none';
+}
+
+function bindChatbotControls() {
+  $('chatbot-btn-generate-prompt')?.addEventListener('click',   _cbGeneratePrompt);
+  $('chatbot-btn-copy-prompt')?.addEventListener('click',       () => _cbCopyText('chatbot-prompt-output', 'chatbot-btn-copy-prompt'));
+  $('chatbot-btn-import-plan')?.addEventListener('click',       _cbImportPlan);
+  $('chatbot-btn-back-to-step1')?.addEventListener('click',     _cbDiscardAndReturnToPlan);
+  $('chatbot-btn-confirm-tasks')?.addEventListener('click',     _cbLaunchRun);
+  $('chatbot-relay-task-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-relay-task-action]');
+    if (!btn) return;
+    const taskId = parseInt(btn.dataset.taskId || '0', 10);
+    if (!taskId) return;
+    void _cbToggleSkip(taskId, btn.dataset.relayTaskAction === 'skip');
+  });
+  $('chatbot-btn-stop')?.addEventListener('click', async () => {
+    if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
+    try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {}
+  });
+  $('chatbot-btn-copy-packet')?.addEventListener('click',   () => _cbCopyText('chatbot-review-packet', 'chatbot-btn-copy-packet'));
+  $('chatbot-btn-submit-decision')?.addEventListener('click', _cbSubmitDecision);
+  $('chatbot-btn-copy-replan')?.addEventListener('click',   () => _cbCopyText('chatbot-replan-packet', 'chatbot-btn-copy-replan'));
+  $('chatbot-btn-submit-replan')?.addEventListener('click',  _cbSubmitReplan);
+  $('chatbot-btn-new-run')?.addEventListener('click',        _cbReset);
 }
 
 // ── Bind controls ─────────────────────────────────────────────────────────────
@@ -988,7 +1444,7 @@ function bindControls() {
     });
   });
 
-  // Supervisor radio → show/hide custom input + update preview
+  // Supervisor radio → show/hide custom input, chatbot wizard, update preview
   document.querySelectorAll('input[name="supervisor"]').forEach(r => {
     r.addEventListener('change', () => {
       const isCustom = r.value === 'custom';
@@ -996,6 +1452,7 @@ function bindControls() {
       if (wrap) wrap.style.display = isCustom ? '' : 'none';
       updateCommandPreview();
       updateCompatWarnings();
+      _cbShowOrHide();
     });
   });
   $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
@@ -1044,6 +1501,9 @@ function bindControls() {
     trigger.setAttribute('aria-expanded', String(!expanded));
     body?.classList.toggle('--hidden', expanded);
   });
+
+  // Chatbot wizard controls
+  bindChatbotControls();
 }
 
 // ── Hydrate from live run (if one is already running when page loads) ─────────
@@ -1092,6 +1552,10 @@ async function init() {
 
   // Set project key for NL persistence
   _nlProjectKey = (settings.repo_root || '').trim();
+
+  // Show/hide chatbot wizard based on saved supervisor setting
+  _cbShowOrHide();
+  _cbUpdateControls();
 
   // Restore NL conversation state if present
   await _restoreNLState();
