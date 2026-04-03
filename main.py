@@ -738,6 +738,7 @@ def execute_task_with_review(
     logger: logging.Logger,
     aider_context: Optional[AiderContext] = None,
     diagnostics: Optional[RunDiagnostics] = None,
+    token_tracker: Optional[TokenTracker] = None,
 ) -> str:
     """Run one task through the Aider → diff → mechanical check loop.
 
@@ -1045,12 +1046,13 @@ def execute_task_with_review(
                     _input_file_chars += _fp.stat().st_size
                 except OSError:
                     pass
-        token_tracker.record_aider_task(
-            task_id=current_task.id,
-            instruction=current_instruction,
-            input_file_chars=_input_file_chars,
-            diff_chars=len(diff),
-        )
+        if token_tracker:
+            token_tracker.record_aider_task(
+                task_id=current_task.id,
+                instruction=current_instruction,
+                input_file_chars=_input_file_chars,
+                diff_chars=len(diff),
+            )
 
         repo_after = _snapshot_repo_files(config.repo_root)
         unexpected_files = _find_unexpected_files(
@@ -2112,6 +2114,7 @@ def main() -> int:
                 runner, diff_collector, validator, logger,
                 aider_context=aider_context,
                 diagnostics=diagnostics,
+                token_tracker=token_tracker,
             )
             failed_task_id = None
             commit_sha = None
