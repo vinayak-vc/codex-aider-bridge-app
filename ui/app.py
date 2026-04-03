@@ -962,14 +962,24 @@ class SupervisorProxyThread(threading.Thread):
         while not self._stop_event.is_set():
             if requests_dir.exists():
                 for req_file in sorted(requests_dir.glob("*.json")):
-                    if req_file.stem in self._seen:
+                    # Track by filename + mtime so rework rewrites are detected
+                    try:
+                        mtime = req_file.stat().st_mtime
+                    except OSError:
+                        continue
+                    seen_key = f"{req_file.stem}:{mtime}"
+                    if seen_key in self._seen:
                         continue
 
-                    # Check if a decision already exists for this request
+                    # Check if a decision already exists AND is newer than the request
                     dec_file = decisions_dir / req_file.name.replace("_request.json", "_decision.json")
                     if dec_file.exists():
-                        self._seen.add(req_file.stem)
-                        continue
+                        try:
+                            if dec_file.stat().st_mtime >= mtime:
+                                self._seen.add(seen_key)
+                                continue
+                        except OSError:
+                            pass
 
                     try:
                         req_data = json.loads(req_file.read_text(encoding="utf-8"))
@@ -982,7 +992,7 @@ class SupervisorProxyThread(threading.Thread):
                         if req_session and req_session != self._relay_session_id:
                             continue
 
-                    self._seen.add(req_file.stem)
+                    self._seen.add(seen_key)
                     supervisor = self.get_supervisor()
                     self._dispatch(supervisor, req_file, req_data, decisions_dir)
 
