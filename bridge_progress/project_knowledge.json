@@ -3,13 +3,13 @@
     "name": "codex-aider-bridge-app",
     "type": "python",
     "language": "Python",
-    "summary": "Python project (Python), 86 source files scanned. Patterns: Multiple classes inherit Exception (3 found), Framework: Flask, Framework: unittest.",
+    "summary": "Python project (Python), 89 source files scanned. Patterns: Multiple classes inherit Exception (3 found), Framework: Flask, Framework: unittest.",
     "repo_root": "D:\\Chitrang_ViitorCloud\\R&D\\codex-aider-bridge-app",
     "first_seen": "2026-04-03",
     "last_updated": "2026-04-03",
     "understanding_confirmed": false,
     "scanned": true,
-    "last_refreshed": "2026-04-03T21:57:02"
+    "last_refreshed": "2026-04-03T22:05:31"
   },
   "files": {
     "AGENT_CONTEXT.md": {
@@ -283,7 +283,7 @@
       "created": "2026-04-03"
     },
     "ui/app.py": {
-      "role": "defines _ChatRuntime, SupervisorProxyThread; exposes index, page_dashboard, page_run, page_knowledge, page_history",
+      "role": "defines _ChatRuntime, SupervisorProxyThread; exposes index, page_dashboard, page_run, page_git, page_knowledge",
       "task_type": "scan",
       "last_modified": "2026-04-03",
       "created": "2026-04-03"
@@ -527,9 +527,76 @@
       "task_type": "scan",
       "last_modified": "2026-04-03",
       "created": "2026-04-03"
+    },
+    "ui/templates/git.html": {
+      "role": "{% extends \"base.html\" %}",
+      "task_type": "scan",
+      "last_modified": "2026-04-03",
+      "created": "2026-04-03"
+    },
+    "ui/static/css/pages/git.css": {
+      "role": ".git-top-row {",
+      "task_type": "scan",
+      "last_modified": "2026-04-03",
+      "created": "2026-04-03"
+    },
+    "ui/static/js/pages/git.js": {
+      "role": "no description",
+      "task_type": "scan",
+      "last_modified": "2026-04-03",
+      "created": "2026-04-03"
     }
   },
-  "docs": [],
+  "docs": [
+    {
+      "path": "README.md",
+      "title": "Codex Aider Bridge App",
+      "summary": "# Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON files instead of calling another AI process For the most accurate low-token workflow, use: a pre-written That profile is designed for: Codex supervises, Aider implements, bridge validates. It ships with a **web UI** you can launch by double-clicking , and a CLI you can drive directly from the terminal.",
+      "score": 195
+    },
+    {
+      "path": "AGENTIC_AI_ONBOARDING.md",
+      "title": "AGENTIC AI ONBOARDING DOCUMENT",
+      "summary": "# AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge \u2014 Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next \u2014 all in one prompt. --- ## \u26d4 HARD STOP \u2014 READ THIS FIRST **You are the Technical Supervisor.",
+      "score": 75
+    },
+    {
+      "path": "AGENT_CONTEXT.md",
+      "title": "AGENT_CONTEXT",
+      "summary": "# AGENT_CONTEXT ## Architecture Summary The bridge is a local CLI orchestrator with a strict two-role separation: The loop is strictly sequential and acknowledgement-gated: the supervisor must approve each task before the next one starts. A **web UI** ( ) provides a browser-based front end over the same bridge, enabling setup detection, live task progress, and run history without any terminal interaction. --- ## Module Responsibilities ### Core bridge (CLI) Orchestrates repo scanning, plan acquisition, the sequential task-review loop, logging, git-readiness pre-flight, per-task auto-commit, and CLI argument handling.",
+      "score": 75
+    },
+    {
+      "path": "AI Relay Supervisor.md",
+      "title": "AI Relay Supervisor \u2014 Implementation Spec",
+      "summary": "## AI Relay Supervisor \u2014 Implementation Spec --- ### Concept Summary A new supervisor mode called **\"AI Relay\"** where you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini, Grok \u2014 anything) as the brain via copy-paste, with no API key. The bridge formats everything as ready-to-paste prompts and parses the AI's responses. --- ### Architecture Overview --- ### Files to Create / Modify | File | Change | |---|---| | | NEW \u2014 generates all prompts and parses AI responses | | | NEW \u2014 dedicated relay page | | | NEW | | | NEW \u2014 relay coordinator | | | ADD 6 new routes | | | ADD Relay nav item | | | ADD supervisor support | --- ### Phase 1 \u2014 This is the core utility.",
+      "score": 75
+    },
+    {
+      "path": "AI_RELAY_PLAN.md",
+      "title": "AI Relay Supervisor \u2014 Implementation Plan",
+      "summary": "# AI Relay Supervisor \u2014 Implementation Plan **Status:** PENDING \u2014 ready to implement **Branch:** **Start from:** **Spec reference:** \u2014 read before starting **Resumption rule:** Read this file, check git log for latest milestone commit, continue from next milestone. --- ## What We Are Building A new supervisor mode called **AI Relay** that lets you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok \u2014 any subscription) as the planning and review brain with **no API key required**. The bridge formats everything as ready-to-paste prompts and parses the AI's responses when pasted back.",
+      "score": 75
+    },
+    {
+      "path": "AI_RELAY_SPEC.md",
+      "title": "AI Relay Supervisor \u2014 Implementation Spec",
+      "summary": "# AI Relay Supervisor \u2014 Implementation Spec **Status:** PLANNED \u2014 implement after Chat feature is complete **Branch:** **Resumption rule:** Read this file, then for design system reference. --- ## What It Is A new supervisor mode called **AI Relay** that lets you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok \u2014 any subscription) as the planning and review brain, with **no API key required**. You become the relay: the bridge formats everything as ready-to-paste prompts, and parses the AI's responses when you paste them back.",
+      "score": 75
+    },
+    {
+      "path": "AI_SUPERVISOR_PROMPT.md",
+      "title": "AI Supervisor Reference",
+      "summary": "# AI Supervisor Reference This document explains how an agentic AI should behave when supervising Aider through this bridge. The recommended operating mode is no longer \u201cspawn another AI CLI and hope it plans well\u201d. The recommended mode is: the active AI session creates the task plan the bridge runs Aider the bridge validates and records results the active AI session reviews each task the bridge resumes from the AI\u2019s decision the bridge keeps a structured project memory under --- ## The Supervisor Role The supervisor is the **technical lead**.",
+      "score": 75
+    },
+    {
+      "path": "HOW_TO.md",
+      "title": "How To Use the Codex Aider Bridge App",
+      "summary": "# How To Use the Codex Aider Bridge App ### Practical guide for manual-supervisor workflow --- ## What This Tool Is For This bridge is designed for a three-part workflow: **You / an agentic AI session** acts as the technical supervisor **Aider** acts as the developer **The bridge** only executes, validates, records, and waits for the next decision It keeps a persistent memory of the external project under so the supervising AI can resume from structured state instead of rebuilding context from scratch. --- ## Using the Web UI (Recommended for Most Users) The easiest way \u2014 no terminal required after initial setup. Or double-click ** ** on Windows.",
+      "score": 75
+    }
+  ],
   "patterns": [
     "Framework: Flask",
     "Framework: unittest",

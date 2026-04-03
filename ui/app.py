@@ -963,6 +963,13 @@ class SupervisorProxyThread(threading.Thread):
 
             try:
                 decision = self._call_cli(cli_cmd, prompt)
+            except FileNotFoundError:
+                _broadcast("log", {"line": f"[proxy] ERROR: '{cli_cmd.split()[0]}' not found. Is it installed and on PATH? Auto-passing task."})
+                _broadcast("log", {"line": f"[proxy] Tip: check Setup page or run 'which {cli_cmd.split()[0]}' in terminal."})
+                decision = {"decision": "pass"}
+            except subprocess.TimeoutExpired:
+                _broadcast("log", {"line": f"[proxy] ERROR: '{supervisor}' CLI timed out after {self._timeout}s. Auto-passing task."})
+                decision = {"decision": "pass"}
             except Exception as exc:
                 _broadcast("log", {"line": f"[proxy] CLI supervisor error: {exc}"})
                 decision = {"decision": "pass"}

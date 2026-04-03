@@ -867,6 +867,7 @@ function connectSSE() {
       showBanner('failure', `Error: ${d.message || 'unknown error'}`);
       setRunning(false);
       _sse.disconnect();
+      // Don't auto-switch — user may want to read the log
     })
     .on('stopped', () => {
       showBanner('stopped', 'Run stopped.');
@@ -956,8 +957,10 @@ async function launchNLRun() {
 
   clearLog();
   hideBanner();
+  resetRoleStrip();
   setRunning(true);
   connectSSE();
+  // Tab switches to Log via SSE 'start' event — no manual switch here
 
   try {
     play('launch');
