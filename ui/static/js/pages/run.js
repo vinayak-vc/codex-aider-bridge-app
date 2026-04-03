@@ -183,11 +183,13 @@ function resetRoleStrip() {
 
 let _progressTasks = [];
 let _selectedTaskId = null;
+let _progressPlanFile = '';
 
 async function loadProgress() {
   try {
     const data = await fetch('/api/run/progress').then(r => r.json());
     _progressTasks = data.tasks || [];
+    _progressPlanFile = data.plan_file || '';
     renderProgressPanel(data);
   } catch (_) {}
 }
@@ -1885,7 +1887,9 @@ function bindControls() {
   $('btn-resume-run')?.addEventListener('click', async () => {
     // Resume uses the existing plan file + checkpoint skips completed tasks
     const settings = collectSettings();
-    // Get plan_file from saved settings (set by Load Plan or NL confirm)
+
+    // Use plan file from: 1) progress panel discovery, 2) saved settings, 3) saved NL state
+    settings.plan_file = _progressPlanFile || settings.plan_file || '';
     if (!settings.plan_file) {
       try {
         const saved = await fetch('/api/settings').then(r => r.json());
@@ -1893,7 +1897,7 @@ function bindControls() {
       } catch (_) {}
     }
     if (!settings.plan_file) {
-      toast('No plan file set. Load a plan file first.', 'warning');
+      toast('No plan file found. Load a plan file first.', 'warning');
       return;
     }
     clearLog();
