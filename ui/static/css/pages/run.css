@@ -204,6 +204,7 @@
 .command-preview .cmd-exe  { color: var(--color-accent); }
 .command-preview .cmd-goal { color: var(--color-success); }
 .command-preview .cmd-flag { color: var(--color-warning); }
+.command-preview .cmd-info { color: var(--color-text-subtle); font-style: italic; }
 
 /* ── Log panel ── */
 .run-log-panel {

@@ -715,8 +715,11 @@ function updateCommandPreview() {
     parts.push({ cls: 'cmd-flag', text: `--idea-file ${s.idea_file}` });
   if (s.aider_model)
     parts.push({ cls: 'cmd-flag', text: `--aider-model ${s.aider_model}` });
-  // Universal pipeline: all runs use --manual-supervisor
+  // Universal pipeline: all runs use --manual-supervisor internally,
+  // but show the actual supervisor for clarity
   parts.push({ cls: 'cmd-flag', text: '--manual-supervisor' });
+  if (s.supervisor && s.supervisor !== 'manual')
+    parts.push({ cls: 'cmd-info', text: `# supervisor: ${s.supervisor}` });
   if (!s.auto_commit)
     parts.push({ cls: 'cmd-flag', text: '--no-auto-commit' });
   if (s.validation_command)
