@@ -12,6 +12,7 @@ const SUPERVISOR_CMDS = {
   claude:   'claude',
   cursor:   'cursor',
   windsurf: 'windsurf',
+  chatbot:  null,   // inline relay wizard — handled by UI in Milestone B
   manual:   null,   // sets manual_supervisor: true
   custom:   '',     // freeform
 };
@@ -43,6 +44,13 @@ const SUPERVISOR_COMPAT = {
     message:
       'Windsurf runs as an IDE and uses your <strong>Windsurf subscription</strong>. ' +
       'Windsurf IDE must be installed and licensed on this machine.',
+  },
+  chatbot: {
+    level: 'info',
+    message:
+      '<strong>No API key required.</strong> ' +
+      'At each review point, the UI shows a prompt to copy into any chatbot (ChatGPT, Claude, Gemini…). ' +
+      'Paste the response back and the run continues.',
   },
   manual: {
     level: 'success',
@@ -138,10 +146,426 @@ function updateCompatWarnings() {
 
 const $ = id => document.getElementById(id);
 
+// ── Natural Language Mode ─────────────────────────────────────────────────────
+
+let _currentBrief = null;
+let _nlTasks = [];
+let _nlSummary = '';
+let _nlProjectKey  = '';   // repo_root used as project key
+
+// Status chip states
+const NL_STATUS = {
+  drafting:           { label: 'Drafting',            mod: '' },
+  generating:         { label: 'Generating…',         mod: '--generating' },
+  needs_clarification:{ label: 'Needs clarification', mod: '--warning' },
+  ready_to_run:       { label: 'Ready to run',        mod: '--success' },
+  plan_ready:         { label: 'Plan ready',          mod: '--info' },
+  plan_confirmed:     { label: 'Plan confirmed',      mod: '--success' },
+};
+
+function _nlStatusFor(brief) {
+  if (!brief) return 'drafting';
+  const confidence = brief.confidence_score ?? 100;
+  if (brief.needs_clarification || confidence < 60) return 'needs_clarification';
+  return 'ready_to_run';
+}
+
+function setNLStatusChip(status) {
+  const row  = $('nl-status-row');
+  const chip = $('nl-status-chip');
+  if (!chip) return;
+  const info = NL_STATUS[status] || NL_STATUS.drafting;
+  chip.textContent = info.label;
+  chip.className = `nl-status-chip${info.mod ? ' ' + info.mod : ''}`;
+  if (row) row.style.display = '';
+}
+
+async function _saveNLState(status, extra = {}) {
+  if (!_nlProjectKey) return;
+  try {
+    const body = {
+      repo_root: _nlProjectKey,
+      message:   $('nl-input')?.value || '',
+      brief:     _currentBrief || {},
+      tasks:     _nlTasks || [],
+      plan_summary: _nlSummary || '',
+      status,
+      confidence_score: _currentBrief?.confidence_score,
+      risks:            _currentBrief?.risks,
+      risk_level:       _currentBrief?.risk_level,
+      ...extra,
+    };
+    await fetch('/api/run/nl/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {}
+}
+
+async function _clearNLState() {
+  if (!_nlProjectKey) return;
+  try {
+    await fetch('/api/run/nl/state', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey }),
+    });
+  } catch (_) {}
+}
+
+async function _restoreNLState() {
+  if (!_nlProjectKey) return;
+  try {
+    const res   = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
+    const state = await res.json();
+    
+    // Clear UI before potentially restoring
+    if ($('nl-input')) $('nl-input').value = '';
+    _currentBrief = null;
+    _nlTasks = [];
+    _nlSummary = '';
+    _confirmedPlanFile = '';
+    setNLStatusChip('drafting');
+    
+    // Hide NL plan sections
+    const nlPlanOutput = $('nl-plan-output');
+    if (nlPlanOutput) nlPlanOutput.style.display = 'none';
+    const nlConfirmed = $('nl-plan-confirmed-wrap');
+    if (nlConfirmed) nlConfirmed.style.display = 'none';
+
+    if (!state || !state.message) return;
+
+    // Restore textarea
+    if ($('nl-input')) $('nl-input').value = state.message;
+
+    // Restore brief
+    if (state.brief && state.brief.goal) {
+      _currentBrief = state.brief;
+      renderBrief(state.brief);
+    }
+
+    _nlTasks = state.tasks || [];
+    _nlSummary = state.plan_summary || '';
+
+    // Restore plan tasks if present
+    if (Array.isArray(state.tasks) && state.tasks.length) {
+      renderNLTaskList(state.tasks, state.plan_summary || '');
+
+      if (state.plan_status === 'plan_confirmed') {
+        _confirmedPlanFile = state.plan_file || '';
+        const banner = $('nl-plan-confirmed-banner');
+        if (banner) {
+          banner.textContent = _confirmedPlanFile
+            ? `Plan saved → ${_confirmedPlanFile}`
+            : 'Plan confirmed.';
+        }
+        $('nl-plan-confirmed-wrap').style.display = '';
+        $('nl-plan-actions').style.display = 'none';
+      }
+    }
+
+    // Restore status chip
+    const status = state.status || _nlStatusFor(state.brief || null);
+    setNLStatusChip(status);
+  } catch (_) {}
+}
+
+function _renderBriefSection(label, items) {
+  if (!items?.length) return '';
+  return `<div class="nl-brief-section">
+    <div class="nl-brief-label">${label}</div>
+    ${items.map(i => `<div class="nl-brief-item">${escHtml(String(i))}</div>`).join('')}
+  </div>`;
+}
+
+function renderBrief(brief) {
+  _currentBrief = brief;
+  const card = $('nl-brief-card');
+  if (!card) return;
+
+  card.innerHTML = `
+    <div class="nl-brief-section">
+      <div class="nl-brief-label">Goal</div>
+      <div class="nl-brief-goal">${escHtml(brief.goal || '')}</div>
+    </div>
+    ${_renderBriefSection('Assumptions', brief.assumptions)}
+    ${_renderBriefSection('Constraints', brief.constraints)}
+    ${_renderBriefSection('Acceptance Criteria', brief.acceptance_criteria)}
+  `;
+
+  // Confidence badge
+  const confBadge = $('nl-confidence-badge');
+  if (confBadge) {
+    const score = brief.confidence_score ?? 100;
+    confBadge.textContent = `${score}% Confidence`;
+    confBadge.style.display = '';
+    confBadge.className = 'nl-confidence-badge'; // Reset
+    if (score >= 80) confBadge.classList.add('--high');
+    else if (score >= 60) confBadge.classList.add('--medium');
+    else confBadge.classList.add('--low');
+  }
+
+  const qWrap = $('nl-questions-wrap');
+  const qCard = $('nl-questions-card');
+  if (qWrap && qCard) {
+    if (brief.clarification_questions?.length) {
+      qCard.innerHTML = `
+        <div class="nl-brief-section">
+          <div class="nl-brief-label">Clarification Needed</div>
+          ${brief.clarification_questions.map(q => `<div class="nl-brief-item">• ${escHtml(q)}</div>`).join('')}
+        </div>`;
+      qWrap.style.display = '';
+    } else {
+      qWrap.style.display = 'none';
+    }
+  }
+
+  // Risk alert
+  const riskAlert = $('nl-risk-alert');
+  if (riskAlert) {
+    if (brief.risks?.length) {
+      riskAlert.innerHTML = `
+        <div class="nl-brief-section">
+          <div class="nl-brief-label">Potential Risks Detected</div>
+          ${brief.risks.map(r => `<div class="nl-brief-item">• ${escHtml(r)}</div>`).join('')}
+        </div>`;
+      riskAlert.style.display = '';
+    } else {
+      riskAlert.style.display = 'none';
+    }
+  }
+
+  validateSafety();
+  $('nl-brief-output').style.display = '';
+}
+
+function validateSafety() {
+  if (!_currentBrief) return;
+
+  const confidence = _currentBrief.confidence_score ?? 100;
+  const isConfident = confidence >= 60;
+  const isClarified = !(_currentBrief.needs_clarification || _currentBrief.clarification_questions?.length);
+  const riskVerified = !_currentBrief.requires_confirmation || $('f-nl-safety-ack')?.checked;
+
+  const canProceed = isConfident && isClarified && riskVerified;
+
+  const btnPlan = $('btn-generate-plan');
+  if (btnPlan) btnPlan.disabled = !canProceed;
+
+  // Show/hide safety wrap if risky or low confidence
+  const safetyWrap = $('nl-safety-wrap');
+  if (safetyWrap) {
+    const shouldShow = _currentBrief.requires_confirmation || !isConfident;
+    safetyWrap.style.display = shouldShow ? '' : 'none';
+    
+    // If low confidence and no risks, hide the alert box itself but keep wrap for clarify info
+    const risks = _currentBrief.risks || [];
+    const riskAlert = $('nl-risk-alert');
+    if (riskAlert) riskAlert.style.display = risks.length ? '' : 'none';
+  }
+}
+
+async function generateBrief() {
+  const message = $('nl-input')?.value?.trim();
+  if (!message) {
+    toast('Please describe what you want to build.', 'warning');
+    $('nl-input')?.focus();
+    return;
+  }
+
+  const btn = $('btn-generate-brief');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  setNLStatusChip('generating');
+  $('nl-brief-output').style.display = 'none';
+
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    if (!_nlProjectKey) _nlProjectKey = settings.repo_root || '';
+    const res = await fetch('/api/run/brief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, repo_root: _nlProjectKey }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to generate brief.');
+    renderBrief(data);
+    const status = _nlStatusFor(data);
+    setNLStatusChip(status);
+    await _saveNLState(status);
+  } catch (err) {
+    toast(err.message || 'Failed to generate brief.', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/> </svg> Generate Brief';
+    }
+  }
+}
+
+async function applyBrief() {
+  if (!_currentBrief) return;
+
+  // Update the goal textarea with the refined goal from the brief
+  const nlInput = $('nl-input');
+  if (nlInput && _currentBrief.goal) {
+    nlInput.value = _currentBrief.goal;
+  }
+
+  // Fold constraints + acceptance criteria into the clarifications field
+  const clarEl = $('f-clarifications');
+  const extras = [
+    ...(_currentBrief.constraints || []).map(c => `Constraint: ${c}`),
+    ...(_currentBrief.acceptance_criteria || []).map(a => `Acceptance: ${a}`),
+  ];
+  if (extras.length && clarEl) {
+    const existing = clarEl.value.trim() || '';
+    clarEl.value = existing ? `${existing}\n${extras.join('\n')}` : extras.join('\n');
+    // Auto-open advanced accordion
+    const trigger = $('adv-trigger');
+    const body    = $('adv-body');
+    if (trigger?.getAttribute('aria-expanded') !== 'true') {
+      trigger?.setAttribute('aria-expanded', 'true');
+      body?.classList.remove('--hidden');
+    }
+  }
+
+  updateCommandPreview();
+  await _saveNLState('ready_to_run');
+  toast('Goal updated from brief — generate a plan or launch directly.', 'success');
+}
+
+// ── Plan generation ───────────────────────────────────────────────────────────
+
+let _confirmedPlanFile = '';
+
+function renderNLTaskList(tasks, summary) {
+  _nlTasks = tasks || [];
+  _nlSummary = summary || '';
+  const list = $('nl-task-list');
+  if (!list) return;
+
+  list.innerHTML = tasks.map(t => {
+    const type  = t.type || 'modify';
+    const files = (t.files || []).join(', ');
+    return `<div class="nl-task-item">
+      <div class="nl-task-num">${t.id}</div>
+      <div class="nl-task-body">
+        <div class="nl-task-head">
+          <span class="nl-task-title">${escHtml(t.title || t.instruction?.slice(0, 60) || '')}</span>
+          <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
+        </div>
+        <div class="nl-task-instruction">${escHtml(t.instruction || '')}</div>
+        ${files ? `<div class="nl-task-files">${escHtml(files)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const summaryEl = $('nl-plan-summary');
+  if (summaryEl) {
+    summaryEl.textContent = summary || '';
+    summaryEl.style.display = summary ? '' : 'none';
+  }
+
+  $('nl-plan-output').style.display = '';
+  $('nl-plan-actions').style.display = 'flex';
+  $('nl-plan-confirmed-wrap').style.display = 'none';
+}
+
+async function generatePlan() {
+  if (!_currentBrief?.goal) {
+    toast('Generate a brief first, then generate a plan.', 'warning');
+    return;
+  }
+
+  const btn = $('btn-generate-plan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating plan…'; }
+  setNLStatusChip('generating');
+  $('nl-plan-output').style.display = 'none';
+
+  try {
+    const res  = await fetch('/api/run/nl/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey, brief: _currentBrief }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Plan generation failed.');
+
+    renderNLTaskList(data.tasks, data.plan_summary);
+    setNLStatusChip('plan_ready');
+    await _saveNLState('plan_ready', {
+      tasks:        data.tasks,
+      plan_summary: data.plan_summary,
+      plan_status:  'plan_ready',
+    });
+    _confirmedPlanFile = '';
+  } catch (err) {
+    toast(err.message || 'Plan generation failed.', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg> Generate Plan';
+    }
+  }
+}
+
+async function confirmPlan() {
+  const taskItems = $('nl-task-list')?.querySelectorAll('.nl-task-item');
+  if (!taskItems?.length) {
+    toast('No plan to confirm.', 'warning');
+    return;
+  }
+
+  const btn = $('btn-confirm-plan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  // Extract current tasks from the rendered list (use the saved state)
+  try {
+    const stateRes = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
+    const state    = await stateRes.json();
+    const tasks    = state.tasks || [];
+    const summary  = state.plan_summary || '';
+
+    const res  = await fetch('/api/run/nl/plan/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo_root:    _nlProjectKey,
+        tasks,
+        plan_summary: summary,
+        brief:        _currentBrief || {},
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Confirm failed.');
+
+    _confirmedPlanFile = data.plan_file || '';
+
+    // Show confirmed banner
+    const banner = $('nl-plan-confirmed-banner');
+    if (banner) {
+      banner.textContent = _confirmedPlanFile
+        ? `Plan saved → ${_confirmedPlanFile}`
+        : 'Plan confirmed.';
+    }
+    $('nl-plan-confirmed-wrap').style.display = '';
+    $('nl-plan-actions').style.display = 'none';
+
+    setNLStatusChip('plan_confirmed');
+    toast('Plan confirmed and saved.', 'success');
+  } catch (err) {
+    toast(err.message || 'Failed to confirm plan.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Plan'; }
+  }
+}
+
 // ── Settings → form ──────────────────────────────────────────────────────────
 
 function populateForm(s) {
-  $('f-goal').value              = s.goal              || '';
+  const nlInput = $('nl-input');
+  if (nlInput && s.goal) nlInput.value = s.goal;
   $('f-repo-root').value         = s.repo_root         || '';
   $('f-aider-model').value       = s.aider_model       || 'ollama/mistral';
   $('f-dry-run').checked         = !!s.dry_run;
@@ -183,7 +607,7 @@ function collectSettings() {
     : [];
 
   const settings = {
-    goal:               $('f-goal').value.trim(),
+    goal:               ($('nl-input')?.value || '').trim(),
     repo_root:          $('f-repo-root').value.trim(),
     aider_model:        $('f-aider-model').value.trim(),
     supervisor:         sup,
@@ -336,7 +760,8 @@ function setRunning(running) {
   const hint  = $('run-shortcut-hint');
 
   if (form)  form.querySelectorAll('input, textarea, button.model-preset, button.num-btn, .accordion-trigger').forEach(el => {
-    el.disabled = running;
+    // Keep chatbot wizard interactive elements active during run (review paste, decision textarea, etc.)
+    if (!el.closest('#chatbot-relay-panel')) el.disabled = running;
   });
   if (btnL)  { btnL.disabled = running; btnL.style.display = running ? 'none' : ''; }
   if (btnS)  btnS.style.display = running ? '' : 'none';
@@ -382,7 +807,7 @@ async function launchRun() {
   const s = collectSettings();
   if (!s.goal) {
     toast('Please enter a goal / instruction.', 'warning');
-    $('f-goal')?.focus();
+    $('nl-input')?.focus();
     return;
   }
 
@@ -402,11 +827,565 @@ async function launchRun() {
   }
 }
 
+async function launchNLRun() {
+  if (!_nlProjectKey) {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    _nlProjectKey = settings.repo_root || '';
+  }
+  if (!_nlProjectKey) {
+    toast('No project folder configured.', 'error');
+    return;
+  }
+
+  clearLog();
+  hideBanner();
+  setRunning(true);
+  connectSSE();
+
+  try {
+    play('launch');
+    const res = await fetch('/api/run/nl/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: _nlProjectKey }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to start run.');
+
+    // Update session state so we know which run was last launched
+    await _saveNLState('running', { last_run_id: data.run_id });
+  } catch (err) {
+    showBanner('failure', err.message || 'Failed to start run.');
+    setRunning(false);
+    _sse?.disconnect();
+    toast(err.message || 'Failed to start run.', 'error');
+  }
+}
+
+// ── Chatbot Relay Wizard ──────────────────────────────────────────────────────
+// Ported from relay.js — handles the inline copy-paste supervisor flow
+// All IDs are prefixed with "chatbot-" to avoid conflicts with run page IDs.
+
+let _cbStep = 1;
+let _cbTasks = [];
+let _cbCurrentTaskId = null;
+let _cbCompletedTasks = 0;
+let _cbTotalTasks = 0;
+let _cbLiveRunActive = false;
+let _cbRelaySessionId = '';
+
+function _cbExecTaskCount(tasks = _cbTasks) {
+  return (tasks || []).filter(t => String(t?.status || '').toLowerCase() !== 'skipped').length;
+}
+
+function _cbGoToStep(n, force = false) {
+  if (!force && n === 1 && _cbTasks.length > 0) {
+    toast('Use "Discard Tasks" to return to Step 1.', 'warning');
+    return;
+  }
+  _cbStep = n;
+  for (let i = 1; i <= 3; i++) {
+    const panel = $(`chatbot-panel-${i}`);
+    if (panel) panel.style.display = i === n ? '' : 'none';
+    const ind = $(`chatbot-step-indicator-${i}`);
+    if (ind) {
+      ind.dataset.active = String(i === n);
+      ind.dataset.done   = String(i < n);
+    }
+  }
+}
+
+function _cbUpdateProgress(done, total) {
+  _cbCompletedTasks = done;
+  _cbTotalTasks     = total;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  const bar = $('chatbot-progress-bar');
+  const lbl = $('chatbot-progress-label');
+  if (bar) bar.style.width = pct + '%';
+  if (lbl) lbl.textContent = `${done} / ${total}`;
+}
+
+function _cbSetStatus(status, label) {
+  const chip = $('chatbot-status-chip');
+  const lbl  = $('chatbot-status-label');
+  if (chip) chip.dataset.status = status;
+  if (lbl)  lbl.textContent     = label;
+}
+
+function _cbUpdateControls() {
+  const stopBtn    = $('chatbot-btn-stop');
+  const submitBtn  = $('chatbot-btn-submit-decision');
+  const confirmBtn = $('chatbot-btn-confirm-tasks');
+  const discardBtn = $('chatbot-btn-back-to-step1');
+  if (stopBtn)    stopBtn.disabled    = !_cbLiveRunActive;
+  if (submitBtn)  submitBtn.disabled  = !_cbLiveRunActive;
+  if (confirmBtn) confirmBtn.disabled = _cbLiveRunActive || _cbExecTaskCount() === 0;
+  if (discardBtn) discardBtn.disabled = _cbLiveRunActive;
+  document.querySelectorAll('[data-relay-task-action]').forEach(btn => {
+    btn.disabled = _cbLiveRunActive;
+  });
+}
+
+async function _cbGeneratePrompt() {
+  if (_cbTasks.length > 0) {
+    toast('Discard current tasks before generating a new plan.', 'warning');
+    return;
+  }
+  const goal     = ($('nl-input')?.value || '').trim();
+  const repoRoot = ($('f-repo-root')?.value || '').trim();
+  if (!goal) { toast('Please enter a goal first.', 'warning'); $('nl-input')?.focus(); return; }
+
+  const btn = $('chatbot-btn-generate-prompt');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    const data = await apiPost('/api/relay/generate-prompt', { goal, repo_root: repoRoot });
+    const box  = $('chatbot-prompt-output');
+    if (box) box.textContent = data.prompt;
+    const wrap = $('chatbot-prompt-output-wrap');
+    if (wrap) wrap.style.display = '';
+    const pasteWrap = $('chatbot-plan-paste-wrap');
+    if (pasteWrap) pasteWrap.style.display = '';
+  } catch (err) {
+    toast(err.message || 'Failed to generate prompt.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Prompt'; }
+  }
+}
+
+async function _cbImportPlan() {
+  if (_cbTasks.length > 0) {
+    toast('Discard current tasks before importing a new plan.', 'warning');
+    return;
+  }
+  const raw   = ($('chatbot-plan-paste')?.value || '').trim();
+  const errEl = $('chatbot-import-plan-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!raw) { toast('Please paste the AI response first.', 'warning'); return; }
+
+  const btn = $('chatbot-btn-import-plan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const data = await apiPost('/api/relay/import-plan', { raw_text: raw });
+    _cbTasks          = data.tasks || [];
+    _cbRelaySessionId = data.relay_session_id || _cbRelaySessionId;
+    _cbCompletedTasks = 0;
+    _cbTotalTasks     = _cbExecTaskCount(_cbTasks);
+    _cbRenderTaskList(_cbTasks);
+    _cbUpdateProgress(0, _cbTotalTasks);
+    _cbGoToStep(2);
+    _cbUpdateControls();
+  } catch (err) {
+    const msg = err.message || 'Failed to parse plan.';
+    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Plan'; }
+  }
+}
+
+function _cbRenderTaskList(tasks) {
+  const list = $('chatbot-relay-task-list');
+  if (!list) return;
+  if (!tasks?.length) {
+    list.innerHTML = '<p class="text-subtle" style="font-size:var(--font-size-sm)">No tasks found.</p>';
+    return;
+  }
+  list.innerHTML = tasks.map(t => {
+    const type        = String(t.type || 'modify').toLowerCase();
+    const status      = String(t.status || 'not_started').toLowerCase();
+    const statusLabel = String(t.status_label || 'Not started');
+    const canSkip     = !['running','waiting_review','approved','success','skipped'].includes(status);
+    const canRestore  = status === 'skipped';
+    const actionHtml  = canSkip
+      ? `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="skip" data-task-id="${escHtml(t.id)}">Skip</button>`
+      : canRestore
+      ? `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="restore" data-task-id="${escHtml(t.id)}">Restore</button>`
+      : '';
+    return `
+    <div class="relay-task-item" data-status="${escHtml(status)}">
+      <div class="relay-task-num">${t.id}</div>
+      <div class="relay-task-body">
+        <div class="relay-task-head">
+          <div class="relay-task-title">
+            <span>${escHtml(t.title || '')}</span>
+            <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
+            <span class="relay-task-status-badge" data-status="${escHtml(status)}">${escHtml(statusLabel)}</span>
+          </div>
+          <div class="relay-task-actions">${actionHtml}</div>
+        </div>
+        <div class="relay-task-instruction">${escHtml(t.instruction || '')}</div>
+        ${t.files?.length ? `<div class="relay-task-files">${t.files.map(escHtml).join(', ')}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  _cbUpdateControls();
+}
+
+async function _cbToggleSkip(taskId, skip) {
+  if (_cbLiveRunActive) { toast('Stop the run before changing skipped tasks.', 'warning'); return; }
+  try {
+    const data = await apiPost('/api/relay/tasks/skip', { task_id: taskId, skip });
+    _cbTasks          = data.tasks || [];
+    _cbRelaySessionId = data.relay_session_id || _cbRelaySessionId;
+    _cbCompletedTasks = data.completed_tasks || 0;
+    _cbTotalTasks     = data.total_tasks || _cbExecTaskCount(_cbTasks);
+    _cbRenderTaskList(_cbTasks);
+    _cbUpdateProgress(_cbCompletedTasks, _cbTotalTasks);
+    toast(skip ? `Task ${taskId} skipped.` : `Task ${taskId} restored.`, 'success');
+  } catch (err) {
+    toast(err.message || 'Could not update task.', 'error');
+  }
+}
+
+async function _cbDiscardAndReturnToPlan() {
+  if (_cbLiveRunActive) { toast('Stop the run before discarding tasks.', 'warning'); return; }
+  _cbRelaySessionId = '';
+  _cbTasks          = [];
+  _cbCurrentTaskId  = null;
+  _cbCompletedTasks = 0;
+  _cbTotalTasks     = 0;
+  const taskList = $('chatbot-relay-task-list');
+  if (taskList) taskList.innerHTML = '';
+  [$('chatbot-done-panel'), $('chatbot-review-panel')].forEach(el => {
+    if (el) el.style.display = 'none';
+  });
+  await fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
+  _cbSetStatus('idle', 'Ready');
+  _cbUpdateProgress(0, 0);
+  _cbGoToStep(1, true);
+  _cbUpdateControls();
+  toast('Tasks discarded.', 'success');
+}
+
+async function _cbLaunchRun() {
+  const settings = {
+    goal:              ($('nl-input')?.value || '').trim(),
+    repo_root:         ($('f-repo-root')?.value || '').trim(),
+    aider_model:       ($('f-aider-model')?.value || 'ollama/mistral').trim(),
+    supervisor:        'chatbot',
+    manual_supervisor: true,
+    workflow_profile:  'standard',
+    max_task_retries:  Math.max(0, parseInt($('f-max-retries')?.value || 2, 10) || 2),
+    relay_session_id:  _cbRelaySessionId,
+  };
+  _cbGoToStep(3);
+  _cbLiveRunActive = true;
+  _cbUpdateControls();
+  _cbSetStatus('running', 'Running…');
+  _cbUpdateProgress(0, _cbExecTaskCount());
+
+  clearLog();
+  hideBanner();
+  setRunning(true);
+
+  if (_sse) _sse.disconnect();
+  _sse = new SSEClient('/api/run/stream');
+  _sse
+    .on('log',                 d => appendLog(d.line || ''))
+    .on('relay_review_needed', d => _cbOnReviewNeeded(d))
+    .on('review_required',     d => _cbOnReviewNeeded(d))
+    .on('progress',  d => _cbUpdateProgress(d.completed, d.total))
+    .on('plan_ready', d => { _cbTotalTasks = d.task_count || 0; _cbUpdateProgress(0, _cbTotalTasks); })
+    .on('complete',  d => _cbOnRunComplete(d))
+    .on('error',     d => _cbOnRunComplete({ status: 'failure', message: d.message }))
+    .on('stopped',   () => _cbOnRunComplete({ status: 'stopped' }))
+    .connect();
+
+  try {
+    play('launch');
+    await apiPost('/api/run', settings);
+  } catch (err) {
+    _cbSetStatus('failure', 'Failed to start');
+    toast(err.message || 'Failed to start run.', 'error');
+    _sse?.disconnect();
+    setRunning(false);
+    _cbLiveRunActive = false;
+    _cbUpdateControls();
+  }
+}
+
+async function _cbOnReviewNeeded(data) {
+  _cbCurrentTaskId = data.task_id;
+  _cbSetStatus('waiting_review', 'Waiting for review…');
+  _cbGoToStep(3);
+
+  const tidEl    = $('chatbot-review-task-id');
+  const attBadge = $('chatbot-attempt-badge');
+  if (tidEl)    tidEl.textContent    = _cbCurrentTaskId;
+  if (attBadge) attBadge.textContent = `attempt ${data.attempt || 1}`;
+
+  try {
+    const params = new URLSearchParams({
+      task_id:          _cbCurrentTaskId,
+      repo_root:        ($('f-repo-root')?.value || '').trim(),
+      goal:             ($('nl-input')?.value || '').trim(),
+      relay_session_id: _cbRelaySessionId,
+    });
+    const resp    = await fetch(`/api/relay/review-packet?${params}`);
+    const payload = await resp.json();
+    if (resp.ok) {
+      const box = $('chatbot-review-packet');
+      if (box) box.textContent = payload.packet;
+    }
+  } catch (_) {}
+
+  const decPaste = $('chatbot-decision-paste');
+  if (decPaste) decPaste.value = '';
+  const decErr = $('chatbot-decision-error');
+  if (decErr) decErr.style.display = 'none';
+  const replanWrap = $('chatbot-replan-wrap');
+  if (replanWrap) replanWrap.style.display = 'none';
+
+  const panel = $('chatbot-review-panel');
+  if (panel) panel.style.display = '';
+}
+
+async function _cbSubmitDecision() {
+  if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
+  const raw   = ($('chatbot-decision-paste')?.value || '').trim();
+  const errEl = $('chatbot-decision-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!raw)  { toast("Please paste the AI's decision.", 'warning'); return; }
+
+  const btn = $('chatbot-btn-submit-decision');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+  try {
+    const data = await apiPost('/api/relay/submit-decision', {
+      raw_text:         raw,
+      task_id:          _cbCurrentTaskId,
+      repo_root:        ($('f-repo-root')?.value || '').trim(),
+      relay_session_id: _cbRelaySessionId,
+    });
+    if (data.decision === 'fail') {
+      await _cbLoadReplanPrompt();
+    } else {
+      const panel = $('chatbot-review-panel');
+      if (panel) panel.style.display = 'none';
+      _cbSetStatus('running', 'Running…');
+      toast(`Decision submitted: ${data.decision}`, 'success');
+    }
+  } catch (err) {
+    const msg = err.message || 'Failed to submit decision.';
+    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit Decision'; }
+  }
+}
+
+async function _cbLoadReplanPrompt() {
+  try {
+    const data = await apiPost('/api/relay/replan-prompt', {
+      task_id:          _cbCurrentTaskId,
+      repo_root:        ($('f-repo-root')?.value || '').trim(),
+      goal:             ($('nl-input')?.value || '').trim(),
+      relay_session_id: _cbRelaySessionId,
+      failed_reason:    ($('chatbot-decision-paste')?.value || '').replace(/^FAILED:\s*/i, '').trim(),
+    });
+    const box  = $('chatbot-replan-packet');
+    if (box) box.textContent = data.prompt;
+    const wrap = $('chatbot-replan-wrap');
+    if (wrap) wrap.style.display = '';
+  } catch (err) {
+    toast('Could not generate replan prompt: ' + err.message, 'error');
+  }
+}
+
+async function _cbSubmitReplan() {
+  if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
+  const raw   = ($('chatbot-replan-paste')?.value || '').trim();
+  const errEl = $('chatbot-replan-error');
+  if (errEl) errEl.style.display = 'none';
+  if (!raw)  { toast('Please paste the replacement tasks.', 'warning'); return; }
+
+  const btn = $('chatbot-btn-submit-replan');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  try {
+    const data = await apiPost('/api/relay/import-replan', {
+      raw_text: raw,
+      task_id:  _cbCurrentTaskId,
+    });
+    _cbTasks      = data.tasks || [];
+    _cbTotalTasks = _cbExecTaskCount(_cbTasks);
+    _cbRenderTaskList(_cbTasks);
+    _cbUpdateProgress(_cbCompletedTasks, _cbTotalTasks);
+    toast(`Replan imported: ${data.count} tasks remaining.`, 'success');
+    const panel = $('chatbot-review-panel');
+    if (panel) panel.style.display = 'none';
+    _cbSetStatus('running', 'Running…');
+  } catch (err) {
+    const msg = err.message || 'Failed to import replan.';
+    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Import Replacement Tasks'; }
+  }
+}
+
+function _cbOnRunComplete(data) {
+  const status  = data.status || 'failure';
+  const elapsed = data.elapsed ? ` in ${data.elapsed}s` : '';
+  _cbLiveRunActive = false;
+  _cbUpdateControls();
+  _cbSetStatus(status, _cbStatusLabel(status));
+  setRunning(false);
+  if (_sse) { _sse.disconnect(); _sse = null; }
+
+  const panel = $('chatbot-review-panel');
+  if (panel) panel.style.display = 'none';
+  const done = $('chatbot-done-panel');
+  if (done)  done.style.display = '';
+
+  const icon = done?.querySelector('.relay-done-icon');
+  if (icon) icon.dataset.failed = String(status === 'failure');
+  const title = $('chatbot-done-title');
+  const sub   = $('chatbot-done-sub');
+  if (title) title.textContent = status === 'success' ? 'Run complete!' : status === 'stopped' ? 'Run stopped' : 'Run failed';
+  if (sub)   sub.textContent   = `${_cbCompletedTasks} / ${_cbTotalTasks} tasks completed${elapsed}.`;
+}
+
+function _cbStatusLabel(status) {
+  return String(status || 'idle').replace(/_/g, ' ')
+    .split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+function _cbCopyText(elementId, btnId) {
+  const text = $(elementId)?.textContent || '';
+  navigator.clipboard?.writeText(text).then(() => {
+    const btn = $(btnId);
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }
+  }).catch(() => toast('Copy failed — please copy manually.', 'warning'));
+}
+
+function _cbReset() {
+  _cbStep           = 1;
+  _cbTasks          = [];
+  _cbCurrentTaskId  = null;
+  _cbCompletedTasks = 0;
+  _cbTotalTasks     = 0;
+  _cbLiveRunActive  = false;
+  _cbRelaySessionId = '';
+  if (_sse) { _sse.disconnect(); _sse = null; }
+  ['chatbot-plan-paste','chatbot-decision-paste','chatbot-replan-paste'].forEach(id => {
+    const el = $(id);
+    if (el) el.value = '';
+  });
+  ['chatbot-prompt-output-wrap','chatbot-plan-paste-wrap','chatbot-review-panel',
+   'chatbot-done-panel','chatbot-replan-wrap','chatbot-import-plan-error',
+   'chatbot-decision-error','chatbot-replan-error'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = 'none';
+  });
+  const log = $('chatbot-log');
+  if (log) log.textContent = '';
+  fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
+  _cbGoToStep(1, true);
+  _cbUpdateControls();
+}
+
+function _cbShowOrHide() {
+  const sup   = document.querySelector('input[name="supervisor"]:checked')?.value || '';
+  const panel = $('chatbot-relay-panel');
+  if (panel) panel.style.display = sup === 'chatbot' ? '' : 'none';
+}
+
+function bindChatbotControls() {
+  $('chatbot-btn-generate-prompt')?.addEventListener('click',   _cbGeneratePrompt);
+  $('chatbot-btn-copy-prompt')?.addEventListener('click',       () => _cbCopyText('chatbot-prompt-output', 'chatbot-btn-copy-prompt'));
+  $('chatbot-btn-import-plan')?.addEventListener('click',       _cbImportPlan);
+  $('chatbot-btn-back-to-step1')?.addEventListener('click',     _cbDiscardAndReturnToPlan);
+  $('chatbot-btn-confirm-tasks')?.addEventListener('click',     _cbLaunchRun);
+  $('chatbot-relay-task-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-relay-task-action]');
+    if (!btn) return;
+    const taskId = parseInt(btn.dataset.taskId || '0', 10);
+    if (!taskId) return;
+    void _cbToggleSkip(taskId, btn.dataset.relayTaskAction === 'skip');
+  });
+  $('chatbot-btn-stop')?.addEventListener('click', async () => {
+    if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
+    try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {}
+  });
+  $('chatbot-btn-copy-packet')?.addEventListener('click',   () => _cbCopyText('chatbot-review-packet', 'chatbot-btn-copy-packet'));
+  $('chatbot-btn-submit-decision')?.addEventListener('click', _cbSubmitDecision);
+  $('chatbot-btn-copy-replan')?.addEventListener('click',   () => _cbCopyText('chatbot-replan-packet', 'chatbot-btn-copy-replan'));
+  $('chatbot-btn-submit-replan')?.addEventListener('click',  _cbSubmitReplan);
+  $('chatbot-btn-new-run')?.addEventListener('click',        _cbReset);
+}
+
 // ── Bind controls ─────────────────────────────────────────────────────────────
 
 function bindControls() {
+  // NL brief controls
+  $('btn-generate-brief')?.addEventListener('click', generateBrief);
+
+  // Regenerate brief — clear brief + plan, keep textarea message
+  $('btn-regenerate-brief')?.addEventListener('click', () => {
+    $('nl-brief-output').style.display = 'none';
+    $('nl-plan-output').style.display = 'none';
+    _currentBrief = null;
+    _confirmedPlanFile = '';
+    $('nl-input')?.focus();
+  });
+
+  // Plan controls
+  $('btn-generate-plan')?.addEventListener('click', generatePlan);
+  $('btn-confirm-plan')?.addEventListener('click', confirmPlan);
+  $('btn-regenerate-plan')?.addEventListener('click', () => {
+    $('nl-plan-output').style.display = 'none';
+    _confirmedPlanFile = '';
+    setNLStatusChip(_nlStatusFor(_currentBrief));
+  });
+
+  // New Conversation — clear everything including server state
+  $('btn-new-conversation')?.addEventListener('click', async () => {
+    if ($('nl-input')) $('nl-input').value = '';
+    $('nl-brief-output').style.display = 'none';
+    $('nl-plan-output').style.display = 'none';
+    $('nl-status-row').style.display = 'none';
+    _currentBrief = null;
+    _confirmedPlanFile = '';
+    await _clearNLState();
+    $('nl-input')?.focus();
+  });
+
+  let saveTimeout = null;
+  $('nl-input')?.addEventListener('input', () => {
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => _saveNLState('drafting'), 1000);
+  });
+
+  $('nl-input')?.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      generateBrief();
+    }
+  });
+
+  window.addEventListener('bridge:project-switched', async e => {
+    const newPath = e.detail?.path;
+    if (newPath && newPath !== _nlProjectKey) {
+      _nlProjectKey = newPath;
+      // We might want to clear existing UI if switching projects while on Run page
+      _currentBrief = null;
+      _nlTasks = [];
+      _nlSummary = '';
+      _confirmedPlanFile = '';
+      
+      // Optionally reset form if it doesn't match the new project root in settings
+      // but usually settings are updated by the project switcher already.
+      await _restoreNLState();
+    }
+  });
+
   // Launch / stop
   $('btn-launch-run')?.addEventListener('click', launchRun);
+  $('btn-launch-nl-run')?.addEventListener('click', launchNLRun);
+  $('f-nl-safety-ack')?.addEventListener('change', validateSafety);
   $('btn-stop-run')?.addEventListener('click', async () => {
     try {
       await apiPost('/api/run/stop');
@@ -415,9 +1394,11 @@ function bindControls() {
     }
   });
 
-  // Ctrl+Enter to launch
+  // Ctrl+Enter from anywhere outside the goal textarea launches the run
+  // (the goal textarea itself uses Ctrl+Enter for generateBrief)
   document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning
+        && document.activeElement?.id !== 'nl-input') {
       e.preventDefault();
       launchRun();
     }
@@ -463,7 +1444,7 @@ function bindControls() {
     });
   });
 
-  // Supervisor radio → show/hide custom input + update preview
+  // Supervisor radio → show/hide custom input, chatbot wizard, update preview
   document.querySelectorAll('input[name="supervisor"]').forEach(r => {
     r.addEventListener('change', () => {
       const isCustom = r.value === 'custom';
@@ -471,12 +1452,13 @@ function bindControls() {
       if (wrap) wrap.style.display = isCustom ? '' : 'none';
       updateCommandPreview();
       updateCompatWarnings();
+      _cbShowOrHide();
     });
   });
   $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
 
   // All form inputs → live preview update
-  ['f-goal','f-repo-root','f-aider-model','f-dry-run','f-validation-cmd',
+  ['nl-input','f-repo-root','f-aider-model','f-dry-run','f-validation-cmd',
    'f-max-retries','f-max-plan-attempts','f-task-timeout',
    'f-idea-file','f-plan-output-file','f-clarifications']
     .forEach(id => {
@@ -519,6 +1501,9 @@ function bindControls() {
     trigger.setAttribute('aria-expanded', String(!expanded));
     body?.classList.toggle('--hidden', expanded);
   });
+
+  // Chatbot wizard controls
+  bindChatbotControls();
 }
 
 // ── Hydrate from live run (if one is already running when page loads) ─────────
@@ -557,12 +1542,23 @@ async function init() {
   bindControls();
 
   // Load saved settings
+  let settings = {};
   try {
-    const settings = await fetch('/api/settings').then(r => r.json());
+    settings = await fetch('/api/settings').then(r => r.json());
     populateForm(settings);
   } catch (_) {
     updateCommandPreview();
   }
+
+  // Set project key for NL persistence
+  _nlProjectKey = (settings.repo_root || '').trim();
+
+  // Show/hide chatbot wizard based on saved supervisor setting
+  _cbShowOrHide();
+  _cbUpdateControls();
+
+  // Restore NL conversation state if present
+  await _restoreNLState();
 
   // If a run is already active, show live state
   await hydrateExistingRun();

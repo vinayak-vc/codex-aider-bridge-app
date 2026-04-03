@@ -599,34 +599,16 @@ def api_browse_file():
 
 # ── Run lifecycle ───────────────────────────────────────────────────────────────
 
-@app.route("/api/run", methods=["POST"])
-def api_start_run():
+def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
+    """Helper to initialize history, listeners, and start a bridge run."""
     run = get_run()
-    if run.is_running:
-        return jsonify({"error": "A run is already in progress."}), 409
-
-    settings = request.json or {}
-
-    # Validate repo_root before doing anything — without it the bridge
-    # subprocess would default to the PyInstaller temp dir (frozen) or the
-    # source tree CWD (dev mode), neither of which is a user project.
-    _repo = settings.get("repo_root", "").strip()
-    if not _repo:
-        return jsonify({
-            "error": (
-                "No project folder configured. "
-                "Open the Run settings panel, set 'Repo Root' to your project directory, "
-                "and try again."
-            )
-        }), 400
-
-    state_store.save_settings(settings)
+    repo_root = settings.get("repo_root", "").strip()
 
     # Auto-register the repo as a known project
-    if _repo:
-        state_store.add_project(_repo)
+    if repo_root:
+        state_store.add_project(repo_root)
 
-    run_id = state_store.add_history_entry({
+    history_payload = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "goal": settings.get("goal", ""),
         "repo_root": settings.get("repo_root", ""),
@@ -639,7 +621,11 @@ def api_start_run():
         "elapsed": 0,
         "log": [],
         "tasks_detail": [],
-    })
+    }
+    if extra_history:
+        history_payload.update(extra_history)
+
+    run_id = state_store.add_history_entry(history_payload)
 
     def on_event(event_type: str, data: dict) -> None:
         _broadcast(event_type, data)
@@ -663,7 +649,72 @@ def api_start_run():
 
     run.add_listener(on_event)
     run.start(settings, run_id)
+    return run_id
 
+
+@app.route("/api/run", methods=["POST"])
+def api_start_run():
+    run = get_run()
+    if run.is_running:
+        return jsonify({"error": "A run is already in progress."}), 409
+
+    settings = request.json or {}
+
+    # Validate repo_root before doing anything
+    _repo = settings.get("repo_root", "").strip()
+    if not _repo:
+        return jsonify({
+            "error": (
+                "No project folder configured. "
+                "Open the Run settings panel, set 'Repo Root' to your project directory, "
+                "and try again."
+            )
+        }), 400
+
+    state_store.save_settings(settings)
+    run_id = _start_bridge_run(settings)
+
+    return jsonify({"ok": True, "run_id": run_id})
+
+
+@app.route("/api/run/nl/launch", methods=["POST"])
+def api_run_nl_launch():
+    """Launch a run directly from the confirmed NL brief and plan."""
+    run = get_run()
+    if run.is_running:
+        return jsonify({"error": "A run is already in progress."}), 409
+
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    
+    if not repo_root:
+        return jsonify({"error": "No project folder configured."}), 400
+
+    state = state_store.load_run_nl_state(repo_root)
+    if not state or not state.get("brief"):
+        return jsonify({"error": "No confirmed plan found for this project. Generate and confirm a plan first."}), 400
+    
+    brief     = state.get("brief", {})
+    plan_file = state.get("plan_file", "")
+    
+    # Merge current global settings (model, supervisor) with NL-specific goal/plan
+    settings = state_store.load_settings()
+    run_settings = dict(settings)
+    run_settings.update({
+        "goal":      brief.get("goal", ""),
+        "repo_root": repo_root,
+        "plan_file": plan_file,
+    })
+    
+    run_id = _start_bridge_run(run_settings, extra_history={"source": "natural_language"})
+    
+    # Persist the run_id in NL state for traceability
+    state["last_run_id"] = run_id
+    state_store.save_run_nl_state(repo_root, state)
+    
     return jsonify({"ok": True, "run_id": run_id})
 
 
@@ -761,6 +812,306 @@ def api_run_input():
     sent = get_run().send_input(text)
     if not sent:
         return jsonify({"error": "No process running or stdin not available"}), 409
+    return jsonify({"ok": True})
+
+
+@app.route("/api/run/brief", methods=["POST"])
+def api_run_brief():
+    """Convert a natural-language request into a structured execution brief via Ollama."""
+    import urllib.request
+    import urllib.error
+
+    data = request.get_json(force=True) or {}
+    message = str(data.get("message", "")).strip()
+    repo_root = str(data.get("repo_root", "")).strip()
+
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = str(settings.get("repo_root", "")).strip()
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
+
+    knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
+
+    system_prompt = (
+        "You are a precise software project planner. "
+        "Convert the developer's request into a structured execution brief.\n\n"
+        "Output ONLY valid JSON with no markdown, no explanation, no code fences. "
+        "Use exactly this shape:\n"
+        "{\n"
+        '  "goal": "One clear technical sentence describing what to build or fix.",\n'
+        '  "assumptions": ["assumption 1"],\n'
+        '  "constraints": ["Do not touch X"],\n'
+        '  "acceptance_criteria": ["User can do A"],\n'
+        '  "clarification_questions": [],\n'
+        '  "needs_clarification": false,\n'
+        '  "confidence_score": 85,\n'
+        '  "risks": ["Potential risk 1"],\n'
+        '  "risk_level": "low"\n'
+        "}\n\n"
+        "Rules:\n"
+        "- goal: single precise technical statement, not a question\n"
+        "- assumptions: what you assume about the project or intent\n"
+        "- constraints: what must NOT change or must be preserved\n"
+        "- acceptance_criteria: observable, testable outcomes\n"
+        "- clarification_questions: ONLY when something critical is ambiguous; leave [] when clear\n"
+        "- needs_clarification: true only when clarification_questions is non-empty\n"
+        "- confidence_score: 0 to 100 based on how well you understand the request\n"
+        "- risks: identify patterns like bulk deletion, massive refactors, or sensitive file edits\n"
+        "- risk_level: 'low', 'medium', or 'high'\n"
+        "- Be concise. One item per list entry. No generic items like 'code should work'."
+    )
+    if knowledge_ctx:
+        system_prompt += f"\n\nProject context:\n{knowledge_ctx}"
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": messages,
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        content = result.get("message", {}).get("content", "").strip()
+        # Strip markdown code fences if model wraps output
+        if content.startswith("```"):
+            lines = content.split("\n")
+            end = -1 if lines[-1].strip() == "```" else len(lines)
+            content = "\n".join(lines[1:end])
+        brief = json.loads(content)
+        brief.setdefault("goal", "")
+        brief.setdefault("assumptions", [])
+        brief.setdefault("constraints", [])
+        brief.setdefault("acceptance_criteria", [])
+        brief.setdefault("clarification_questions", [])
+        brief["needs_clarification"] = bool(brief.get("clarification_questions"))
+        brief.setdefault("confidence_score", 100)
+        brief.setdefault("risks", [])
+        brief.setdefault("risk_level", "low")
+        brief["requires_confirmation"] = brief.get("risk_level") in ("medium", "high")
+        return jsonify(brief)
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", str(exc))
+        return jsonify({"error": f"Ollama not reachable: {reason}. Is Ollama running?"}), 503
+    except json.JSONDecodeError as exc:
+        return jsonify({"error": f"Model returned invalid JSON: {exc}. Try again."}), 422
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/relay/import-from-nl", methods=["POST"])
+def api_relay_import_from_nl():
+    """Import a plan generated in NL mode into the Relay state."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    tasks = data.get("tasks", [])
+    brief = data.get("brief", {})
+    summary = str(data.get("plan_summary", "")).strip()
+
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+    if not tasks:
+        return jsonify({"error": "No tasks to import"}), 400
+
+    # Ensure project exists
+    state_store.add_project(repo_root)
+
+    # 1. Update Relay-specific state
+    # We simulate a "completed Step 2" in Relay wizard
+    relay_session_id = str(uuid.uuid4())[:8] # New session for this run
+    
+    relay_state = {
+        "step": 2, # Jump straight to task confirmation
+        "goal": brief.get("goal", ""),
+        "repo_root": repo_root,
+        "aider_model": state_store.load_settings().get("aider_model", "ollama/qwen2.5-coder:14b"),
+        "relay_session_id": relay_session_id,
+        "tasks": tasks,
+        "plan_summary": summary,
+        "live_run_active": False,
+    }
+    state_store.save_relay_ui_state(relay_state)
+    state_store.save_relay_tasks(tasks)
+
+    return jsonify({"ok": True, "redirect": "/relay"})
+
+
+@app.route("/api/run/nl/plan", methods=["POST"])
+def api_run_nl_plan():
+    """Generate a structured task plan from an NL brief via Ollama."""
+    import urllib.request
+    import urllib.error
+
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    brief = data.get("brief") or {}
+
+    if not brief or not brief.get("goal"):
+        return jsonify({"error": "brief with goal is required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = settings.get("repo_root", "").strip()
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
+
+    # Build a rich goal string from the brief fields
+    goal_parts = [str(brief.get("goal", "")).strip()]
+    constraints = brief.get("constraints") or []
+    if constraints:
+        goal_parts.append("Constraints:\n" + "\n".join(f"- {c}" for c in constraints))
+    acceptance = brief.get("acceptance_criteria") or []
+    if acceptance:
+        goal_parts.append("Acceptance criteria:\n" + "\n".join(f"- {a}" for a in acceptance))
+    goal_text = "\n\n".join(goal_parts)
+
+    knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
+
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from utils.relay_formatter import build_plan_prompt, parse_plan
+
+    prompt = build_plan_prompt(goal_text, knowledge_ctx, repo_root)
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": [
+            {"role": "system", "content": "You are a software planning assistant. Output only the JSON requested."},
+            {"role": "user",   "content": prompt},
+        ],
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        content = result.get("message", {}).get("content", "").strip()
+        tasks = parse_plan(content)
+        plan_summary = ""
+        try:
+            plan_summary = str(json.loads(content).get("plan_summary", ""))
+        except Exception:
+            pass
+        return jsonify({"plan_summary": plan_summary, "tasks": tasks})
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", str(exc))
+        return jsonify({"error": f"Ollama not reachable: {reason}. Is Ollama running?"}), 503
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/run/nl/plan/confirm", methods=["POST"])
+def api_run_nl_plan_confirm():
+    """Write the confirmed plan JSON to the project's taskJsons/ directory and persist state."""
+    import datetime
+
+    data = request.get_json(force=True) or {}
+    repo_root    = str(data.get("repo_root", "")).strip()
+    tasks        = data.get("tasks") or []
+    plan_summary = str(data.get("plan_summary", "")).strip()
+    brief        = data.get("brief") or {}
+
+    if not tasks:
+        return jsonify({"error": "tasks are required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = settings.get("repo_root", "").strip()
+
+    plan_file = ""
+    if repo_root:
+        try:
+            tasks_dir = Path(repo_root) / "taskJsons"
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            plan_path = tasks_dir / f"nl_plan_{stamp}.json"
+            plan_payload = {"plan_summary": plan_summary, "tasks": tasks}
+            plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
+            plan_file = str(plan_path)
+        except Exception as exc:
+            return jsonify({"error": f"Could not write plan file: {exc}"}), 500
+
+    # Persist the confirmed plan in NL state
+    if repo_root:
+        state_store.save_run_nl_state(repo_root, {
+            "brief":        brief,
+            "tasks":        tasks,
+            "plan_summary": plan_summary,
+            "plan_file":    plan_file,
+            "plan_status":  "plan_confirmed",
+            "status":       "plan_confirmed",
+        })
+
+    return jsonify({"ok": True, "plan_file": plan_file})
+
+
+@app.route("/api/run/nl/state", methods=["GET"])
+def api_run_nl_state_get():
+    """Return the persisted NL conversation state for the current project."""
+    repo_root = request.args.get("repo_root", "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    state = state_store.load_run_nl_state(repo_root)
+    return jsonify(state)
+
+
+@app.route("/api/run/nl/state", methods=["POST"])
+def api_run_nl_state_save():
+    """Persist the NL conversation state for a project."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root is required"}), 400
+    
+    # Save the entire data blob (state_store will filter for allowed keys)
+    state_store.save_run_nl_state(repo_root, data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/run/nl/state", methods=["DELETE"])
+def api_run_nl_state_clear():
+    """Clear the NL conversation state for a project."""
+    data = request.get_json(force=True) or {}
+    repo_root = str(data.get("repo_root", "")).strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if repo_root:
+        state_store.clear_run_nl_state(repo_root)
     return jsonify({"ok": True})
 
 
@@ -1372,7 +1723,10 @@ def api_projects_rename():
 
 @app.route("/relay")
 def relay_page():
-    return render_template("relay.html", active_page="relay")
+    # AI Relay is now inline on the Run page (Milestone B).
+    # Keep this route so old bookmarks / links don't 404.
+    from flask import redirect
+    return redirect("/run", code=302)
 
 
 @app.route("/api/relay/generate-prompt", methods=["POST"])
