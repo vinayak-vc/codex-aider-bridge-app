@@ -386,6 +386,7 @@ def _run_chat_completion(
         "model": ollama_model,
         "messages": messages,
         "stream": True,
+        "keep_alive": "30s",  # Unload model 30s after response to free VRAM for Aider
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -1628,6 +1629,38 @@ def api_kill_process():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/system/unload-model", methods=["POST"])
+def api_unload_model():
+    """Tell Ollama to unload the current model from VRAM."""
+    import urllib.request
+    import urllib.error
+
+    try:
+        # Send a generate request with keep_alive=0 to force unload
+        settings = state_store.load_settings()
+        model = settings.get("aider_model", "").replace("ollama/", "")
+        if not model:
+            return jsonify({"error": "No model configured"}), 400
+
+        body = json.dumps({
+            "model": model,
+            "keep_alive": 0,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "http://localhost:11434/api/generate",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+
+        return jsonify({"ok": True, "model": model, "message": f"Model {model} unloaded from VRAM"})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/system/recommend-model")
 def api_recommend_model():
     """Detect system specs and recommend the best Ollama coding model."""
@@ -1846,6 +1879,7 @@ def api_run_brief():
         "model": ollama_model,
         "messages": messages,
         "stream": False,
+        "keep_alive": "30s",
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -2017,6 +2051,7 @@ def api_run_nl_plan():
             {"role": "user",   "content": prompt},
         ],
         "stream": False,
+        "keep_alive": "30s",
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -2129,6 +2164,7 @@ def api_run_analyze():
         "model": ollama_model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
+        "keep_alive": "30s",
     }).encode("utf-8")
 
     try:

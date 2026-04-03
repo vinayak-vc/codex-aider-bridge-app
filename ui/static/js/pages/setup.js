@@ -294,6 +294,22 @@ function init() {
   // GPU
   $('btn-refresh-gpu')?.addEventListener('click', loadGpuInfo);
   $('btn-toggle-gpu-procs')?.addEventListener('click', toggleGpuProcs);
+  $('btn-unload-model')?.addEventListener('click', async () => {
+    const btn = $('btn-unload-model');
+    if (btn) { btn.disabled = true; btn.textContent = 'Unloading...'; }
+    try {
+      const res = await fetch('/api/system/unload-model', { method: 'POST' }).then(r => r.json());
+      if (res.ok) {
+        if (btn) btn.textContent = 'Freed!';
+        setTimeout(() => { loadGpuInfo(); if (btn) { btn.textContent = 'Free VRAM'; btn.disabled = false; } }, 2000);
+      } else {
+        alert(res.error || 'Failed to unload model');
+        if (btn) { btn.textContent = 'Free VRAM'; btn.disabled = false; }
+      }
+    } catch (_) {
+      if (btn) { btn.textContent = 'Free VRAM'; btn.disabled = false; }
+    }
+  });
 
   runChecks();
   loadGpuInfo();

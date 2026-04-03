@@ -180,7 +180,10 @@
   <div class="card" id="gpu-card" style="margin-bottom:16px">
     <div class="section-header" style="margin-bottom:10px">
       <span class="section-title" id="gpu-card-title">GPU Status</span>
-      <button class="btn btn--secondary btn--sm" id="btn-refresh-gpu">Refresh</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn--warning btn--sm" id="btn-unload-model" title="Unload model from VRAM to free memory">Free VRAM</button>
+        <button class="btn btn--secondary btn--sm" id="btn-refresh-gpu">Refresh</button>
+      </div>
     </div>
     <div id="gpu-info-body">
       <div class="text-subtle" style="font-size:var(--font-size-xs)">Detecting GPU...</div>
