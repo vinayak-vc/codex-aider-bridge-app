@@ -1419,13 +1419,57 @@ def api_run_progress():
         except Exception:
             pass
 
-    # Load plan file path from NL state
+    # Load plan file — try multiple sources (NL state, improvement_plan, taskJsons/)
     plan_file = ""
     try:
         nl_state = state_store.load_run_nl_state(repo_root)
         plan_file = nl_state.get("plan_file", "") if nl_state else ""
     except Exception:
         pass
+
+    # Fallback: check standard plan locations
+    if not plan_file or not Path(plan_file).exists():
+        for candidate in [
+            progress_dir / "improvement_plan.json",
+            *sorted(Path(repo_root, "taskJsons").glob("*.json"), reverse=True)[:1],
+        ]:
+            if candidate.exists():
+                plan_file = str(candidate)
+                break
+
+    # Enrich tasks with instructions from plan file (task_metrics doesn't store them)
+    if plan_file and Path(plan_file).exists() and tasks:
+        try:
+            plan_data = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+            plan_tasks = plan_data.get("tasks", [])
+            instr_map = {}
+            for pt in plan_tasks:
+                pid = pt.get("id", 0)
+                instr_map[pid] = pt.get("instruction", "")
+            for t in tasks:
+                if not t.get("instruction") and t["id"] in instr_map:
+                    t["instruction"] = instr_map[t["id"]]
+        except Exception:
+            pass
+
+    # If no tasks from metrics but plan file exists, load tasks from plan
+    if not tasks and plan_file and Path(plan_file).exists():
+        try:
+            plan_data = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+            plan_tasks = plan_data.get("tasks", [])
+            total_tasks = len(plan_tasks)
+            for pt in plan_tasks:
+                tid = pt.get("id", 0)
+                tasks.append({
+                    "id": tid,
+                    "type": pt.get("type", ""),
+                    "files": pt.get("files", []),
+                    "instruction": pt.get("instruction", ""),
+                    "status": "done" if tid in completed else "pending",
+                    "commit_sha": None,
+                })
+        except Exception:
+            pass
 
     can_resume = bool(completed) and len(completed) < total_tasks and bool(plan_file)
 

@@ -1832,6 +1832,37 @@ function bindControls() {
 
   // Task progress panel
   $('btn-refresh-progress')?.addEventListener('click', loadProgress);
+
+  // Load plan file from disk
+  $('btn-load-plan')?.addEventListener('click', async () => {
+    try {
+      const d = await fetch('/api/browse/file').then(r => r.json());
+      if (!d.path) return;
+
+      // Save as the plan file in settings and NL state
+      const settings = collectSettings();
+      settings.plan_file = d.path;
+      await apiPost('/api/settings', settings);
+
+      // Also save in NL state so Launch This Run can use it
+      const repo = settings.repo_root;
+      if (repo) {
+        await apiPost('/api/run/nl/state', {
+          repo_root: repo,
+          plan_file: d.path,
+          plan_status: 'plan_confirmed',
+          status: 'plan_confirmed',
+          brief: { goal: settings.goal || 'Loaded from plan file' },
+          tasks: [],
+        });
+      }
+
+      toast('Plan file loaded: ' + d.path.split(/[\\/]/).pop(), 'success');
+      await loadProgress();
+    } catch (err) {
+      toast(err.message || 'Failed to load plan file.', 'error');
+    }
+  });
   $('btn-resume-run')?.addEventListener('click', async () => {
     // Resume uses the existing plan file + checkpoint
     const settings = collectSettings();
