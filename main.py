@@ -19,7 +19,7 @@ from context.project_understanding import ensure_project_understanding, understa
 from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
-from models.task import AiderContext, BridgeConfig, Task, TaskReport
+from models.task import AiderContext, BridgeConfig, ExecutionResult, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
@@ -917,7 +917,6 @@ def execute_task_with_review(
             if manual_supervisor is not None:
                 # In manual-supervisor mode, write the analysis as a review request
                 # so the proxy thread or user can see it
-                from models.task import ExecutionResult, TaskReport
                 fake_result = ExecutionResult(
                     task_id=current_task.id, succeeded=True, exit_code=0,
                     stdout=combined_content[:2000], stderr="",
