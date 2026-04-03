@@ -1581,6 +1581,105 @@ def api_run_nl_plan():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/run/analyze", methods=["POST"])
+def api_run_analyze():
+    """Quick read-only analysis: read files + ask supervisor to analyze them.
+
+    No Aider invoked. No git changes. Just reads files and returns the
+    supervisor's analysis. For questions like "what features are in progress?"
+    """
+    import logging
+
+    data = request.get_json(force=True) or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    question = (data.get("question") or "").strip()
+    files = data.get("files") or []
+
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root or not question:
+        return jsonify({"error": "repo_root and question are required"}), 400
+
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    repo_path = Path(repo_root)
+
+    # Read file contents
+    file_contents = []
+    for fp in files:
+        abs_fp = repo_path / fp
+        if abs_fp.exists():
+            try:
+                text = abs_fp.read_text(encoding="utf-8", errors="replace")
+                file_contents.append(f"=== {fp} ===\n{text}")
+            except Exception as ex:
+                file_contents.append(f"=== {fp} === (error: {ex})")
+        else:
+            file_contents.append(f"=== {fp} === (not found)")
+
+    combined = "\n\n".join(file_contents) if file_contents else "(no files specified)"
+
+    # Try supervisor CLI first
+    settings = state_store.load_settings()
+    supervisor_type = settings.get("supervisor", "codex")
+    cli_commands = {
+        "codex": "codex.cmd exec --skip-git-repo-check --color never",
+        "claude": "claude",
+        "cursor": "cursor",
+        "windsurf": "windsurf",
+    }
+    supervisor_cmd = cli_commands.get(supervisor_type, "")
+    if supervisor_type == "custom":
+        supervisor_cmd = settings.get("supervisor_command", "").strip()
+
+    prompt = (
+        "You are analyzing project files. Read the content below and answer the question.\n\n"
+        f"QUESTION: {question}\n\n"
+        f"FILE CONTENT:\n{combined[:8000]}\n\n"
+        "Provide a clear, structured answer."
+    )
+
+    if supervisor_cmd:
+        try:
+            from supervisor.agent import SupervisorAgent
+            logger = logging.getLogger("bridge_app")
+            agent = SupervisorAgent(repo_path, supervisor_cmd, logger, timeout=60)
+            answer = agent._run(prompt)
+            return jsonify({"answer": answer.strip(), "source": supervisor_type})
+        except Exception as exc:
+            return jsonify({"error": f"Supervisor analysis failed: {exc}"}), 500
+
+    # Fallback to Ollama
+    import urllib.request
+    import urllib.error
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/chat", data=body,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        answer = result.get("message", {}).get("content", "").strip()
+        return jsonify({"answer": answer, "source": "ollama"})
+    except Exception as exc:
+        return jsonify({"error": f"Analysis failed: {exc}"}), 500
+
+
 @app.route("/api/run/nl/plan/confirm", methods=["POST"])
 def api_run_nl_plan_confirm():
     """Write the confirmed plan JSON to the project's taskJsons/ directory and persist state."""

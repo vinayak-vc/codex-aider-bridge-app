@@ -848,6 +848,79 @@ def execute_task_with_review(
             logger.info("[dry-run] Task %s: %s", current_task.id, current_instruction)
             return
 
+        # ── Read-only task: skip Aider, send file content to supervisor ──────
+        if current_task.type == "read":
+            if diagnostics:
+                diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
+            logger.info("Task %s: read-only — reading files without Aider", current_task.id)
+
+            file_contents = []
+            for fp in current_task.files:
+                abs_fp = config.repo_root / fp
+                if abs_fp.exists():
+                    try:
+                        text = abs_fp.read_text(encoding="utf-8", errors="replace")
+                        file_contents.append(f"=== {fp} ===\n{text}")
+                    except Exception as read_ex:
+                        file_contents.append(f"=== {fp} === (error reading: {read_ex})")
+                else:
+                    file_contents.append(f"=== {fp} === (file not found)")
+
+            combined_content = "\n\n".join(file_contents)
+
+            # Build analysis prompt for the supervisor
+            analysis_prompt = (
+                "You are analyzing project files. Read the content below and answer the question.\n\n"
+                f"QUESTION: {current_instruction}\n\n"
+                f"FILE CONTENT:\n{combined_content[:8000]}\n\n"
+                "Provide a clear, structured answer. No code changes needed."
+            )
+
+            analysis_result = ""
+            if manual_supervisor is not None:
+                # In manual-supervisor mode, write the analysis as a review request
+                # so the proxy thread or user can see it
+                from models.task import ExecutionResult, TaskReport
+                fake_result = ExecutionResult(
+                    task_id=current_task.id, succeeded=True, exit_code=0,
+                    stdout=combined_content[:2000], stderr="",
+                    command=[], attempt_number=attempt + 1,
+                )
+                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:4000])
+                request_path = manual_supervisor.submit_review_request(
+                    task_report, validation_message="Read-only analysis task — review the file content.",
+                    unexpected_files=[],
+                )
+                _emit_structured({
+                    "type": "review_required",
+                    "task_id": current_task.id,
+                    "request_file": str(request_path),
+                    "validation_message": "Read-only analysis task",
+                    "mode": "manual",
+                })
+                review = manual_supervisor.wait_for_decision(current_task.id)
+                if review.verdict == "PASS":
+                    logger.info("Task %s: read-only analysis approved", current_task.id)
+                    if diagnostics:
+                        diagnostics.record_review(current_task.id, attempt + 1, "pass")
+                    _emit_structured({"type": "task_complete", "task_id": current_task.id, "diff": ""})
+                    return ""
+                logger.info("Task %s: read-only task reviewed: %s", current_task.id, review.verdict)
+
+            elif supervisor is not None:
+                # CLI supervisor mode — ask supervisor to analyze directly
+                try:
+                    response = supervisor._run(analysis_prompt)
+                    analysis_result = response.strip()
+                    logger.info("Task %s: supervisor analysis:\n%s", current_task.id, analysis_result[:500])
+                except Exception as sup_ex:
+                    logger.warning("Task %s: supervisor analysis failed: %s", current_task.id, sup_ex)
+
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "pass")
+            _emit_structured({"type": "task_complete", "task_id": current_task.id, "diff": analysis_result[:1500]})
+            return analysis_result
+
         # ── Step 1: Execute via Aider ────────────────────────────────────────
         if diagnostics:
             diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
