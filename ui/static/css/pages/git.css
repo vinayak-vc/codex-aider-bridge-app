@@ -1,11 +1,20 @@
 /* pages/git.css — Git page */
 
+/* ── Page fills viewport, no scroll ── */
+.git-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 140px); /* viewport minus header + status bar + padding */
+  min-height: 0;
+}
+
 /* ── Top row: branch + status ── */
 .git-top-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 @media (max-width: 700px) {
   .git-top-row { grid-template-columns: 1fr; }
@@ -28,45 +37,46 @@
   font-size: var(--font-size-sm);
 }
 
-/* ── Two-column layout: commits | detail ── */
+/* ── Two-column layout: commits | detail — fills remaining space ── */
 .git-main-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  align-items: start;
+  flex: 1;
+  min-height: 0; /* critical for overflow children */
 }
 @media (max-width: 900px) {
   .git-main-layout { grid-template-columns: 1fr; }
 }
 
-.git-detail-col {
+/* ── Commit list — fixed height with scroll ── */
+.git-commits-card {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-/* ── Commit list ── */
-.git-commits-card {
-  max-height: calc(100vh - 300px);
-  overflow-y: auto;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .git-commit-list {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .git-commit-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--font-size-xs);
   transition: background var(--transition);
   border-left: 3px solid transparent;
+  flex-shrink: 0;
 }
 .git-commit-row:hover {
   background: var(--color-surface-2);
@@ -98,23 +108,52 @@
   white-space: nowrap;
 }
 
-/* ── Changed files ── */
+/* ── Right column: changed files + diff ── */
+.git-detail-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Changed files — scroll container ── */
+.git-changed-card {
+  display: flex;
+  flex-direction: column;
+  max-height: 40%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.git-changed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
 .git-changed-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .git-changed-file {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 5px 8px;
+  gap: 6px;
+  padding: 4px 8px;
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--transition);
+  flex-shrink: 0;
 }
 .git-changed-file:hover {
   background: var(--color-surface-2);
@@ -125,6 +164,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
 }
 
 .git-file-stat {
@@ -133,7 +173,41 @@
   flex-shrink: 0;
 }
 
-/* ── Diff viewer ── */
+.git-file-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.git-changed-file:hover .git-file-actions {
+  opacity: 1;
+}
+
+.git-file-action-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+}
+.git-file-action-btn:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text);
+}
+
+/* ── Diff viewer — fills remaining right column space ── */
+.git-diff-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .git-diff-pre {
   background: #020408;
   color: #c9d1d9;
@@ -143,9 +217,64 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   overflow: auto;
-  max-height: calc(100vh - 380px);
-  min-height: 200px;
+  flex: 1;
+  min-height: 120px;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;
 }
+
+/* ── Changed files view toggle ── */
+.git-view-toggle {
+  display: flex;
+  gap: 2px;
+}
+.git-view-btn {
+  padding: 3px 5px !important;
+  min-width: 24px;
+  font-size: 11px !important;
+}
+.git-view-btn.--active {
+  background: var(--color-surface-2);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ── Tree view for changed files ── */
+.git-tree {
+  font-size: var(--font-size-xs);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.git-tree-dir {
+  padding-left: 12px;
+}
+.git-tree-dir-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+.git-tree-dir-label:hover { background: var(--color-surface-2); }
+.git-tree-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 16px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+}
+.git-tree-file:hover { background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+.git-tree-stat { margin-left: auto; color: var(--color-text-subtle); font-size: 10px; }
+.git-tree-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.git-tree-chevron.--collapsed { transform: rotate(-90deg); }

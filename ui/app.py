@@ -845,6 +845,38 @@ def api_vscode_open():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/git/gitignore", methods=["POST"])
+def api_git_gitignore():
+    """Add a pattern to .gitignore."""
+    data = request.json or {}
+    repo = (data.get("repo_root") or "").strip()
+    pattern = (data.get("pattern") or "").strip()
+
+    if not repo:
+        settings = state_store.load_settings()
+        repo = settings.get("repo_root", "").strip()
+    if not repo or not pattern:
+        return jsonify({"error": "repo_root and pattern are required"}), 400
+
+    gitignore_path = Path(repo) / ".gitignore"
+    try:
+        existing = ""
+        if gitignore_path.exists():
+            existing = gitignore_path.read_text(encoding="utf-8")
+
+        # Check if pattern already exists
+        lines = existing.splitlines()
+        if pattern in lines:
+            return jsonify({"ok": True, "message": "Already in .gitignore"})
+
+        # Append
+        separator = "\n" if existing and not existing.endswith("\n") else ""
+        gitignore_path.write_text(existing + separator + pattern + "\n", encoding="utf-8")
+        return jsonify({"ok": True, "pattern": pattern})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 # ── Supervisor Proxy Thread ────────────────────────────────────────────────────
 
 # CLI command templates for each supervisor type (mirrors run.js SUPERVISOR_CMDS)
