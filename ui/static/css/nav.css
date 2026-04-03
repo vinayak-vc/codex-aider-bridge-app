@@ -494,3 +494,5 @@
     border-top: 2px solid var(--color-accent);
   }
 }
+
+/* Git chip styles moved to base.css .status-bar */

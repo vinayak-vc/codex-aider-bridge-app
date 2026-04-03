@@ -76,11 +76,11 @@ class TokenTracker:
         self._reworks: int = 0
         self._subplans: int = 0
         # Tokens spent by the AI supervisor in its interactive session
-        # (reading files, generating plan, reviewing diffs, conversation).
-        # Set via record_session_tokens() — exact if the AI provides --session-tokens N,
-        # otherwise an estimate derived from file sizes.
         self._session_tokens: int = 0
         self._session_tokens_is_estimate: bool = True
+        # Aider/Ollama estimated token usage
+        self._aider_total: int = 0
+        self._aider_per_task: list[dict] = []
 
     # ── Recording ─────────────────────────────────────────────────────────────
 
@@ -115,6 +115,25 @@ class TokenTracker:
         self._session_tokens = max(0, tokens)
         self._session_tokens_is_estimate = is_estimate
 
+    def record_aider_task(
+        self,
+        task_id: int,
+        instruction: str,
+        input_file_chars: int,
+        diff_chars: int,
+    ) -> None:
+        """Estimate Aider/Ollama token usage for one task.
+
+        Aider calls Ollama internally so we cannot intercept the API response.
+        We estimate from: instruction length + input file sizes + output diff.
+        """
+        estimated = _estimate(instruction) + max(1, input_file_chars // 4) + max(1, diff_chars // 4)
+        self._aider_total += estimated
+        self._aider_per_task.append({
+            "task_id": task_id,
+            "estimated_tokens": estimated,
+        })
+
     # ── Live snapshot ─────────────────────────────────────────────────────────
 
     def snapshot(self) -> dict:
@@ -135,6 +154,8 @@ class TokenTracker:
             "subplans_generated": self._subplans,
             "session_tokens": self._session_tokens,
             "session_tokens_is_estimate": self._session_tokens_is_estimate,
+            "aider_total": self._aider_total,
+            "aider_per_task": list(self._aider_per_task),
         }
 
     # ── Session report ────────────────────────────────────────────────────────
@@ -181,9 +202,11 @@ class TokenTracker:
         }
         note = (
             f"Without bridge: plan ({plan_tokens} tokens) + "
-            f"{tasks_executed} tasks × {_DIRECT_TOKENS_PER_TASK} "
+            f"{tasks_executed} tasks x {_DIRECT_TOKENS_PER_TASK} "
             f"direct-coding tokens = {estimated_direct}; "
-            f"compared against total AI tokens {total_ai_tokens}"
+            f"with bridge: supervisor {total_ai_tokens} tokens (cloud) + "
+            f"Aider ~{self._aider_total} tokens (local/free); "
+            f"cloud AI saved: {tokens_saved}"
         )
         if tasks_executed == 0:
             note += "; session completed no tasks and should be treated as overhead, not productive savings"
@@ -215,6 +238,8 @@ class TokenTracker:
                 "tasks_skipped": tasks_skipped,
                 "reworks": self._reworks,
                 "subplans_generated": self._subplans,
+                "estimated_tokens": self._aider_total,
+                "per_task": list(self._aider_per_task),
             },
             "productivity": productivity,
             "savings": {
@@ -275,12 +300,15 @@ def save_session_to_log(session: dict, log_path: Path) -> None:
         reason = str(zero_progress_session.get("productivity", {}).get("waste_reason", "zero_progress_other"))
         waste_reason_counts[reason] = waste_reason_counts.get(reason, 0) + 1
 
+    total_aider = sum(s.get("aider", {}).get("estimated_tokens", 0) for s in sessions)
+
     data["totals"] = {
         "sessions_count": len(sessions),
         "tasks_executed_total": total_tasks,
         "supervisor_tokens_total": total_supervisor,
         "session_tokens_total": total_session,
         "total_ai_tokens_total": total_ai,
+        "aider_tokens_total": total_aider,
         "tokens_saved_total": total_saved,
         "savings_percent_weighted": weighted_savings_pct,
         "savings_percent_successful_avg": successful_avg,
@@ -302,6 +330,7 @@ def _empty_totals() -> dict:
         "supervisor_tokens_total": 0,
         "session_tokens_total": 0,
         "total_ai_tokens_total": 0,
+        "aider_tokens_total": 0,
         "tokens_saved_total": 0,
         "savings_percent_weighted": 0.0,
         "savings_percent_successful_avg": 0.0,

@@ -13,12 +13,37 @@
     <h1 class="page-title">Knowledge</h1>
     <p class="page-subtitle">Project understanding, file registry, and context signals</p>
   </div>
-  <button class="btn btn--secondary btn--sm" id="btn-refresh-knowledge" title="Refresh">
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
-    </svg>
-    Refresh
-  </button>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="btn btn--secondary btn--sm" id="btn-reload-knowledge" title="Reload from disk">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+      </svg>
+      Reload
+    </button>
+    <button class="btn btn--primary btn--sm" id="btn-refresh-knowledge" title="Re-scan project files and regenerate knowledge">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+      </svg>
+      <span id="btn-refresh-label">Refresh Knowledge</span>
+    </button>
+  </div>
+</div>
+
+<!-- Knowledge status bar -->
+<div class="knowledge-status-row" id="knowledge-status-row">
+  <span class="text-subtle" style="font-size:var(--font-size-xs)">
+    Last refreshed: <strong id="knowledge-last-refreshed">—</strong>
+  </span>
+  <div style="display:flex;align-items:center;gap:6px">
+    <span class="text-subtle" style="font-size:var(--font-size-xs)">Auto-refresh:</span>
+    <select class="input" id="knowledge-auto-refresh" style="width:auto;padding:2px 8px;font-size:12px;height:26px">
+      <option value="0">Off</option>
+      <option value="5">5 min</option>
+      <option value="10" selected>10 min</option>
+      <option value="15">15 min</option>
+      <option value="30">30 min</option>
+    </select>
+  </div>
 </div>
 
 <!-- Tabs -->
@@ -147,6 +172,23 @@
       <option value="task">Task</option>
     </select>
     <span class="text-subtle" style="font-size:var(--font-size-xs)" id="file-showing-label">0 files</span>
+    <div class="file-view-toggle">
+      <button class="btn btn--secondary btn--sm file-view-btn --active" id="btn-view-table" title="Table view">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 0v1.5c0 .621-.504 1.125-1.125 1.125"/>
+        </svg>
+      </button>
+      <button class="btn btn--secondary btn--sm file-view-btn" id="btn-view-tree" title="Tree view">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Tree view (hidden by default) -->
+  <div id="file-tree-wrap" style="display:none">
+    <div class="file-tree" id="file-tree"></div>
   </div>
 
   <div class="file-table-wrap">

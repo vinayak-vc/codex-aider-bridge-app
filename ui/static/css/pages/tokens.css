@@ -3,12 +3,11 @@
 /* ── Top stats row ── */
 .token-stats {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-bottom: 24px;
 }
-@media (max-width: 960px) { .token-stats { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 540px) { .token-stats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .token-stats { grid-template-columns: repeat(2, 1fr); } }
 
 /* ── Savings bar ── */
 .savings-bar-wrap {
@@ -211,4 +210,89 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+
+/* ── Savings comparison card ── */
+.savings-comparison {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.comparison-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.comparison-block {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+.comparison-block--without {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+}
+.comparison-block--with {
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+}
+.comparison-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+.comparison-value {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.comparison-desc {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  margin-top: 2px;
+}
+.comparison-arrow {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .comparison-row { flex-direction: column; }
+  .comparison-arrow { transform: rotate(90deg); }
+}
+.comparison-saved {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+}
+
+/* ── Per-task table ── */
+.per-task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  margin-top: 8px;
+}
+.per-task-table th,
+.per-task-table td {
+  padding: 5px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-muted);
+  font-variant-numeric: tabular-nums;
+}
+.per-task-table th {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.per-task-table td:last-child,
+.per-task-table th:last-child {
+  text-align: right;
 }

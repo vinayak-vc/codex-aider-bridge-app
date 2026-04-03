@@ -1,5 +1,17 @@
 /* pages/knowledge.css — Knowledge page */
 
+/* ── Knowledge status row ── */
+.knowledge-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-md);
+}
+
 /* ── Tab layout ── */
 .knowledge-tabs {
   display: flex;
@@ -174,6 +186,16 @@
 }
 .file-table tr:last-child td { border-bottom: none; }
 .file-table tr:hover td { background: var(--color-surface-2); }
+.file-table tr.file-row { cursor: pointer; }
+.file-table tr.file-row:hover td { background: color-mix(in srgb, var(--color-accent) 6%, transparent); }
+
+.file-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
 
 .file-path {
   font-family: var(--font-mono);
@@ -189,6 +211,77 @@
   border: 1px solid var(--color-border-muted);
   color: var(--color-text-subtle);
   white-space: nowrap;
+}
+
+/* ── View toggle ── */
+.file-view-toggle {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.file-view-btn {
+  padding: 4px 6px !important;
+  min-width: 28px;
+}
+.file-view-btn.--active {
+  background: var(--color-surface-2);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ── Tree view ── */
+.file-tree {
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+.tree-dir-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text);
+  font-weight: 500;
+}
+.tree-dir-label:hover {
+  background: var(--color-surface-2);
+}
+.tree-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.tree-chevron.--collapsed {
+  transform: rotate(-90deg);
+}
+.tree-dir-name {
+  color: var(--color-text-muted);
+}
+.tree-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.tree-file:hover {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+.tree-name {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+.tree-role {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
 }
 
 .file-table-empty {

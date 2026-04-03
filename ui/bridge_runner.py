@@ -44,7 +44,6 @@ class BridgeRun:
         self.total_tasks: int = 0
         self.completed_tasks: int = 0
         self.token_data: Optional[dict] = None
-        self._relay_mode: bool = False
         self.repo_root: str = ""
         self.driver: str = ""
 
@@ -88,24 +87,24 @@ class BridgeRun:
             cmd.extend(["--idea-file", settings["idea_file"].strip()])
         if settings.get("aider_model", "").strip():
             cmd.extend(["--aider-model", settings["aider_model"].strip()])
+        # Universal pipeline: ALL runs use --manual-supervisor.
+        # The SupervisorProxyThread in app.py handles CLI dispatch.
+        cmd.append("--manual-supervisor")
+
         supervisor = settings.get("supervisor", "")
-        if settings.get("manual_supervisor") or supervisor == "ai_relay":
-            cmd.append("--manual-supervisor")
-            # For AI Relay, write the pre-imported tasks to a temporary plan file
-            if supervisor == "ai_relay" and not settings.get("plan_file", "").strip():
-                tasks = [
-                    task for task in state_store.load_relay_tasks()
-                    if str(task.get("status", "")).strip().lower() != "skipped"
-                ]
-                if tasks:
-                    plan_path = state_store.DATA_DIR / "relay_active_plan.json"
-                    plan_path.write_text(
-                        json.dumps({"tasks": tasks}, indent=2), encoding="utf-8"
-                    )
-                    if "--plan-file" not in cmd:
-                        cmd.extend(["--plan-file", str(plan_path)])
-        elif settings.get("supervisor_command", "").strip():
-            cmd.extend(["--supervisor-command", settings["supervisor_command"].strip()])
+        # For chatbot/ai_relay, write the pre-imported tasks to a temporary plan file
+        if supervisor in ("ai_relay", "chatbot") and not settings.get("plan_file", "").strip():
+            tasks = [
+                task for task in state_store.load_relay_tasks()
+                if str(task.get("status", "")).strip().lower() != "skipped"
+            ]
+            if tasks:
+                plan_path = state_store.DATA_DIR / "relay_active_plan.json"
+                plan_path.write_text(
+                    json.dumps({"tasks": tasks}, indent=2), encoding="utf-8"
+                )
+                if "--plan-file" not in cmd:
+                    cmd.extend(["--plan-file", str(plan_path)])
         if settings.get("manual_review_poll_seconds"):
             cmd.extend(["--manual-review-poll-seconds", str(int(settings["manual_review_poll_seconds"]))])
         if settings.get("validation_command", "").strip():
@@ -120,6 +119,8 @@ class BridgeRun:
             cmd.extend(["--plan-file", settings["plan_file"].strip()])
         if settings.get("dry_run"):
             cmd.append("--dry-run")
+        if not settings.get("auto_commit", True):
+            cmd.append("--no-auto-commit")
         if settings.get("task_timeout"):
             cmd.extend(["--task-timeout", str(int(settings["task_timeout"]))])
         for c in settings.get("clarifications", []):
@@ -143,7 +144,6 @@ class BridgeRun:
             self.total_tasks = 0
             self.completed_tasks = 0
             self.token_data = None
-            self._relay_mode = settings.get("supervisor") == "ai_relay"
             self.repo_root = str(settings.get("repo_root", "")).strip()
             self.driver = str(settings.get("supervisor", "")).strip()
             cmd = self.build_command(settings)
@@ -263,8 +263,8 @@ class BridgeRun:
                         "validation_message": event.get("validation_message", ""),
                         "mode": event.get("mode", "manual"),
                     }
-                    emit_type = "relay_review_needed" if self._relay_mode else "review_required"
-                    self._emit(emit_type, payload)
+                    # Universal pipeline: proxy thread handles dispatch
+                    self._emit("review_required", payload)
             except Exception:
                 pass
             return
@@ -356,10 +356,11 @@ class BridgeRun:
             return
 
         # ── Plan ready ────────────────────────────────────────────────────
-        m = re.search(r"Supervisor produced (\d+) task", msg)
+        m = re.search(r"(?:Supervisor produced|Loaded) (\d+) task", msg)
         if m:
             self.total_tasks = int(m.group(1))
             self._emit("plan_ready", {"task_count": self.total_tasks})
+            self._emit("planner_done", {})
             self._emit("progress", {"completed": 0, "total": self.total_tasks, "percent": 0})
             return
 
@@ -367,6 +368,7 @@ class BridgeRun:
         m = re.search(r"Bridge starting", msg)
         if m:
             self._emit("bridge_started", {})
+            self._emit("planner_active", {"task_count": "?"})
             return
 
         # ── Failure logged ────────────────────────────────────────────────

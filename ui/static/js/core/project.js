@@ -122,6 +122,7 @@ async function switchProject(path) {
     _currentPath = path;
     renderProjectName();
     renderDropdown();
+    refreshGitStatus();
     window.dispatchEvent(new CustomEvent('bridge:project-switched', {
       detail: { path: path },
     }));
@@ -181,6 +182,78 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ── Git branch chip ──────────────────────────────────────────────────────────
+
+async function refreshGitStatus() {
+  const branchName = $('sb-branch-name');
+  const gitDot = $('sb-git-dot');
+  const gitLabel = $('sb-git-label');
+
+  if (!_currentPath) {
+    if (branchName) branchName.textContent = '—';
+    if (gitLabel) gitLabel.textContent = '—';
+    return;
+  }
+
+  try {
+    const data = await fetch(`/api/git/status?repo_root=${encodeURIComponent(_currentPath)}`).then(r => r.json());
+    if (data.error) {
+      if (branchName) branchName.textContent = '—';
+      if (gitLabel) gitLabel.textContent = 'Not a repo';
+      return;
+    }
+
+    if (branchName) branchName.textContent = data.branch || 'detached';
+    if (gitDot) gitDot.dataset.clean = data.is_clean ? 'true' : 'false';
+    if (gitLabel) {
+      if (data.is_clean) {
+        gitLabel.textContent = 'Clean';
+      } else {
+        const parts = [];
+        if (data.staged) parts.push(`${data.staged} staged`);
+        if (data.unstaged) parts.push(`${data.unstaged} modified`);
+        if (data.untracked) parts.push(`${data.untracked} new`);
+        gitLabel.textContent = parts.join(', ') || 'Dirty';
+      }
+    }
+  } catch (_) {
+    if (branchName) branchName.textContent = '—';
+  }
+}
+
+// ── Status bar run status ────────────────────────────────────────────────────
+
+async function refreshRunStatus() {
+  try {
+    const data = await fetch('/api/run/status').then(r => r.json());
+    const statusEl = $('sb-run-status');
+    const tasksEl  = $('sb-tasks');
+    const runDot   = $('sb-run-dot');
+    const navChip  = $('nav-status-chip');
+    const navLabel = $('nav-status-label');
+
+    const status = data.status || 'idle';
+    const labels = {
+      idle: 'Idle', running: 'Running', success: 'Done',
+      failure: 'Failed', stopped: 'Stopped', paused: 'Paused',
+      waiting_review: 'Review',
+    };
+    const label = labels[status] || status;
+
+    if (statusEl) statusEl.innerHTML =
+      `<span class="status-dot" id="sb-run-dot" data-status="${status}"></span> ${label}`;
+    if (tasksEl) tasksEl.textContent =
+      `${data.completed_tasks || 0}/${data.total_tasks || 0} tasks`;
+
+    // Also update the nav sidebar chip
+    if (navChip) navChip.dataset.status = status;
+    if (navLabel) navLabel.textContent = label;
+  } catch (_) {}
+}
+
+// Refresh status bar periodically
+setInterval(refreshRunStatus, 3000);
+
 // ── Global model selector ─────────────────────────────────────────────────────
 
 async function loadModels() {
@@ -234,6 +307,8 @@ export async function initProjectBar() {
   await fetchCurrentPath();
   renderProjectName();
   loadModels();
+  refreshGitStatus();
+  refreshRunStatus();
 
   // Switcher button toggles dropdown
   $('project-switcher')?.addEventListener('click', e => {
@@ -260,5 +335,42 @@ export async function initProjectBar() {
   // Global model select — save on change
   $('global-model-select')?.addEventListener('change', e => {
     saveModel(e.target.value);
+  });
+
+  // Auto-commit toggle in status bar — sync with settings
+  const acToggle = $('sb-auto-commit');
+  if (acToggle) {
+    // Load initial state from settings
+    try {
+      const s = await fetch('/api/settings').then(r => r.json());
+      acToggle.checked = s.auto_commit !== false;
+    } catch (_) {}
+
+    acToggle.addEventListener('change', async () => {
+      try {
+        const s = await fetch('/api/settings').then(r => r.json());
+        s.auto_commit = acToggle.checked;
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(s),
+        });
+        // Also sync the Run page toggle if it exists
+        const runToggle = $('f-auto-commit');
+        if (runToggle) runToggle.checked = acToggle.checked;
+      } catch (_) {}
+    });
+  }
+
+  // VS Code button in status bar
+  $('sb-open-vscode')?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/vscode/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_root: _currentPath }),
+      }).then(r => r.json());
+      if (res.error) alert(res.error);
+    } catch (_) {}
   });
 }

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% set active_page = "git" %}
+
+{% block title %}Git{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/git.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Git</h1>
+    <p class="page-subtitle">Branch management, commit history, and working tree</p>
+  </div>
+  <button class="btn btn--secondary btn--sm" id="btn-git-refresh">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+    </svg>
+    Refresh
+  </button>
+</div>
+
+<!-- Branch + Status row -->
+<div class="git-top-row">
+  <div class="git-branch-card card">
+    <div class="detail-section-title">Branch</div>
+    <div class="git-branch-row">
+      <select class="input git-branch-select" id="git-branch-select"></select>
+      <button class="btn btn--secondary btn--sm" id="btn-git-new-branch">+ New Branch</button>
+    </div>
+  </div>
+  <div class="git-status-card card">
+    <div class="detail-section-title">Working Tree</div>
+    <div class="git-status-line" id="git-status-line">Loading...</div>
+  </div>
+</div>
+
+<!-- Two-column layout: commits | diff viewer -->
+<div class="git-main-layout">
+
+  <!-- Left: Commit history -->
+  <div class="card git-commits-card">
+    <div class="section-header" style="margin-bottom:12px">
+      <span class="section-title">Commit History</span>
+      <span class="badge badge--muted" id="git-commit-count">0</span>
+    </div>
+    <div class="git-commit-list" id="git-commit-list">
+      <div class="text-subtle" style="font-size:var(--font-size-xs);padding:12px 0;text-align:center">No commits loaded.</div>
+    </div>
+  </div>
+
+  <!-- Right: Diff viewer + changed files -->
+  <div class="git-detail-col">
+
+    <!-- Changed files -->
+    <div class="card" id="git-changed-wrap" style="display:none">
+      <div class="section-header" style="margin-bottom:10px">
+        <span class="section-title">Changed Files</span>
+        <span class="badge badge--warning" id="git-changed-count">0</span>
+      </div>
+      <div class="git-changed-list" id="git-changed-list"></div>
+    </div>
+
+    <!-- Diff viewer -->
+    <div class="card" id="git-diff-card" style="display:none">
+      <div class="section-header" style="margin-bottom:10px">
+        <span class="section-title" id="git-diff-title">Diff</span>
+        <button class="btn btn--secondary btn--sm" id="btn-git-close-diff" title="Close diff">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="12" height="12">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <pre class="git-diff-pre" id="git-diff-pre"></pre>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block page_script %}
+<script type="module" src="{{ url_for('static', filename='js/pages/git.js') }}"></script>
+{% endblock %}

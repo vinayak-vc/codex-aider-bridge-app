@@ -26,6 +26,8 @@ from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
 from models.task import SubTask
 from utils.manual_supervisor import ManualSupervisorError, ManualSupervisorSession
 from utils.token_tracker import TokenTracker, save_session_to_log
+from utils.report_generator import generate_run_report
+from utils.run_diagnostics import RunDiagnostics
 from utils.project_knowledge import (
     load_knowledge,
     save_knowledge,
@@ -370,6 +372,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "knowledge so the supervisor generates a better first plan. Use this flag "
             "to bypass it (e.g. when knowledge already exists or for faster CI runs)."
         ),
+    )
+    parser.add_argument(
+        "--no-auto-commit",
+        action="store_true",
+        help="Disable automatic git commits after each approved task. Changes stay unstaged.",
     )
     parser.add_argument(
         "--session-tokens",
@@ -730,6 +737,7 @@ def execute_task_with_review(
     validator: MechanicalValidator,
     logger: logging.Logger,
     aider_context: Optional[AiderContext] = None,
+    diagnostics: Optional[RunDiagnostics] = None,
 ) -> str:
     """Run one task through the Aider → diff → mechanical check loop.
 
@@ -840,7 +848,118 @@ def execute_task_with_review(
             logger.info("[dry-run] Task %s: %s", current_task.id, current_instruction)
             return
 
+        # ── Read/Investigate task: skip Aider, send file content to supervisor ─
+        if current_task.type in ("read", "investigate"):
+            if diagnostics:
+                diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
+            logger.info("Task %s: read-only — reading files without Aider", current_task.id)
+
+            file_contents = []
+            for fp in current_task.files:
+                abs_fp = config.repo_root / fp
+                if abs_fp.exists():
+                    try:
+                        text = abs_fp.read_text(encoding="utf-8", errors="replace")
+                        file_contents.append(f"=== {fp} ===\n{text}")
+                    except Exception as read_ex:
+                        file_contents.append(f"=== {fp} === (error reading: {read_ex})")
+                else:
+                    file_contents.append(f"=== {fp} === (file not found)")
+
+            # For investigate tasks: also scan related files (imports, references)
+            if current_task.type == "investigate":
+                import re as _re
+                _seen = set(current_task.files)
+                for fp in list(current_task.files):
+                    abs_fp = config.repo_root / fp
+                    if not abs_fp.exists():
+                        continue
+                    try:
+                        source = abs_fp.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        continue
+                    # Extract imports/requires
+                    related = set()
+                    for m in _re.finditer(r'(?:from|import)\s+([.\w]+)', source):
+                        mod = m.group(1).replace(".", "/") + ".py"
+                        if (config.repo_root / mod).exists():
+                            related.add(mod)
+                    for m in _re.finditer(r'require\(["\']([^"\']+)["\']\)', source):
+                        req = m.group(1)
+                        for ext in ("", ".js", ".ts", ".jsx", ".tsx"):
+                            if (config.repo_root / (req + ext)).exists():
+                                related.add(req + ext)
+                                break
+                    # Add related files (up to 5 extra)
+                    for rel in sorted(related)[:5]:
+                        if rel not in _seen:
+                            _seen.add(rel)
+                            rel_fp = config.repo_root / rel
+                            try:
+                                text = rel_fp.read_text(encoding="utf-8", errors="replace")
+                                file_contents.append(f"=== {rel} (related) ===\n{text[:3000]}")
+                            except Exception:
+                                pass
+                logger.info("Task %s: investigate — read %d files (including related)", current_task.id, len(file_contents))
+
+            combined_content = "\n\n".join(file_contents)
+
+            # Build analysis prompt for the supervisor
+            analysis_prompt = (
+                "You are analyzing project files. Read the content below and answer the question.\n\n"
+                f"QUESTION: {current_instruction}\n\n"
+                f"FILE CONTENT:\n{combined_content[:8000]}\n\n"
+                "Provide a clear, structured answer. No code changes needed."
+            )
+
+            analysis_result = ""
+            if manual_supervisor is not None:
+                # In manual-supervisor mode, write the analysis as a review request
+                # so the proxy thread or user can see it
+                from models.task import ExecutionResult, TaskReport
+                fake_result = ExecutionResult(
+                    task_id=current_task.id, succeeded=True, exit_code=0,
+                    stdout=combined_content[:2000], stderr="",
+                    command=[], attempt_number=attempt + 1,
+                )
+                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:4000])
+                request_path = manual_supervisor.submit_review_request(
+                    task_report, validation_message="Read-only analysis task — review the file content.",
+                    unexpected_files=[],
+                )
+                _emit_structured({
+                    "type": "review_required",
+                    "task_id": current_task.id,
+                    "request_file": str(request_path),
+                    "validation_message": "Read-only analysis task",
+                    "mode": "manual",
+                })
+                review = manual_supervisor.wait_for_decision(current_task.id)
+                if review.verdict == "PASS":
+                    logger.info("Task %s: read-only analysis approved", current_task.id)
+                    if diagnostics:
+                        diagnostics.record_review(current_task.id, attempt + 1, "pass")
+                    _emit_structured({"type": "task_complete", "task_id": current_task.id, "diff": ""})
+                    return ""
+                logger.info("Task %s: read-only task reviewed: %s", current_task.id, review.verdict)
+
+            elif supervisor is not None:
+                # CLI supervisor mode — ask supervisor to analyze directly
+                try:
+                    response = supervisor._run(analysis_prompt)
+                    analysis_result = response.strip()
+                    logger.info("Task %s: supervisor analysis:\n%s", current_task.id, analysis_result[:500])
+                except Exception as sup_ex:
+                    logger.warning("Task %s: supervisor analysis failed: %s", current_task.id, sup_ex)
+
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "pass")
+            _emit_structured({"type": "task_complete", "task_id": current_task.id, "diff": analysis_result[:1500]})
+            return analysis_result
+
         # ── Step 1: Execute via Aider ────────────────────────────────────────
+        if diagnostics:
+            diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
         execution_result = runner.run(current_task, selected_files.all_paths, aider_context)
 
         if execution_result.exit_code == -1:
@@ -878,9 +997,38 @@ def execute_task_with_review(
                 time.sleep(wait_seconds)
                 continue
 
+        # Record Aider execution result for diagnostics
+        if diagnostics:
+            diagnostics.record_aider_result(
+                task_id=current_task.id,
+                attempt=attempt + 1,
+                exit_code=execution_result.exit_code,
+                succeeded=execution_result.succeeded,
+                stdout=execution_result.stdout,
+                stderr=execution_result.stderr,
+                duration_seconds=execution_result.duration_seconds,
+            )
+
         # ── Step 2: Collect diff ─────────────────────────────────────────────
         diff = diff_collector.collect()
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
+
+        # Track Aider token usage (estimated from task instruction + file sizes + diff)
+        _input_file_chars = 0
+        for fp in current_task.files:
+            _fp = config.repo_root / fp
+            if _fp.exists():
+                try:
+                    _input_file_chars += _fp.stat().st_size
+                except OSError:
+                    pass
+        token_tracker.record_aider_task(
+            task_id=current_task.id,
+            instruction=current_instruction,
+            input_file_chars=_input_file_chars,
+            diff_chars=len(diff),
+        )
+
         repo_after = _snapshot_repo_files(config.repo_root)
         unexpected_files = _find_unexpected_files(
             repo_before, repo_after, current_task,
@@ -907,6 +1055,13 @@ def execute_task_with_review(
                     must_not_exist=current_task.must_not_exist + unexpected_files,
                 ),
                 selected_files.all_paths,
+            )
+
+        # Record validation result for diagnostics
+        if diagnostics:
+            diagnostics.record_validation(
+                current_task.id, attempt + 1,
+                validation_result.succeeded, validation_result.message,
             )
 
         if not validation_result.succeeded:
@@ -1041,6 +1196,8 @@ def execute_task_with_review(
             review = manual_supervisor.wait_for_decision(current_task.id)
             if review.verdict == "PASS":
                 logger.info("Task %s: manual supervisor approved", current_task.id)
+                if diagnostics:
+                    diagnostics.record_review(current_task.id, attempt + 1, "pass")
                 manual_supervisor.record_completed_review(
                     current_task.id,
                     current_task.instruction,
@@ -1068,6 +1225,8 @@ def execute_task_with_review(
                 time.sleep(wait_seconds)
                 continue
 
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
             logger.warning(
                 "Task %s: manual supervisor requested rework (attempt %s): %s",
                 current_task.id,
@@ -1085,6 +1244,8 @@ def execute_task_with_review(
 
         if config.auto_approve or supervisor is None:
             # Auto-approve mode: mechanical pass = done. No external AI call.
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "pass")
             logger.info("Task %s: mechanical checks passed — auto-approved", current_task.id)
             _emit_structured({
                 "type": "task_complete",
@@ -1103,6 +1264,8 @@ def execute_task_with_review(
 
         if review.verdict == "PASS":
             logger.info("Task %s: supervisor approved", current_task.id)
+            if diagnostics:
+                diagnostics.record_review(current_task.id, attempt + 1, "pass")
             _emit_structured({
                 "type": "task_complete",
                 "task_id": current_task.id,
@@ -1110,6 +1273,8 @@ def execute_task_with_review(
             })
             return diff
 
+        if diagnostics:
+            diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
         logger.warning(
             "Task %s: supervisor requested rework (attempt %s): %s",
             current_task.id, attempt + 1, review.new_instruction,
@@ -1195,6 +1360,7 @@ def record_rollback_point(repo_root: Path, logger: logging.Logger) -> Optional[s
             text=True,
             check=False,
             timeout=10,
+            creationflags=_WIN_NO_WINDOW,
         )
         if result.returncode == 0:
             sha = result.stdout.strip()
@@ -1305,6 +1471,9 @@ def estimate_session_tokens(
     return total
 
 
+_WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
 def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git"] + args,
@@ -1315,6 +1484,7 @@ def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedPr
         errors="replace",
         check=False,
         timeout=30,
+        creationflags=_WIN_NO_WINDOW,
     )
 
 
@@ -1710,6 +1880,7 @@ def main() -> int:
         workflow_profile=str(args.workflow_profile),
         skip_onboarding_scan=bool(args.skip_onboarding_scan),
         relay_session_id=str(args.relay_session_id).strip() if args.relay_session_id else None,
+        auto_commit=not bool(args.no_auto_commit),
     )
 
     run_preflight_checks(config, logger)
@@ -1717,6 +1888,12 @@ def main() -> int:
     run_start = time.monotonic()
 
     token_tracker = TokenTracker()
+    diagnostics = RunDiagnostics(
+        goal=config.goal,
+        aider_model=config.aider_model or "",
+        supervisor=config.supervisor_command or "manual",
+        task_timeout=config.task_timeout_seconds,
+    )
     repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
@@ -1911,9 +2088,14 @@ def main() -> int:
                 task, config, supervisor, manual_supervisor, selector,
                 runner, diff_collector, validator, logger,
                 aider_context=aider_context,
+                diagnostics=diagnostics,
             )
             failed_task_id = None
-            commit_sha = _auto_commit_task_changes(repo_root, task, logger)
+            commit_sha = None
+            if config.auto_commit:
+                commit_sha = _auto_commit_task_changes(repo_root, task, logger)
+            else:
+                logger.info("Task %s: auto-commit disabled — changes left in working tree", task.id)
             if commit_sha:
                 task_commit_shas[task.id] = commit_sha
             completed_ids.add(task.id)
@@ -2020,6 +2202,23 @@ def main() -> int:
             )
         except Exception as _tok_ex:
             logger.warning("Could not save token log: %s", _tok_ex)
+
+        # Generate Markdown run report
+        try:
+            generate_run_report(token_report, repo_root)
+            logger.info("Run report written to %s", _progress_dir / "RUN_REPORT.md")
+        except Exception as _rep_ex:
+            logger.warning("Could not generate run report: %s", _rep_ex)
+
+        # Write run diagnostics
+        try:
+            diag_report = diagnostics.finalize(
+                "success", list(completed_ids), None, total_tasks=len(tasks),
+            )
+            diagnostics.write(_progress_dir / "RUN_DIAGNOSTICS.json", diag_report)
+            logger.info("Run diagnostics written to %s", _progress_dir / "RUN_DIAGNOSTICS.json")
+        except Exception as _diag_ex:
+            logger.warning("Could not write run diagnostics: %s", _diag_ex)
 
         _emit_structured({"type": "token_report", "report": token_report})
         _emit_structured({"type": "knowledge_updated", "files": len(knowledge["files"])})
@@ -2134,6 +2333,21 @@ def main() -> int:
                 save_session_to_log(failure_token_report, repo_root / "bridge_progress" / "token_log.json")
             except Exception as token_ex:
                 logger.warning("Could not save token log after failure: %s", token_ex)
+
+            try:
+                generate_run_report(failure_token_report, repo_root)
+            except Exception:
+                pass
+
+            # Write run diagnostics for failure analysis
+            try:
+                diag_report = diagnostics.finalize(
+                    "failure", list(completed_ids), failed_task_id,
+                    error_message=str(ex), total_tasks=len(tasks) if tasks else 0,
+                )
+                diagnostics.write(repo_root / "bridge_progress" / "RUN_DIAGNOSTICS.json", diag_report)
+            except Exception:
+                pass
 
         _safe_stdout_write(json.dumps(failure_summary, ensure_ascii=False), logger)
         return 1

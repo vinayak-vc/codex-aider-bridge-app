@@ -5,6 +5,54 @@ import { apiPost }   from '/static/js/core/api.js';
 import { toast }     from '/static/js/core/toast.js';
 import { play }      from '/static/js/core/sounds.js';
 
+// ── Tab switching ────────────────────────────────────────────────────────────
+
+let _activeTab = 'settings';
+let _logBadgeCount = 0;
+
+function switchRunTab(tabName) {
+  _activeTab = tabName;
+  document.querySelectorAll('#run-tabs .tab').forEach(btn => {
+    btn.classList.toggle('--active', btn.dataset.tab === tabName);
+  });
+  const settingsPanel = $('run-tab-settings');
+  const logPanel      = $('run-tab-log');
+  if (settingsPanel) {
+    settingsPanel.classList.toggle('--active', tabName === 'settings');
+    settingsPanel.style.display = tabName === 'settings' ? '' : 'none';
+  }
+  if (logPanel) {
+    logPanel.classList.toggle('--active', tabName === 'log');
+    logPanel.style.display = tabName === 'log' ? '' : 'none';
+  }
+  // Clear log badge when switching to log tab
+  if (tabName === 'log') {
+    _logBadgeCount = 0;
+    _updateLogBadge();
+    // Scroll to bottom when switching to log
+    const terminal = $('log-terminal');
+    if (terminal) terminal.scrollTop = terminal.scrollHeight;
+  }
+}
+
+function _updateLogBadge() {
+  const badge = $('run-tab-log-badge');
+  if (!badge) return;
+  if (_logBadgeCount > 0 && _activeTab !== 'log') {
+    badge.textContent = _logBadgeCount > 99 ? '99+' : String(_logBadgeCount);
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function _incrementLogBadge() {
+  if (_activeTab !== 'log') {
+    _logBadgeCount++;
+    _updateLogBadge();
+  }
+}
+
 // ── Supervisor presets ────────────────────────────────────────────────────────
 
 const SUPERVISOR_CMDS = {
@@ -109,6 +157,26 @@ function makeBanner(level, html) {
     <span style="color:${colorMap[level]};flex-shrink:0;margin-top:1px">${icons[level]}</span>
     <span>${html}</span>
   </div>`;
+}
+
+// ── Role indicator strip ─────────────────────────────────────────────────────
+
+function _setRoleState(roleId, state, label) {
+  const badge = $(roleId);
+  const labelEl = $(`${roleId}-label`);
+  if (badge) badge.dataset.state = state;  // 'idle' | 'active' | 'done'
+  if (labelEl && label) labelEl.textContent = label;
+}
+
+function showRoleStrip(visible) {
+  const strip = $('role-strip');
+  if (strip) strip.style.display = visible ? '' : 'none';
+}
+
+function resetRoleStrip() {
+  _setRoleState('role-planner',  'idle', 'Planner');
+  _setRoleState('role-reviewer', 'idle', 'Reviewer');
+  showRoleStrip(false);
 }
 
 function updateCompatWarnings() {
@@ -611,11 +679,11 @@ function collectSettings() {
     repo_root:          $('f-repo-root').value.trim(),
     aider_model:        $('f-aider-model').value.trim(),
     supervisor:         sup,
-    manual_supervisor:  sup === 'manual',
-    supervisor_command: sup === 'manual'   ? ''
-                      : sup === 'custom'   ? $('f-supervisor-command').value.trim()
+    manual_supervisor:  true,  // Universal pipeline: all runs use --manual-supervisor
+    supervisor_command: sup === 'custom' ? $('f-supervisor-command').value.trim()
                       : (SUPERVISOR_CMDS[sup] || ''),
     dry_run:            $('f-dry-run').checked,
+    auto_commit:        ($('sb-auto-commit')?.checked !== false),
     validation_command: $('f-validation-cmd').value.trim(),
     max_task_retries:   parseInt($('f-max-retries').value, 10)      || 2,
     max_plan_attempts:  parseInt($('f-max-plan-attempts').value, 10) || 3,
@@ -647,10 +715,10 @@ function updateCommandPreview() {
     parts.push({ cls: 'cmd-flag', text: `--idea-file ${s.idea_file}` });
   if (s.aider_model)
     parts.push({ cls: 'cmd-flag', text: `--aider-model ${s.aider_model}` });
-  if (s.manual_supervisor)
-    parts.push({ cls: 'cmd-flag', text: '--manual-supervisor' });
-  else if (s.supervisor_command)
-    parts.push({ cls: 'cmd-flag', text: `--supervisor-command "${s.supervisor_command}"` });
+  // Universal pipeline: all runs use --manual-supervisor
+  parts.push({ cls: 'cmd-flag', text: '--manual-supervisor' });
+  if (!s.auto_commit)
+    parts.push({ cls: 'cmd-flag', text: '--no-auto-commit' });
   if (s.validation_command)
     parts.push({ cls: 'cmd-flag', text: `--validation-command "${s.validation_command}"` });
   if (s.max_plan_attempts && s.max_plan_attempts !== 3)
@@ -714,6 +782,7 @@ function appendLog(rawLine) {
   terminal.appendChild(span);
 
   if (_autoScroll) terminal.scrollTop = terminal.scrollHeight;
+  _incrementLogBadge();
 }
 
 function clearLog() {
@@ -760,8 +829,11 @@ function setRunning(running) {
   const hint  = $('run-shortcut-hint');
 
   if (form)  form.querySelectorAll('input, textarea, button.model-preset, button.num-btn, .accordion-trigger').forEach(el => {
-    // Keep chatbot wizard interactive elements active during run (review paste, decision textarea, etc.)
-    if (!el.closest('#chatbot-relay-panel')) el.disabled = running;
+    // Keep chatbot wizard interactive elements active during run
+    if (el.closest('#chatbot-relay-panel')) return;
+    // Keep supervisor radios interactive mid-run (universal pipeline: mid-run switch)
+    if (el.name === 'supervisor') return;
+    el.disabled = running;
   });
   if (btnL)  { btnL.disabled = running; btnL.style.display = running ? 'none' : ''; }
   if (btnS)  btnS.style.display = running ? '' : 'none';
@@ -775,10 +847,11 @@ function connectSSE() {
   _sse = new SSEClient('/api/run/stream');
   _sse
     .on('log',        d => appendLog(d.line || ''))
-    .on('start',      () => showBanner('running', 'Run in progress…'))
-    .on('plan_ready', d => {
-      const n = d.task_count || d.total_tasks || '?';
-      appendLog(`[bridge] Plan ready — ${n} tasks`);
+    .on('start',      () => {
+      showBanner('running', 'Run in progress…');
+      _setRoleState('role-planner', 'active', 'Planner — generating...');
+      showRoleStrip(true);
+      switchRunTab('log');
     })
     .on('complete', d => {
       const ok  = d.status === 'success';
@@ -786,17 +859,60 @@ function connectSSE() {
       showBanner(ok ? 'success' : 'failure',
         ok ? `Run completed successfully${sec}.` : `Run finished with failures${sec}.`);
       setRunning(false);
+      _setRoleState('role-reviewer', 'done', 'Reviewer');
       _sse.disconnect();
     })
     .on('error', d => {
       showBanner('failure', `Error: ${d.message || 'unknown error'}`);
       setRunning(false);
       _sse.disconnect();
+      // Don't auto-switch — user may want to read the log
     })
     .on('stopped', () => {
       showBanner('stopped', 'Run stopped.');
       setRunning(false);
       _sse.disconnect();
+    })
+    .on('supervisor_review_requested', d => {
+      const tid = d.task_id || '?';
+      if (d.manual) {
+        appendLog(`[proxy] Task ${tid}: manual review required`);
+      } else {
+        appendLog(`[proxy] Task ${tid}: chatbot review required — copy the prompt above`);
+      }
+      // Reviewer role is active
+      _setRoleState('role-reviewer', 'active', `Reviewer — task ${tid}`);
+    })
+    .on('supervisor_review_submitted', d => {
+      const tid = d.task_id || '?';
+      const dec = d.decision?.decision || 'pass';
+      const label = dec === 'pass' ? 'PASSED' : `REWORK: ${d.decision?.instruction || ''}`;
+      appendLog(`[proxy] Task ${tid}: supervisor auto-reviewed — ${label}`);
+    })
+    .on('plan_ready', d => {
+      const n = d.task_count || d.total_tasks || '?';
+      appendLog(`[bridge] Plan ready — ${n} tasks`);
+      // Planner role done, reviewer role starts
+      _setRoleState('role-planner', 'done', 'Planner');
+      _setRoleState('role-reviewer', 'active', 'Reviewer');
+      showRoleStrip(true);
+    })
+    .on('planner_active', d => {
+      _setRoleState('role-planner', 'active', `Planner — ${d.task_count || '?'} tasks`);
+      showRoleStrip(true);
+    })
+    .on('planner_done', () => {
+      _setRoleState('role-planner', 'done', 'Planner');
+    })
+    .on('reviewer_active', d => {
+      const idx = d.task_index || '?';
+      const tot = d.task_total || '?';
+      const title = d.task_title ? ` — ${d.task_title}` : '';
+      _setRoleState('role-reviewer', 'active', `Reviewer — task ${idx}/${tot}${title}`);
+    })
+    .on('reviewer_done', d => {
+      const dec = d.decision || '';
+      _setRoleState('role-reviewer', 'done', 'Reviewer');
     })
     .connect();
 }
@@ -813,6 +929,7 @@ async function launchRun() {
 
   clearLog();
   hideBanner();
+  resetRoleStrip();
   setRunning(true);
   connectSSE();
 
@@ -839,8 +956,10 @@ async function launchNLRun() {
 
   clearLog();
   hideBanner();
+  resetRoleStrip();
   setRunning(true);
   connectSSE();
+  // Tab switches to Log via SSE 'start' event — no manual switch here
 
   try {
     play('launch');
@@ -1076,13 +1195,13 @@ async function _cbLaunchRun() {
 
   clearLog();
   hideBanner();
+  resetRoleStrip();
   setRunning(true);
 
   if (_sse) _sse.disconnect();
   _sse = new SSEClient('/api/run/stream');
   _sse
     .on('log',                 d => appendLog(d.line || ''))
-    .on('relay_review_needed', d => _cbOnReviewNeeded(d))
     .on('review_required',     d => _cbOnReviewNeeded(d))
     .on('progress',  d => _cbUpdateProgress(d.completed, d.total))
     .on('plan_ready', d => { _cbTotalTasks = d.task_count || 0; _cbUpdateProgress(0, _cbTotalTasks); })
@@ -1444,15 +1563,27 @@ function bindControls() {
     });
   });
 
-  // Supervisor radio → show/hide custom input, chatbot wizard, update preview
+  // Supervisor radio → show/hide custom input, chatbot wizard, update preview, mid-run switch
   document.querySelectorAll('input[name="supervisor"]').forEach(r => {
-    r.addEventListener('change', () => {
+    r.addEventListener('change', async () => {
       const isCustom = r.value === 'custom';
       const wrap = $('supervisor-custom-wrap');
       if (wrap) wrap.style.display = isCustom ? '' : 'none';
       updateCommandPreview();
       updateCompatWarnings();
       _cbShowOrHide();
+
+      // Mid-run supervisor switch via universal pipeline proxy
+      if (_isRunning) {
+        try {
+          const body = { supervisor: r.value };
+          if (isCustom) body.supervisor_command = $('f-supervisor-command')?.value?.trim() || '';
+          await apiPost('/api/run/supervisor', body);
+          toast(`Supervisor switched to ${r.value}. Takes effect on next review.`, 'info');
+        } catch (err) {
+          toast(err.message || 'Failed to switch supervisor.', 'error');
+        }
+      }
     });
   });
   $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
@@ -1502,6 +1633,11 @@ function bindControls() {
     body?.classList.toggle('--hidden', expanded);
   });
 
+  // Tab switching
+  document.querySelectorAll('#run-tabs .tab').forEach(btn => {
+    btn.addEventListener('click', () => switchRunTab(btn.dataset.tab));
+  });
+
   // Chatbot wizard controls
   bindChatbotControls();
 }
@@ -1519,6 +1655,9 @@ async function hydrateExistingRun() {
     // Always replay logged lines so the terminal is populated
     const log = await fetch('/api/run/log').then(r => r.json());
     if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
+
+    // Switch to log tab since there's run data to show
+    switchRunTab('log');
 
     if (alive) {
       setRunning(true);

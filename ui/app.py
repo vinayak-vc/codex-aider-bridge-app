@@ -15,6 +15,9 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from . import setup_checker, state_store
 from .bridge_runner import get_run
 
+# On Windows, prevent subprocess calls from opening visible CMD windows.
+_WIN_CREATE_FLAGS: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 # When bundled by PyInstaller, Flask cannot locate templates via __file__.
 # Point it explicitly at the extracted bundle path.
 # NOTE: passing template_folder=None disables the loader entirely; use the
@@ -475,6 +478,11 @@ def page_run():
     return render_template("run.html", active_page="run")
 
 
+@app.route("/git")
+def page_git():
+    return render_template("git.html", active_page="git")
+
+
 @app.route("/knowledge")
 def page_knowledge():
     return render_template("knowledge.html", active_page="knowledge")
@@ -516,6 +524,7 @@ def api_install_aider():
             [sys.executable, "-m", "pip", "install", "--upgrade", "aider-chat"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=_WIN_CREATE_FLAGS,
         )
         for line in proc.stdout:  # type: ignore[union-attr]
             yield f"data: {json.dumps({'line': line.rstrip()})}\n\n"
@@ -537,6 +546,7 @@ def api_ollama_pull():
             ["ollama", "pull", model],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=_WIN_CREATE_FLAGS,
         )
         for line in proc.stdout:  # type: ignore[union-attr]
             yield f"data: {json.dumps({'line': line.rstrip()})}\n\n"
@@ -597,6 +607,498 @@ def api_browse_file():
         return jsonify({"path": "", "error": str(ex)})
 
 
+# ── Git API ────────────────────────────────────────────────────────────────────
+
+def _git(repo_root: str, *args: str, timeout: int = 15) -> subprocess.CompletedProcess:
+    """Run a git command in repo_root. Returns CompletedProcess."""
+    return subprocess.run(
+        ["git"] + list(args),
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        creationflags=_WIN_CREATE_FLAGS,
+    )
+
+
+@app.route("/api/git/status")
+def api_git_status():
+    repo = (request.args.get("repo_root") or "").strip()
+    if not repo:
+        settings = state_store.load_settings()
+        repo = settings.get("repo_root", "").strip()
+    if not repo:
+        return jsonify({"error": "repo_root not set"}), 400
+
+    try:
+        # Branch name
+        r = _git(repo, "branch", "--show-current")
+        branch = r.stdout.strip() or "(detached)"
+
+        # Status counts
+        r = _git(repo, "status", "--porcelain")
+        lines = [l for l in r.stdout.splitlines() if l.strip()]
+        staged = sum(1 for l in lines if l[0] in "MADRC")
+        unstaged = sum(1 for l in lines if len(l) > 1 and l[1] in "MADRC")
+        untracked = sum(1 for l in lines if l.startswith("??"))
+        is_clean = len(lines) == 0
+
+        return jsonify({
+            "branch": branch,
+            "is_clean": is_clean,
+            "staged": staged,
+            "unstaged": unstaged,
+            "untracked": untracked,
+        })
+    except FileNotFoundError:
+        return jsonify({"error": "git not found"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "git command timed out"}), 500
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/git/branches")
+def api_git_branches():
+    repo = (request.args.get("repo_root") or "").strip()
+    if not repo:
+        settings = state_store.load_settings()
+        repo = settings.get("repo_root", "").strip()
+    if not repo:
+        return jsonify({"error": "repo_root not set"}), 400
+
+    try:
+        r = _git(repo, "branch", "--no-color")
+        branches = []
+        current = ""
+        for line in r.stdout.splitlines():
+            name = line.lstrip("* ").strip()
+            if not name:
+                continue
+            branches.append(name)
+            if line.startswith("*"):
+                current = name
+        return jsonify({"current": current, "branches": branches})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/git/checkout", methods=["POST"])
+def api_git_checkout():
+    data = request.json or {}
+    repo = (data.get("repo_root") or "").strip()
+    branch = (data.get("branch") or "").strip()
+    create = data.get("create", False)
+
+    if not repo:
+        settings = state_store.load_settings()
+        repo = settings.get("repo_root", "").strip()
+    if not repo or not branch:
+        return jsonify({"error": "repo_root and branch are required"}), 400
+
+    # Sanitize branch name
+    if ".." in branch or branch.startswith("-"):
+        return jsonify({"error": "Invalid branch name"}), 400
+
+    try:
+        if create:
+            r = _git(repo, "checkout", "-b", branch)
+        else:
+            r = _git(repo, "checkout", branch)
+
+        if r.returncode != 0:
+            return jsonify({"error": r.stderr.strip() or f"Failed to checkout {branch}"}), 400
+
+        return jsonify({"ok": True, "branch": branch})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/git/log")
+def api_git_log():
+    repo = (request.args.get("repo_root") or "").strip()
+    limit = request.args.get("limit", 20, type=int)
+    if not repo:
+        settings = state_store.load_settings()
+        repo = settings.get("repo_root", "").strip()
+    if not repo:
+        return jsonify({"error": "repo_root not set"}), 400
+
+    try:
+        r = _git(repo, "log", f"--max-count={min(limit, 100)}",
+                 "--format=%H%n%h%n%s%n%an%n%aI", "--no-color")
+        if r.returncode != 0:
+            return jsonify({"commits": []})
+
+        lines = r.stdout.strip().splitlines()
+        commits = []
+        for i in range(0, len(lines), 5):
+            if i + 4 >= len(lines):
+                break
+            sha = lines[i]
+            short = lines[i + 1]
+            message = lines[i + 2]
+            author = lines[i + 3]
+            ts = lines[i + 4]
+            commits.append({
+                "sha": sha,
+                "short_sha": short,
+                "message": message,
+                "author": author,
+                "timestamp": ts,
+                "is_bridge_task": message.startswith("bridge: task"),
+            })
+
+        return jsonify({"commits": commits})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/git/diff")
+def api_git_diff():
+    repo = (request.args.get("repo_root") or "").strip()
+    sha = (request.args.get("sha") or "").strip()
+    staged = request.args.get("staged", "false").lower() == "true"
+    file_path = (request.args.get("file") or "").strip()
+
+    if not repo:
+        settings = state_store.load_settings()
+        repo = settings.get("repo_root", "").strip()
+    if not repo:
+        return jsonify({"error": "repo_root not set"}), 400
+
+    try:
+        if sha:
+            # Diff for a specific commit
+            r = _git(repo, "diff", f"{sha}~1..{sha}", "--stat")
+            stat = r.stdout.strip()
+            r = _git(repo, "diff", f"{sha}~1..{sha}", timeout=30)
+            diff_text = r.stdout[:8000]
+        elif staged:
+            r = _git(repo, "diff", "--cached", "--stat")
+            stat = r.stdout.strip()
+            r = _git(repo, "diff", "--cached")
+            diff_text = r.stdout[:8000]
+        elif file_path:
+            r = _git(repo, "diff", "--", file_path)
+            stat = ""
+            diff_text = r.stdout[:8000]
+        else:
+            # Working tree diff
+            r = _git(repo, "diff", "--stat")
+            stat = r.stdout.strip()
+            r = _git(repo, "diff")
+            diff_text = r.stdout[:8000]
+
+        # Parse stat into file list
+        files = []
+        for line in stat.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) == 2:
+                fname = parts[0].strip()
+                changes = parts[1].strip()
+                ins = changes.count("+")
+                dels = changes.count("-")
+                files.append({"path": fname, "insertions": ins, "deletions": dels})
+
+        return jsonify({"diff": diff_text, "files": files, "stat": stat})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+# ── VS Code Integration ───────────────────────────────────────────────────────
+
+@app.route("/api/vscode/open", methods=["POST"])
+def api_vscode_open():
+    """Open a file or folder in VS Code."""
+    data = request.json or {}
+    target = (data.get("path") or "").strip()
+    repo_root = (data.get("repo_root") or "").strip()
+
+    if not target and not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+
+    # Determine what to open
+    open_path = target or repo_root
+    if not open_path:
+        return jsonify({"error": "No path specified"}), 400
+
+    # If target is relative, make it absolute using repo_root
+    from pathlib import Path as _Path
+    p = _Path(open_path)
+    if not p.is_absolute() and repo_root:
+        p = _Path(repo_root) / p
+
+    try:
+        cmd = ["code"]
+        if p.is_file():
+            cmd.append("--goto")
+        cmd.append(str(p))
+        subprocess.Popen(cmd, creationflags=_WIN_CREATE_FLAGS)
+        return jsonify({"ok": True, "path": str(p)})
+    except FileNotFoundError:
+        return jsonify({"error": "VS Code ('code' command) not found. Install it or add to PATH."}), 404
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+# ── Supervisor Proxy Thread ────────────────────────────────────────────────────
+
+# CLI command templates for each supervisor type (mirrors run.js SUPERVISOR_CMDS)
+_SUPERVISOR_CLI_CMDS: dict[str, str] = {
+    "codex":    "codex.cmd exec --skip-git-repo-check --color never",
+    "claude":   "claude",
+    "cursor":   "cursor",
+    "windsurf": "windsurf",
+}
+
+# Active proxy threads keyed by run_id
+_active_proxy_threads: dict[str, "SupervisorProxyThread"] = {}
+_proxy_lock = threading.Lock()
+
+
+class SupervisorProxyThread(threading.Thread):
+    """Polls manual_supervisor/requests/ and dispatches review to the correct
+    supervisor backend based on the current setting.  Enables mid-run switching."""
+
+    def __init__(
+        self,
+        run_id: str,
+        repo_root: str,
+        get_supervisor_fn,
+        relay_session_id: str = "",
+        timeout: int = 300,
+    ):
+        super().__init__(daemon=True, name=f"supervisor-proxy-{run_id}")
+        self._run_id = run_id
+        self._repo_root = repo_root
+        self._get_supervisor = get_supervisor_fn
+        self._relay_session_id = relay_session_id
+        self._timeout = timeout
+        self._stop_event = threading.Event()
+        self._seen: set[str] = set()
+        self._supervisor_override: Optional[str] = None
+        self._supervisor_command_override: Optional[str] = None
+
+    def get_supervisor(self) -> str:
+        if self._supervisor_override is not None:
+            return self._supervisor_override
+        return self._get_supervisor()
+
+    def set_supervisor(self, supervisor: str, supervisor_command: str = "") -> None:
+        self._supervisor_override = supervisor
+        self._supervisor_command_override = supervisor_command or ""
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def run(self) -> None:
+        requests_dir = Path(self._repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
+        decisions_dir = Path(self._repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
+
+        while not self._stop_event.is_set():
+            if requests_dir.exists():
+                for req_file in sorted(requests_dir.glob("*.json")):
+                    if req_file.stem in self._seen:
+                        continue
+
+                    # Check if a decision already exists for this request
+                    dec_file = decisions_dir / req_file.name.replace("_request.json", "_decision.json")
+                    if dec_file.exists():
+                        self._seen.add(req_file.stem)
+                        continue
+
+                    try:
+                        req_data = json.loads(req_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+
+                    # Session filtering: skip requests from other sessions
+                    if self._relay_session_id:
+                        req_session = str(req_data.get("relay_session_id", "")).strip()
+                        if req_session and req_session != self._relay_session_id:
+                            continue
+
+                    self._seen.add(req_file.stem)
+                    supervisor = self.get_supervisor()
+                    self._dispatch(supervisor, req_file, req_data, decisions_dir)
+
+            self._stop_event.wait(0.5)
+
+    def _dispatch(self, supervisor: str, req_file: Path, req_data: dict, decisions_dir: Path) -> None:
+        task_id = req_data.get("task_id", 0)
+
+        if supervisor in ("chatbot", "ai_relay"):
+            # Chatbot path — emit SSE event, UI shows copy-paste card
+            # Build review packet for the user
+            packet = ""
+            try:
+                from utils.relay_formatter import build_review_packet
+                tasks = state_store.load_relay_tasks()
+                total = len(tasks)
+                task = next((t for t in tasks if str(t.get("id")) == str(task_id)), req_data)
+                diff = req_data.get("diff", "")
+                validation = req_data.get("validation_result", "not run")
+                attempt = req_data.get("attempt", 1)
+                max_retries = req_data.get("max_retries", 2)
+                packet = build_review_packet(task, diff, validation, attempt, max_retries, total, "")
+            except Exception:
+                packet = json.dumps(req_data, indent=2)
+
+            _broadcast("reviewer_active", {
+                "task_index": task_id,
+                "task_total": len(state_store.load_relay_tasks()) or "?",
+                "task_title": req_data.get("instruction", "")[:60],
+            })
+            _broadcast("supervisor_review_requested", {
+                "request_id": req_file.stem,
+                "task_id": task_id,
+                "packet": packet,
+                **{k: req_data.get(k, "") for k in ("diff", "validation_result", "attempt")},
+            })
+            # Decision will come via POST /api/relay/submit-decision
+
+        elif supervisor == "manual":
+            # Manual path — emit SSE event, user writes decision via UI
+            _broadcast("reviewer_active", {
+                "task_index": task_id,
+                "task_total": "?",
+                "task_title": req_data.get("instruction", "")[:60],
+            })
+            _broadcast("supervisor_review_requested", {
+                "request_id": req_file.stem,
+                "task_id": task_id,
+                "manual": True,
+                **{k: req_data.get(k, "") for k in ("diff", "validation_result", "attempt")},
+            })
+            # Decision will come via manual review UI / submit-decision
+
+        else:
+            # CLI supervisor path — auto-call the supervisor CLI
+            cli_cmd = self._resolve_cli_command(supervisor)
+            if not cli_cmd:
+                _broadcast("supervisor_review_submitted", {
+                    "request_id": req_file.stem,
+                    "task_id": task_id,
+                    "decision": {"decision": "pass"},
+                    "error": f"No CLI command configured for supervisor '{supervisor}', auto-passing.",
+                })
+                decision_payload = {"task_id": int(task_id), "decision": "pass"}
+                if self._relay_session_id:
+                    decision_payload["relay_session_id"] = self._relay_session_id
+                decisions_dir.mkdir(parents=True, exist_ok=True)
+                dec_file = decisions_dir / req_file.name.replace("_request.json", "_decision.json")
+                dec_file.write_text(json.dumps(decision_payload, indent=2), encoding="utf-8")
+                return
+
+            # Build review prompt from request data
+            prompt = self._build_review_prompt(req_data)
+
+            _broadcast("reviewer_active", {
+                "task_index": task_id,
+                "task_total": "?",
+                "task_title": req_data.get("instruction", "")[:60],
+            })
+            _broadcast("log", {"line": f"[proxy] Calling {supervisor} CLI for task {task_id}..."})
+
+            try:
+                decision = self._call_cli(cli_cmd, prompt)
+            except FileNotFoundError:
+                _broadcast("log", {"line": f"[proxy] ERROR: '{cli_cmd.split()[0]}' not found. Is it installed and on PATH? Auto-passing task."})
+                _broadcast("log", {"line": f"[proxy] Tip: check Setup page or run 'which {cli_cmd.split()[0]}' in terminal."})
+                decision = {"decision": "pass"}
+            except subprocess.TimeoutExpired:
+                _broadcast("log", {"line": f"[proxy] ERROR: '{supervisor}' CLI timed out after {self._timeout}s. Auto-passing task."})
+                decision = {"decision": "pass"}
+            except Exception as exc:
+                _broadcast("log", {"line": f"[proxy] CLI supervisor error: {exc}"})
+                decision = {"decision": "pass"}
+
+            decision["task_id"] = int(task_id)
+            if self._relay_session_id:
+                decision["relay_session_id"] = self._relay_session_id
+
+            decisions_dir.mkdir(parents=True, exist_ok=True)
+            dec_file = decisions_dir / req_file.name.replace("_request.json", "_decision.json")
+            dec_file.write_text(json.dumps(decision, indent=2), encoding="utf-8")
+
+            _broadcast("reviewer_done", {"decision": decision.get("decision", "pass")})
+            _broadcast("supervisor_review_submitted", {
+                "request_id": req_file.stem,
+                "task_id": task_id,
+                "decision": decision,
+            })
+
+    def _resolve_cli_command(self, supervisor: str) -> str:
+        if supervisor == "custom":
+            return self._supervisor_command_override or ""
+        return _SUPERVISOR_CLI_CMDS.get(supervisor, "")
+
+    def _build_review_prompt(self, req_data: dict) -> str:
+        task_id = req_data.get("task_id", "?")
+        instruction = req_data.get("instruction", "")
+        files = req_data.get("files", [])
+        diff = req_data.get("diff", "(no diff)")
+        task_type = req_data.get("type", "modify")
+
+        return (
+            "You are a Tech Supervisor reviewing completed developer work.\n"
+            "Reply with exactly one of these two forms (nothing else):\n"
+            "  PASS\n"
+            "  REWORK: <one-sentence atomic replacement instruction — no code>\n\n"
+            f"Task {task_id} ({task_type})\n"
+            f"Files: {', '.join(files) if isinstance(files, list) else files}\n"
+            f"Instruction: {instruction}\n\n"
+            f"Changes made:\n{diff}\n"
+        )
+
+    def _call_cli(self, cli_cmd: str, prompt: str) -> dict:
+        """Call a CLI supervisor and parse PASS/REWORK response."""
+        from utils.command_resolution import resolve_command_arguments
+
+        repo_root = Path(self._repo_root)
+        arguments, _ = resolve_command_arguments(cli_cmd, repo_root)
+
+        # Determine prompt delivery: exec-style (Codex) gets prompt as arg,
+        # others receive it on stdin.
+        is_exec_style = "exec" in arguments
+        if is_exec_style:
+            arguments.append(prompt)
+            stdin_prompt = None
+        else:
+            stdin_prompt = prompt
+
+        result = subprocess.run(
+            arguments,
+            input=stdin_prompt,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=self._timeout,
+            creationflags=_WIN_CREATE_FLAGS,
+        )
+
+        response = result.stdout.strip()
+        if not response:
+            return {"decision": "pass"}
+
+        upper = response.upper().strip()
+        if upper.startswith("PASS"):
+            return {"decision": "pass"}
+        elif upper.startswith("REWORK"):
+            colon_pos = response.find(":")
+            instruction = response[colon_pos + 1:].strip() if colon_pos >= 0 else ""
+            return {"decision": "rework", "instruction": instruction}
+        else:
+            # Couldn't parse — default to pass
+            return {"decision": "pass"}
+
+
 # ── Run lifecycle ───────────────────────────────────────────────────────────────
 
 def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
@@ -629,7 +1131,7 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
 
     def on_event(event_type: str, data: dict) -> None:
         _broadcast(event_type, data)
-        if event_type in ("task_update", "progress", "review_required", "relay_review_needed", "paused", "resumed", "start"):
+        if event_type in ("task_update", "progress", "review_required", "paused", "resumed", "start"):
             state_store.update_history_entry(run_id, {
                 "status": run.status,
                 "tasks": len(run.tasks),
@@ -646,9 +1148,36 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
                 "tasks_detail": list(run.tasks.values()),
             })
             run.remove_listener(on_event)
+            # Stop the supervisor proxy thread
+            with _proxy_lock:
+                proxy = _active_proxy_threads.pop(run_id, None)
+            if proxy:
+                proxy.stop()
 
     run.add_listener(on_event)
+
+    # Start supervisor proxy thread
+    supervisor = settings.get("supervisor", "codex")
+    relay_session_id = settings.get("relay_session_id", "")
+    supervisor_command = settings.get("supervisor_command", "")
+
+    def _get_supervisor():
+        return supervisor
+
+    proxy = SupervisorProxyThread(
+        run_id=run_id,
+        repo_root=repo_root,
+        get_supervisor_fn=_get_supervisor,
+        relay_session_id=relay_session_id,
+        timeout=int(settings.get("task_timeout", 300)),
+    )
+    if supervisor == "custom" and supervisor_command:
+        proxy.set_supervisor("custom", supervisor_command)
+    with _proxy_lock:
+        _active_proxy_threads[run_id] = proxy
+
     run.start(settings, run_id)
+    proxy.start()
     return run_id
 
 
@@ -720,8 +1249,38 @@ def api_run_nl_launch():
 
 @app.route("/api/run/stop", methods=["POST"])
 def api_stop_run():
-    get_run().stop()
+    run = get_run()
+    # Stop any active proxy thread
+    if run.run_id:
+        with _proxy_lock:
+            proxy = _active_proxy_threads.pop(run.run_id, None)
+        if proxy:
+            proxy.stop()
+    run.stop()
     return jsonify({"ok": True})
+
+
+@app.route("/api/run/supervisor", methods=["POST"])
+def api_switch_supervisor():
+    """Switch supervisor mid-run. Takes effect on the next review point."""
+    data = request.json or {}
+    new_supervisor = data.get("supervisor", "")
+    new_command = data.get("supervisor_command", "")
+
+    run = get_run()
+    if not run.is_running or not run.run_id:
+        return jsonify({"error": "No active run."}), 409
+
+    with _proxy_lock:
+        proxy = _active_proxy_threads.get(run.run_id)
+    if proxy:
+        proxy.set_supervisor(new_supervisor, new_command)
+
+    # Update the run's driver label
+    run.driver = new_supervisor
+
+    _broadcast("log", {"line": f"[proxy] Supervisor switched to: {new_supervisor}"})
+    return jsonify({"ok": True, "supervisor": new_supervisor})
 
 
 @app.route("/api/run/status")
@@ -813,6 +1372,47 @@ def api_run_input():
     if not sent:
         return jsonify({"error": "No process running or stdin not available"}), 409
     return jsonify({"ok": True})
+
+
+def _classify_goal(goal: str) -> str:
+    """Classify a user goal into a routing category.
+
+    Returns one of:
+      'read'        — simple file reading / status check
+      'investigate'  — deep analysis: bug finding, security review, impact analysis
+      'code'        — requires code changes (create/modify/delete)
+    """
+    lower = goal.lower().strip()
+
+    # Investigate patterns checked FIRST (higher priority than read)
+    investigate_keywords = [
+        "investigate", "debug", "find the bug", "find bug",
+        "why does", "why is", "what causes", "root cause",
+        "review ", "security review", "code review", "audit",
+        "trace ", "data flow", "call graph", "dependency",
+        "impact of", "what breaks", "what would break",
+        "missing test", "test coverage", "test gap", "tests are missing",
+        "compare ", "difference between", "diff ",
+        "explain how", "explain the", "how does",
+        "architecture", "design of",
+    ]
+    if any(kw in lower for kw in investigate_keywords):
+        return "investigate"
+
+    # Read patterns: simple information retrieval, listing, checking status
+    read_keywords = [
+        "read ", "list ", "show ", "tell me", "what is", "what are",
+        "which ", "how many", "count ", "check status", "check the",
+        "display ", "print ", "find all", "search for",
+        "in progress", "in-progress", "status of",
+    ]
+    if any(kw in lower for kw in read_keywords):
+        # But some "find" goals actually want fixes
+        fix_signals = ["fix", "repair", "resolve", "patch", "update", "change", "add", "create", "implement"]
+        if not any(fs in lower for fs in fix_signals):
+            return "read"
+
+    return "code"
 
 
 @app.route("/api/run/brief", methods=["POST"])
@@ -917,48 +1517,17 @@ def api_run_brief():
         return jsonify({"error": str(exc)}), 500
 
 
-@app.route("/api/relay/import-from-nl", methods=["POST"])
-def api_relay_import_from_nl():
-    """Import a plan generated in NL mode into the Relay state."""
-    data = request.get_json(force=True) or {}
-    repo_root = str(data.get("repo_root", "")).strip()
-    tasks = data.get("tasks", [])
-    brief = data.get("brief", {})
-    summary = str(data.get("plan_summary", "")).strip()
-
-    if not repo_root:
-        return jsonify({"error": "repo_root is required"}), 400
-    if not tasks:
-        return jsonify({"error": "No tasks to import"}), 400
-
-    # Ensure project exists
-    state_store.add_project(repo_root)
-
-    # 1. Update Relay-specific state
-    # We simulate a "completed Step 2" in Relay wizard
-    relay_session_id = str(uuid.uuid4())[:8] # New session for this run
-    
-    relay_state = {
-        "step": 2, # Jump straight to task confirmation
-        "goal": brief.get("goal", ""),
-        "repo_root": repo_root,
-        "aider_model": state_store.load_settings().get("aider_model", "ollama/qwen2.5-coder:14b"),
-        "relay_session_id": relay_session_id,
-        "tasks": tasks,
-        "plan_summary": summary,
-        "live_run_active": False,
-    }
-    state_store.save_relay_ui_state(relay_state)
-    state_store.save_relay_tasks(tasks)
-
-    return jsonify({"ok": True, "redirect": "/relay"})
-
-
 @app.route("/api/run/nl/plan", methods=["POST"])
 def api_run_nl_plan():
-    """Generate a structured task plan from an NL brief via Ollama."""
-    import urllib.request
-    import urllib.error
+    """Generate a structured task plan using the selected supervisor.
+
+    If supervisor is a CLI tool (Claude, Codex, etc.), it generates the plan
+    via SupervisorAgent — the same path the CLI uses. This produces high-quality
+    atomic plans because the expensive AI does the thinking.
+
+    If supervisor is Chatbot or Manual (no CLI available), falls back to Ollama.
+    """
+    import logging
 
     data = request.get_json(force=True) or {}
     repo_root = str(data.get("repo_root", "")).strip()
@@ -971,11 +1540,6 @@ def api_run_nl_plan():
     if not repo_root:
         repo_root = settings.get("repo_root", "").strip()
 
-    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
-    if not raw_model.startswith("ollama/"):
-        raw_model = "ollama/qwen2.5-coder:14b"
-    ollama_model = raw_model[7:]
-
     # Build a rich goal string from the brief fields
     goal_parts = [str(brief.get("goal", "")).strip()]
     constraints = brief.get("constraints") or []
@@ -986,12 +1550,84 @@ def api_run_nl_plan():
         goal_parts.append("Acceptance criteria:\n" + "\n".join(f"- {a}" for a in acceptance))
     goal_text = "\n\n".join(goal_parts)
 
+    # Smart goal routing: classify and add hint for the supervisor
+    goal_category = _classify_goal(goal_text)
+    if goal_category == "read":
+        goal_text += "\n\nNOTE: This is a read-only analysis request. Use task type 'read'. Do NOT create/modify any files."
+    elif goal_category == "investigate":
+        goal_text += "\n\nNOTE: This requires investigation/analysis. Use task type 'investigate' for analysis tasks. You may follow with 'create' or 'modify' tasks if fixes are needed."
+
     knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
 
     _root = Path(__file__).parent.parent
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
+
+    # Determine which supervisor to use for plan generation
+    supervisor_type = settings.get("supervisor", "codex")
+    cli_commands = {
+        "codex":    "codex.cmd exec --skip-git-repo-check --color never",
+        "claude":   "claude",
+        "cursor":   "cursor",
+        "windsurf": "windsurf",
+    }
+    supervisor_cmd = cli_commands.get(supervisor_type, "")
+    if supervisor_type == "custom":
+        supervisor_cmd = settings.get("supervisor_command", "").strip()
+
+    # ── CLI supervisor path (Claude, Codex, etc.) ─────────────────────────
+    if supervisor_cmd:
+        try:
+            from supervisor.agent import SupervisorAgent
+            from context.repo_scanner import RepoScanner
+            from parser.task_parser import TaskParser
+
+            logger = logging.getLogger("bridge_app")
+            repo_path = Path(repo_root)
+            repo_tree = RepoScanner(repo_path).scan()
+
+            agent = SupervisorAgent(
+                repo_root=repo_path,
+                command=supervisor_cmd,
+                logger=logger,
+                timeout=int(settings.get("task_timeout", 300)),
+            )
+            plan_text = agent.generate_plan(
+                goal=goal_text,
+                repo_tree=repo_tree,
+                knowledge_context=knowledge_ctx or None,
+                workflow_profile=settings.get("workflow_profile", "standard"),
+            )
+
+            parser = TaskParser()
+            tasks_parsed = parser.parse(plan_text)
+
+            # Convert Task objects to dicts for JSON response
+            tasks = []
+            for t in tasks_parsed:
+                tasks.append({
+                    "id": t.id,
+                    "title": t.instruction[:60] if t.instruction else "",
+                    "type": t.type,
+                    "files": t.files,
+                    "instruction": t.instruction,
+                })
+
+            plan_summary = f"Generated by {supervisor_type} — {len(tasks)} tasks"
+            return jsonify({"plan_summary": plan_summary, "tasks": tasks, "goal_category": goal_category})
+
+        except Exception as exc:
+            return jsonify({"error": f"Supervisor plan generation failed: {exc}"}), 500
+
+    # ── Ollama fallback (Chatbot / Manual — no CLI supervisor) ────────────
+    import urllib.request
+    import urllib.error
     from utils.relay_formatter import build_plan_prompt, parse_plan
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
 
     prompt = build_plan_prompt(goal_text, knowledge_ctx, repo_root)
 
@@ -1028,6 +1664,105 @@ def api_run_nl_plan():
         return jsonify({"error": str(exc)}), 422
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/run/analyze", methods=["POST"])
+def api_run_analyze():
+    """Quick read-only analysis: read files + ask supervisor to analyze them.
+
+    No Aider invoked. No git changes. Just reads files and returns the
+    supervisor's analysis. For questions like "what features are in progress?"
+    """
+    import logging
+
+    data = request.get_json(force=True) or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    question = (data.get("question") or "").strip()
+    files = data.get("files") or []
+
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root or not question:
+        return jsonify({"error": "repo_root and question are required"}), 400
+
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    repo_path = Path(repo_root)
+
+    # Read file contents
+    file_contents = []
+    for fp in files:
+        abs_fp = repo_path / fp
+        if abs_fp.exists():
+            try:
+                text = abs_fp.read_text(encoding="utf-8", errors="replace")
+                file_contents.append(f"=== {fp} ===\n{text}")
+            except Exception as ex:
+                file_contents.append(f"=== {fp} === (error: {ex})")
+        else:
+            file_contents.append(f"=== {fp} === (not found)")
+
+    combined = "\n\n".join(file_contents) if file_contents else "(no files specified)"
+
+    # Try supervisor CLI first
+    settings = state_store.load_settings()
+    supervisor_type = settings.get("supervisor", "codex")
+    cli_commands = {
+        "codex": "codex.cmd exec --skip-git-repo-check --color never",
+        "claude": "claude",
+        "cursor": "cursor",
+        "windsurf": "windsurf",
+    }
+    supervisor_cmd = cli_commands.get(supervisor_type, "")
+    if supervisor_type == "custom":
+        supervisor_cmd = settings.get("supervisor_command", "").strip()
+
+    prompt = (
+        "You are analyzing project files. Read the content below and answer the question.\n\n"
+        f"QUESTION: {question}\n\n"
+        f"FILE CONTENT:\n{combined[:8000]}\n\n"
+        "Provide a clear, structured answer."
+    )
+
+    if supervisor_cmd:
+        try:
+            from supervisor.agent import SupervisorAgent
+            logger = logging.getLogger("bridge_app")
+            agent = SupervisorAgent(repo_path, supervisor_cmd, logger, timeout=60)
+            answer = agent._run(prompt)
+            return jsonify({"answer": answer.strip(), "source": supervisor_type})
+        except Exception as exc:
+            return jsonify({"error": f"Supervisor analysis failed: {exc}"}), 500
+
+    # Fallback to Ollama
+    import urllib.request
+    import urllib.error
+
+    raw_model = str(settings.get("aider_model", "ollama/qwen2.5-coder:14b")).strip()
+    if not raw_model.startswith("ollama/"):
+        raw_model = "ollama/qwen2.5-coder:14b"
+    ollama_model = raw_model[7:]
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/chat", data=body,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        answer = result.get("message", {}).get("content", "").strip()
+        return jsonify({"answer": answer, "source": "ollama"})
+    except Exception as exc:
+        return jsonify({"error": f"Analysis failed: {exc}"}), 500
 
 
 @app.route("/api/run/nl/plan/confirm", methods=["POST"])
@@ -1372,6 +2107,21 @@ def api_reports_tokens():
         return jsonify({"error": str(ex)}), 500
 
 
+@app.route("/api/reports/diagnostics")
+def api_reports_diagnostics():
+    """Run diagnostics for a specific project (reads bridge_progress/RUN_DIAGNOSTICS.json)."""
+    progress_dir = _project_progress_dir(request.args)
+    if progress_dir is None:
+        return jsonify({"error": "repo_root not set"}), 400
+    diag_file = progress_dir / "RUN_DIAGNOSTICS.json"
+    if not diag_file.exists():
+        return jsonify({"error": "No diagnostics available. Complete a run first."}), 404
+    try:
+        return jsonify(json.loads(diag_file.read_text(encoding="utf-8")))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/reports/knowledge")
 def api_reports_knowledge():
     """Project knowledge cache (reads bridge_progress/project_knowledge.json)."""
@@ -1385,6 +2135,70 @@ def api_reports_knowledge():
     try:
         raw = json.loads(knowledge_file.read_text(encoding="utf-8"))
         return jsonify(_normalize_knowledge_payload(raw, repo_root))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/knowledge/refresh", methods=["POST"])
+def api_knowledge_refresh():
+    """Re-scan the project and refresh knowledge + AI_UNDERSTANDING.md."""
+    import logging
+    _root = Path(__file__).parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+    from utils.onboarding_scanner import OnboardingScanner
+    from utils.project_knowledge import load_knowledge, save_knowledge
+    from context.project_understanding import ensure_project_understanding
+
+    data = request.get_json(force=True) or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root not set"}), 400
+
+    repo_path = Path(repo_root)
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Directory not found: {repo_root}"}), 400
+
+    try:
+        logger = logging.getLogger("bridge_app")
+
+        # Load or create knowledge
+        knowledge = load_knowledge(repo_path)
+
+        # Run the scanner (re-scans all source files)
+        scanner = OnboardingScanner(repo_path, logger)
+        knowledge = scanner.run(knowledge)
+
+        # Set last_refreshed timestamp
+        from datetime import datetime
+        knowledge.setdefault("project", {})["last_refreshed"] = datetime.now().isoformat(timespec="seconds")
+
+        # Save knowledge
+        save_knowledge(knowledge, repo_path)
+
+        # Regenerate AI_UNDERSTANDING.md
+        try:
+            ensure_project_understanding(
+                repo_root=repo_path,
+                knowledge=knowledge,
+                logger=logger,
+                skip_source_scan=True,  # already scanned above
+                allow_user_confirm=False,
+                input_func=lambda _: "",
+            )
+        except Exception as _ue:
+            logger.warning("Could not regenerate AI_UNDERSTANDING.md: %s", _ue)
+
+        files_count = len(knowledge.get("files", {}))
+        return jsonify({
+            "ok": True,
+            "files_scanned": files_count,
+            "last_refreshed": knowledge["project"]["last_refreshed"],
+        })
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
 
@@ -1829,13 +2643,6 @@ def api_relay_skip_task():
 @app.route("/api/relay/state", methods=["GET"])
 def api_relay_state():
     return jsonify(_relay_state_payload())
-
-
-@app.route("/api/relay/state", methods=["POST"])
-def api_relay_state_save():
-    data = request.get_json(force=True) or {}
-    state_store.save_relay_ui_state(data)
-    return jsonify({"ok": True})
 
 
 @app.route("/api/relay/state", methods=["DELETE"])

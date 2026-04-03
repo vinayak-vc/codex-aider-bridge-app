@@ -57,6 +57,7 @@ function renderStats(totals, sessions) {
   const totalAI = sessions.reduce((sum, s) =>
     sum + (s.session?.total_ai_tokens ?? s.supervisor?.total ?? 0), 0);
   $('stat-ai-total').textContent = fmtNum(totalAI);
+  $('stat-aider').textContent     = '~' + fmtNum(totals.aider_tokens_total ?? 0);
   $('stat-saved').textContent    = fmtNum(totals.tokens_saved_total ?? 0);
 
   // Savings bar
@@ -118,15 +119,16 @@ function renderTable(sessions) {
   if (!tbody) return;
 
   if (!sessions.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--color-text-subtle)">No sessions recorded.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--color-text-subtle)">No sessions recorded.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = sessions.map((s, i) => {
-    const aiTokens  = s.session?.total_ai_tokens ?? s.supervisor?.total ?? 0;
-    const saved     = s.savings?.tokens_saved ?? 0;
-    const savePct   = s.savings?.savings_percent ?? 0;
-    const tasks     = s.aider?.tasks_executed ?? 0;
+    const aiTokens   = s.session?.total_ai_tokens ?? s.supervisor?.total ?? 0;
+    const aiderEst   = s.aider?.estimated_tokens ?? 0;
+    const saved      = s.savings?.tokens_saved ?? 0;
+    const savePct    = s.savings?.savings_percent ?? 0;
+    const tasks      = s.aider?.tasks_executed ?? 0;
     const productive = s.productivity?.is_productive !== false;
 
     return `
@@ -135,6 +137,7 @@ function renderTable(sessions) {
             title="${esc(s.goal || '')}">${esc((s.goal || '(no goal)').slice(0, 40))}</td>
         <td style="font-variant-numeric:tabular-nums">${tasks}</td>
         <td style="font-variant-numeric:tabular-nums">${fmtNum(aiTokens)}</td>
+        <td style="font-variant-numeric:tabular-nums;color:var(--color-info)">~${fmtNum(aiderEst)}</td>
         <td style="font-variant-numeric:tabular-nums;color:var(--color-success)">${fmtNum(saved)}</td>
         <td>
           <span class="badge ${savePct >= 50 ? 'badge--success' : savePct > 0 ? 'badge--muted' : 'badge--warning'}"
@@ -185,11 +188,14 @@ function renderDetail(s, idx) {
     ['Savings %',        fmtPct(sav.savings_percent)],
   ]);
 
-  renderDetailSection('detail-aider', 'Aider', [
-    ['Tasks executed', fmtNum(aider.tasks_executed)],
-    ['Tasks skipped',  fmtNum(aider.tasks_skipped)],
-    ['Reworks',        fmtNum(aider.reworks)],
-    ['Sub-plans',      fmtNum(aider.subplans_generated)],
+  const aiderEst = aider.estimated_tokens ?? 0;
+
+  renderDetailSection('detail-aider', 'Aider (local LLM)', [
+    ['Tasks executed',  fmtNum(aider.tasks_executed)],
+    ['Tasks skipped',   fmtNum(aider.tasks_skipped)],
+    ['Reworks',         fmtNum(aider.reworks)],
+    ['Sub-plans',       fmtNum(aider.subplans_generated)],
+    ['Est. tokens',     '~' + fmtNum(aiderEst)],
   ]);
 
   const estimateLabel = sess.is_estimate ? ' (est.)' : ' (exact)';
@@ -198,6 +204,39 @@ function renderDetail(s, idx) {
     ['Total AI',       fmtNum(sess.total_ai_tokens)],
     ['Supervisor cmd', (s.supervisor_command || '—').slice(0, 24)],
   ]);
+
+  // Savings comparison card
+  const cmpEl = $('detail-comparison');
+  if (cmpEl) {
+    const directTotal  = sav.estimated_direct_tokens ?? 0;
+    const aiTotal      = sav.total_ai_tokens ?? 0;
+    const bridgeTotal  = aiTotal + aiderEst;
+    const saved        = sav.tokens_saved ?? 0;
+    const savedPct     = sav.savings_percent ?? 0;
+
+    $('cmp-without').textContent = fmtNum(directTotal) + ' tokens';
+    $('cmp-with').textContent    = fmtNum(bridgeTotal) + ' tokens';
+    $('cmp-with-desc').textContent = `${fmtNum(aiTotal)} cloud + ~${fmtNum(aiderEst)} local`;
+    $('cmp-saved').textContent   = fmtNum(saved) + ' tokens';
+    $('cmp-pct').textContent     = fmtPct(savedPct);
+    cmpEl.style.display = directTotal > 0 ? '' : 'none';
+  }
+
+  // Per-task Aider breakdown
+  const perTask   = aider.per_task || [];
+  const ptWrap    = $('detail-per-task');
+  const ptTbody   = $('per-task-tbody');
+  if (ptWrap && ptTbody) {
+    if (perTask.length > 0) {
+      ptTbody.innerHTML = perTask.map(t =>
+        `<tr><td>Task ${esc(t.task_id)}</td><td>~${fmtNum(t.estimated_tokens)}</td></tr>`
+      ).join('') +
+        `<tr style="font-weight:600"><td>Total</td><td>~${fmtNum(aiderEst)}</td></tr>`;
+      ptWrap.style.display = '';
+    } else {
+      ptWrap.style.display = 'none';
+    }
+  }
 
   const noteEl = $('detail-note');
   if (noteEl && sav.note) {
@@ -309,14 +348,69 @@ function connectSSE() {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+// ── Diagnostics panel ────────────────────────────────────────────────────────
+
+async function loadDiagnostics() {
+  const panel = $('diagnostics-panel');
+  if (!panel) return;
+
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    const repo = _repoRoot || settings?.repo_root || '';
+    if (!repo) { panel.style.display = 'none'; return; }
+
+    const resp = await fetch(`/api/reports/diagnostics?repo_root=${encodeURIComponent(repo)}`);
+    if (!resp.ok) { panel.style.display = 'none'; return; }
+    const diag = await resp.json();
+
+    // Status badge
+    const badge = $('diag-status-badge');
+    if (badge) {
+      const s = diag.status || 'unknown';
+      badge.textContent = s;
+      badge.className = `badge ${s === 'success' ? 'badge--success' : 'badge--warning'}`;
+    }
+
+    // Summary
+    const sumEl = $('diag-summary');
+    if (sumEl) sumEl.textContent = diag.ai_summary || 'No summary available.';
+
+    // Blocking patterns
+    const patternsEl = $('diag-patterns');
+    if (patternsEl) {
+      const patterns = diag.blocking_patterns || [];
+      if (patterns.length) {
+        patternsEl.innerHTML = `
+          <div class="detail-section-title" style="margin-bottom:8px">Blocking Patterns Detected</div>
+          ${patterns.map(p => `
+            <div style="padding:8px 12px;margin-bottom:8px;background:color-mix(in srgb, var(--color-warning) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);border-radius:var(--radius-md);font-size:var(--font-size-xs);line-height:1.5">
+              <strong>${esc(p.pattern)}</strong> (${p.count}x, tasks: ${p.tasks.join(', ')})<br>
+              ${esc(p.suggestion)}
+            </div>
+          `).join('')}
+        `;
+      } else {
+        patternsEl.innerHTML = '<div style="font-size:var(--font-size-xs);color:var(--color-text-subtle)">No blocking patterns detected.</div>';
+      }
+    }
+
+    panel.style.display = '';
+  } catch (_) {
+    panel.style.display = 'none';
+  }
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
 function init() {
-  $('btn-refresh-tokens')?.addEventListener('click', loadTokens);
+  $('btn-refresh-tokens')?.addEventListener('click', () => { loadTokens(); loadDiagnostics(); });
   window.addEventListener('bridge:project-switched', event => {
     _repoRoot = event?.detail?.path || '';
     scheduleRefresh();
   });
   connectSSE();
   loadTokens();
+  loadDiagnostics();
 }
 
 init();

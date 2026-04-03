@@ -1,18 +1,54 @@
 /* pages/run.css — Run page */
 
-/* Two-column layout: settings | log */
-.run-layout {
-  display: grid;
-  grid-template-columns: minmax(380px, 420px) 1fr;
-  gap: 24px;
-  align-items: start;
+/* ── Tabbed layout ── */
+.run-tabs {
+  margin-bottom: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-bg);
+  padding-top: 4px;
 }
-@media (max-width: 1024px) {
-  .run-layout { grid-template-columns: 1fr; }
+.run-tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.run-tab-content {
+  position: relative;
+}
+.run-tab-panel {
+  display: none;
+}
+.run-tab-panel.--active {
+  display: block;
+}
+
+/* Tab log badge — notification dot */
+.run-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 /* ── Settings panel ── */
-.run-form { display: flex; flex-direction: column; gap: 16px; }
+.run-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 860px;
+  margin: 0 auto;
+  padding-top: 20px;
+}
 
 .field {
   display: flex;
@@ -35,10 +71,11 @@
 /* Supervisor selector */
 .supervisor-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
 }
-@media (max-width: 540px) { .supervisor-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .supervisor-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 480px) { .supervisor-grid { grid-template-columns: repeat(2, 1fr); } }
 
 .supervisor-option {
   position: relative;
@@ -173,7 +210,11 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 600px;
+  padding-top: 20px;
+  height: calc(100vh - 240px);
+  min-height: 400px;
+  max-width: 1100px;
+  margin: 0 auto;
 }
 
 .log-toolbar {
@@ -193,7 +234,8 @@
   font-family: var(--font-mono);
   font-size: 12px;
   color: #c9d1d9;
-  height: 500px;
+  flex: 1;
+  min-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -203,7 +245,7 @@
 .log-terminal .log-warn  { color: var(--color-warning); }
 .log-terminal .log-error { color: var(--color-danger); }
 .log-terminal .log-ok    { color: var(--color-success); }
-.log-terminal .log-info  { color: #58a6ff; }
+.log-terminal .log-info  { color: #79b8ff; }
 .log-terminal .log-event { color: var(--color-info); }
 
 .log-empty {
@@ -869,3 +911,61 @@
 .relay-done-icon[data-failed="true"] { color: var(--color-danger); }
 .relay-done-title { font-size: var(--font-size-lg); font-weight: 700; margin-bottom: 6px; }
 .relay-done-sub   { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+
+/* ── Role indicator strip ── */
+.role-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  transition: all 0.2s ease;
+}
+
+.role-badge-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.role-badge[data-state="active"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+.role-badge[data-state="active"] .role-badge-icon {
+  animation: role-pulse 1.4s infinite;
+}
+
+.role-badge[data-state="done"] {
+  color: var(--color-success);
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+@keyframes role-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+.role-strip-connector {
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.5;
+}
