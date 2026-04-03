@@ -387,11 +387,12 @@
 .run-log-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 16px;
+  gap: 0;
+  padding-top: 12px;
   padding-right: 16px;
   flex: 1;
   min-height: 0;
+  overflow: hidden; /* children handle their own scroll */
 }
 
 .log-toolbar {
@@ -399,6 +400,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-shrink: 0;
+  padding-bottom: 6px;
 }
 
 .log-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -824,12 +827,13 @@
   word-break: break-all;
 }
 
-/* Stdin input row */
+/* Stdin input row — pinned at bottom */
 .log-input-row {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
+  padding-top: 8px;
   align-items: center;
+  flex-shrink: 0;
 }
 .log-stdin-input {
   flex: 1;

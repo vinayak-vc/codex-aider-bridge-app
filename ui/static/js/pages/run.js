@@ -1996,9 +1996,6 @@ function bindControls() {
     btn.addEventListener('click', () => switchRunTab(btn.dataset.tab));
   });
 
-  // Back to Settings button in log toolbar
-  $('btn-back-to-settings')?.addEventListener('click', () => switchRunTab('settings'));
-
   // Log view toggle (parsed/raw)
   $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
   $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
