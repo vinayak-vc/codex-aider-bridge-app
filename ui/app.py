@@ -588,7 +588,16 @@ def api_get_settings():
 
 @app.route("/api/settings", methods=["POST"])
 def api_save_settings():
-    state_store.save_settings(request.json or {})
+    settings = request.json or {}
+    state_store.save_settings(settings)
+    # Firebase sync: push settings
+    try:
+        from utils.firebase_sync import get_firebase_sync
+        _fb = get_firebase_sync()
+        if _fb and _fb.is_enabled():
+            _fb.push_settings(settings)
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
@@ -3085,6 +3094,16 @@ def api_knowledge_refresh():
             logger.warning("Could not regenerate AI_UNDERSTANDING.md: %s", _ue)
 
         files_count = len(knowledge.get("files", {}))
+
+        # Firebase sync: push project metadata
+        try:
+            from utils.firebase_sync import get_firebase_sync
+            _fb = get_firebase_sync()
+            if _fb and _fb.is_enabled():
+                _fb.push_project_meta(repo_path.name, knowledge)
+        except Exception:
+            pass
+
         return jsonify({
             "ok": True,
             "files_scanned": files_count,
