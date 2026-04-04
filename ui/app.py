@@ -2459,7 +2459,8 @@ def api_run_brief():
     import urllib.error
 
     data = request.get_json(force=True) or {}
-    message = str(data.get("message", "")).strip()
+    # Accept both "message" and "goal" keys for backwards compatibility
+    message = str(data.get("message") or data.get("goal") or "").strip()
     repo_root = str(data.get("repo_root", "")).strip()
 
     if not message:
