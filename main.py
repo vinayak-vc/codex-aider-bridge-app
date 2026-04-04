@@ -780,7 +780,70 @@ def execute_task_with_review(
             )
             return resumed_diff
 
+    _failure_reasons: list[str] = []  # Accumulate failure reasons for escalation
+
     for attempt in range(config.max_task_retries + 1):
+
+        # ── Escalating retry strategy ────────────────────────────────────
+        # Attempts 1-3:  Original instruction (standard retries)
+        # Attempts 4-6:  Simplified instruction with failure context
+        # Attempt 7:     Supervisor diagnostic — analyzes all failures
+        # Attempts 8-9:  Diagnostic-informed instruction
+        # Attempt 10:    Supervisor takeover prompt (user chooses)
+        if attempt == 3 and _failure_reasons:
+            logger.info(
+                "Task %s: escalating — simplifying instruction after %d failures",
+                task.id, attempt,
+            )
+            _emit_structured({"type": "log", "line": f"[escalation] Task {task.id}: simplifying instruction after {attempt} failures"})
+            current_instruction = (
+                f"SIMPLIFIED INSTRUCTION (previous {attempt} attempts failed):\n"
+                f"{task.instruction}\n\n"
+                f"PREVIOUS FAILURE REASONS:\n" +
+                "\n".join(f"- {r}" for r in _failure_reasons[-3:]) +
+                "\n\nFocus on the core requirement. Keep it simple. Fix the issues above."
+            )
+
+        if attempt == 6 and supervisor is not None and _failure_reasons:
+            logger.info(
+                "Task %s: escalating — requesting supervisor diagnostic after %d failures",
+                task.id, attempt,
+            )
+            _emit_structured({"type": "log", "line": f"[escalation] Task {task.id}: supervisor analyzing {len(_failure_reasons)} failures"})
+            try:
+                diag_prompt = (
+                    f"A developer tool (Aider) has failed to complete this task {attempt} times.\n\n"
+                    f"TASK: {task.instruction}\n"
+                    f"FILES: {', '.join(task.files)}\n\n"
+                    f"FAILURE REASONS:\n" +
+                    "\n".join(f"  {i+1}. {r}" for i, r in enumerate(_failure_reasons)) +
+                    "\n\nAnalyze WHY the tool keeps failing and provide a REWRITTEN instruction "
+                    "that avoids all the issues above. Be extremely specific and concrete."
+                )
+                diag_response = supervisor._run(diag_prompt)
+                current_instruction = diag_response.strip()
+                logger.info("Task %s: supervisor rewrote instruction for attempts 8-9", task.id)
+            except Exception as diag_ex:
+                logger.warning("Task %s: supervisor diagnostic failed: %s", task.id, diag_ex)
+
+        if attempt == 9 and _failure_reasons:
+            logger.warning(
+                "Task %s: FINAL ATTEMPT — Aider failed %d times. Supervisor takeover available.",
+                task.id, attempt,
+            )
+            _emit_structured({
+                "type": "escalation_takeover",
+                "task_id": task.id,
+                "attempt": attempt + 1,
+                "failure_count": len(_failure_reasons),
+                "reasons": _failure_reasons[-5:],
+                "message": (
+                    f"Aider failed {attempt} times on task {task.id}. "
+                    "The supervisor can attempt this task directly (higher token cost). "
+                    "Check the log for failure reasons."
+                ),
+            })
+
         repo_before = _snapshot_repo_files(config.repo_root)
         current_task = Task(
             id=task.id,
@@ -991,6 +1054,10 @@ def execute_task_with_review(
             )
 
         if not execution_result.succeeded:
+            _fail_msg = f"Aider exit code {execution_result.exit_code}"
+            if execution_result.stderr:
+                _fail_msg += f": {execution_result.stderr[:150]}"
+            _failure_reasons.append(_fail_msg)
             logger.warning(
                 "Task %s: Aider exited with code %s",
                 current_task.id,
@@ -1089,6 +1156,7 @@ def execute_task_with_review(
             )
 
         if not validation_result.succeeded:
+            _failure_reasons.append(f"Validation: {validation_result.message[:150]}")
             logger.warning(
                 "Task %s: mechanical check failed — %s",
                 current_task.id,
@@ -1249,6 +1317,7 @@ def execute_task_with_review(
                 time.sleep(wait_seconds)
                 continue
 
+            _failure_reasons.append(f"Rework: {(review.new_instruction or '')[:150]}")
             if diagnostics:
                 diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
             logger.warning(
@@ -1297,6 +1366,7 @@ def execute_task_with_review(
             })
             return diff
 
+        _failure_reasons.append(f"Rework: {(review.new_instruction or '')[:150]}")
         if diagnostics:
             diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
         logger.warning(
@@ -1311,7 +1381,11 @@ def execute_task_with_review(
         time.sleep(wait_seconds)
         current_instruction = review.new_instruction  # type: ignore[assignment]
 
-    raise RuntimeError(f"Task {task.id} exhausted all retries.")
+    reasons_summary = "; ".join(_failure_reasons[-5:]) if _failure_reasons else "unknown"
+    raise RuntimeError(
+        f"Task {task.id} exhausted all {config.max_task_retries + 1} attempts. "
+        f"Failure reasons: {reasons_summary}"
+    )
 
 
 _PAUSE_FILENAME = ".bridge_pause"

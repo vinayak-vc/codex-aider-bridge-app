@@ -46,7 +46,7 @@ DEFAULT_SETTINGS: dict = {
     "workflow_profile": "standard",
     "validation_command": "",
     "max_plan_attempts": 3,
-    "max_task_retries": 2,
+    "max_task_retries": 10,
     "task_timeout": 600,
     "plan_output_file": "",
     "plan_file": "",
