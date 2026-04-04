@@ -2646,9 +2646,9 @@ def api_run_nl_plan():
             repo_path = Path(repo_root)
             repo_tree = RepoScanner(repo_path).scan()
 
-            # Plan generation timeout: cap at 120s — plans shouldn't take
-            # more than 2 minutes even from slow supervisors.
-            _plan_timeout = min(int(settings.get("task_timeout", 300)), 120)
+            # Plan generation timeout: 180s for CLI supervisors.
+            # Claude needs time to process large repo trees (485+ files).
+            _plan_timeout = 180
             logger.info(
                 "Generating plan via supervisor '%s' (timeout=%ds)",
                 supervisor_type, _plan_timeout,
@@ -2686,7 +2686,15 @@ def api_run_nl_plan():
             return jsonify({"plan_summary": plan_summary, "tasks": tasks, "goal_category": goal_category})
 
         except Exception as exc:
-            return jsonify({"error": f"Supervisor plan generation failed: {exc}"}), 500
+            logger.error("Supervisor plan generation failed: %s", exc)
+            error_msg = str(exc)
+            if "timed out" in error_msg.lower():
+                error_msg = (
+                    f"Supervisor timed out after {_plan_timeout}s. "
+                    "The repo may be too large, or the Claude CLI is not responding. "
+                    "Test with: echo \"Reply with OK\" | claude -p"
+                )
+            return jsonify({"error": f"Plan generation failed: {error_msg}"}), 500
 
     # ── Ollama fallback (Chatbot / Manual — no CLI supervisor) ────────────
     import urllib.request

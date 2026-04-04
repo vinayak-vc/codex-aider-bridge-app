@@ -413,7 +413,12 @@ class SupervisorAgent:
                     f"Cannot resolve supervisor command '{self._command}': {ex}"
                 ) from ex
 
-            self._logger.debug("Running supervisor: %s", arguments)
+            self._logger.info(
+                "Running supervisor: %s (timeout=%ds, prompt=%d chars, stdin=%s)",
+                arguments, self._timeout,
+                len(stdin_prompt) if stdin_prompt else 0,
+                "yes" if stdin_prompt else "no",
+            )
 
             try:
                 result = subprocess.run(
@@ -430,19 +435,34 @@ class SupervisorAgent:
             except subprocess.TimeoutExpired as ex:
                 if ex.process:
                     ex.process.kill()
+                self._logger.error(
+                    "Supervisor TIMED OUT after %ds. Command: %s",
+                    self._timeout, arguments,
+                )
                 raise SupervisorError(
                     f"Supervisor timed out after {self._timeout}s — "
                     "command may be hung or waiting for input."
                 ) from ex
             except OSError as ex:
+                self._logger.error("Cannot start supervisor: %s", ex)
                 raise SupervisorError(
                     f"Cannot start supervisor command '{self._command}': {ex}"
                 ) from ex
 
+            self._logger.info(
+                "Supervisor finished: exit=%d, stdout=%d chars, stderr=%d chars",
+                result.returncode,
+                len(result.stdout),
+                len(result.stderr),
+            )
+
             if result.returncode != 0:
+                self._logger.error(
+                    "Supervisor stderr: %s", result.stderr.strip()[:500],
+                )
                 raise SupervisorError(
                     f"Supervisor exited with code {result.returncode}. "
-                    f"Stderr: {result.stderr.strip()}"
+                    f"Stderr: {result.stderr.strip()[:500]}"
                 )
 
             if output_file.exists():
@@ -454,6 +474,10 @@ class SupervisorAgent:
             if stdout_output:
                 return stdout_output
 
+            self._logger.error(
+                "Supervisor returned no output. stdout=%r, stderr=%r",
+                result.stdout[:200], result.stderr[:200],
+            )
             raise SupervisorError("Supervisor returned no output.")
 
     def _build_command(
