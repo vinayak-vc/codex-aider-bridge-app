@@ -1830,6 +1830,72 @@ def api_sync_delete_account():
     return jsonify({"ok": True})
 
 
+# ── Per-User Firebase Setup ───────────────────────────────────────────────────
+
+@app.route("/api/firebase/status")
+def api_firebase_status():
+    """Check if user's own Firebase project is configured."""
+    try:
+        from utils.firebase_user_setup import get_user_setup
+        return jsonify(get_user_setup().get_status())
+    except Exception as ex:
+        return jsonify({"configured": False, "error": str(ex)})
+
+
+@app.route("/api/firebase/setup", methods=["POST"])
+def api_firebase_setup():
+    """Save and validate user's Firebase config."""
+    from utils.firebase_user_setup import get_user_setup, SetupError
+    data = request.json or {}
+    try:
+        result = get_user_setup().save_config(data)
+        return jsonify(result)
+    except SetupError as ex:
+        return jsonify({"error": str(ex)}), 400
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/firebase/test", methods=["POST"])
+def api_firebase_test():
+    """Test connection to user's Firestore."""
+    from utils.firebase_user_setup import get_user_setup
+    try:
+        result = get_user_setup().test_connection()
+        return jsonify(result)
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)}), 500
+
+
+@app.route("/api/firebase/login", methods=["POST"])
+def api_firebase_login():
+    """Login to user's Firebase project via Google OAuth."""
+    from utils.firebase_user_setup import get_user_setup, SetupError
+    try:
+        result = get_user_setup().login()
+        return jsonify(result)
+    except SetupError as ex:
+        return jsonify({"error": str(ex)}), 400
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/firebase/logout", methods=["POST"])
+def api_firebase_logout():
+    """Logout from user's Firebase project."""
+    from utils.firebase_user_setup import get_user_setup
+    get_user_setup().logout()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/firebase/clear", methods=["POST"])
+def api_firebase_clear():
+    """Remove user's Firebase config entirely."""
+    from utils.firebase_user_setup import get_user_setup
+    get_user_setup().clear_config()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/projects/status")
 def api_projects_status():
     """Return all projects with their last run status and task progress."""

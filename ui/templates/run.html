@@ -279,16 +279,51 @@
         <label class="toggle"><input type="checkbox" id="f-dry-run"><span class="toggle-track"></span></label>
       </div>
 
-      <!-- Cloud Sync -->
+      <!-- Per-User Cloud Sync -->
       <div style="border-top:1px solid var(--color-border);padding-top:16px;margin-top:8px">
-        <div class="field-label" style="margin-bottom:8px">Cloud Sync</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <span id="auth-label" style="font-size:12px;color:var(--color-text-muted);flex:1"></span>
-          <button class="btn btn--secondary btn--sm" id="auth-btn">Login</button>
+        <div class="field-label" style="margin-bottom:8px">Cloud Sync (Personal Firebase)</div>
+
+        <div id="firebase-not-setup">
+          <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px">
+            Set up your own Firebase project to sync data to the cloud. Your data stays in your Google account.
+          </p>
+          <button class="btn btn--secondary btn--sm" id="btn-firebase-wizard" style="width:100%">Setup Cloud Sync</button>
         </div>
-        <div class="toggle-row">
-          <div><div class="toggle-label">Auto-sync after runs</div></div>
-          <label class="toggle"><input type="checkbox" id="f-cloud-sync" disabled><span class="toggle-track"></span></label>
+
+        <!-- Setup wizard (hidden until clicked) -->
+        <div id="firebase-wizard" style="display:none">
+          <div style="font-size:11px;color:var(--color-text-muted);line-height:1.6;margin-bottom:12px">
+            <strong>Step 1:</strong> Go to <a href="https://console.firebase.google.com" target="_blank" style="color:var(--color-accent)">Firebase Console</a> → Create Project<br>
+            <strong>Step 2:</strong> Enable Authentication → Google Sign-In<br>
+            <strong>Step 3:</strong> Create Firestore Database (Production mode)<br>
+            <strong>Step 4:</strong> Project Settings → Web App → Copy config<br>
+            <strong>Step 5:</strong> <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--color-accent)">Google Cloud Console</a> → Create OAuth Client ID (Web) → Copy Client ID + Secret
+          </div>
+          <div class="field">
+            <label class="field-label">Paste Firebase config JSON</label>
+            <textarea id="f-firebase-config" class="input" rows="6" placeholder='{"apiKey":"...","projectId":"...","client_id":"...","client_secret":"..."}'
+                      style="font-family:var(--font-mono);font-size:11px"></textarea>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn btn--primary btn--sm" id="btn-firebase-save" style="flex:1">Validate & Connect</button>
+            <button class="btn btn--secondary btn--sm" id="btn-firebase-cancel">Cancel</button>
+          </div>
+          <div id="firebase-setup-status" style="display:none;margin-top:8px;font-size:11px;padding:6px 10px;border-radius:var(--radius-sm)"></div>
+        </div>
+
+        <!-- Connected state -->
+        <div id="firebase-connected" style="display:none">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--color-success)"></span>
+            <span id="firebase-email" style="font-size:12px;color:var(--color-text-muted)"></span>
+          </div>
+          <div style="font-size:11px;color:var(--color-text-subtle);margin-bottom:8px">
+            Project: <code id="firebase-project-id"></code>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn--secondary btn--sm" id="btn-firebase-logout">Logout</button>
+            <button class="btn btn--secondary btn--sm" id="btn-firebase-remove" style="color:var(--color-danger)">Remove</button>
+          </div>
         </div>
       </div>
     </div>

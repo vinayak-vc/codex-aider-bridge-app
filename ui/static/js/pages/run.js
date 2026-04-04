@@ -438,8 +438,42 @@ function _sendNotification(title, body) {
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
-function openSettings() { $('settings-overlay').style.display = ''; }
+function openSettings() { $('settings-overlay').style.display = ''; refreshFirebaseUI(); }
 function closeSettings() { $('settings-overlay').style.display = 'none'; saveSettings(); }
+
+async function refreshFirebaseUI() {
+  try {
+    const status = await fetch('/api/firebase/status').then(r => r.json());
+    const notSetup = $('firebase-not-setup');
+    const wizard = $('firebase-wizard');
+    const connected = $('firebase-connected');
+    if (status.configured && status.authenticated) {
+      if (notSetup) notSetup.style.display = 'none';
+      if (wizard) wizard.style.display = 'none';
+      if (connected) {
+        connected.style.display = '';
+        $('firebase-email').textContent = status.email || '';
+        $('firebase-project-id').textContent = status.project_id || '';
+      }
+    } else if (status.configured) {
+      if (notSetup) notSetup.style.display = 'none';
+      if (wizard) wizard.style.display = '';
+      if (connected) connected.style.display = 'none';
+    } else {
+      if (notSetup) notSetup.style.display = '';
+      if (wizard) wizard.style.display = 'none';
+      if (connected) connected.style.display = 'none';
+    }
+  } catch (_) {}
+}
+
+function _showSetupStatus(el, msg, success) {
+  if (!el) return;
+  el.style.display = '';
+  el.style.background = success ? 'color-mix(in srgb, var(--color-success) 10%, transparent)' : 'color-mix(in srgb, var(--color-danger) 10%, transparent)';
+  el.style.color = success ? 'var(--color-success)' : 'var(--color-danger)';
+  el.textContent = msg;
+}
 
 function collectSettings() {
   const sup = document.querySelector('input[name="supervisor"]:checked')?.value || 'claude';
@@ -535,15 +569,45 @@ function bindControls() {
   // Settings panel
   $('wiz-btn-close-settings')?.addEventListener('click', closeSettings);
 
-  // Cloud sync toggle
-  $('f-cloud-sync')?.addEventListener('change', async e => {
+  // Per-user Firebase setup
+  $('btn-firebase-wizard')?.addEventListener('click', () => {
+    $('firebase-not-setup').style.display = 'none';
+    $('firebase-wizard').style.display = '';
+  });
+  $('btn-firebase-cancel')?.addEventListener('click', () => {
+    $('firebase-wizard').style.display = 'none';
+    $('firebase-not-setup').style.display = '';
+  });
+  $('btn-firebase-save')?.addEventListener('click', async () => {
+    const raw = $('f-firebase-config')?.value?.trim();
+    if (!raw) { toast('Paste your Firebase config JSON.', 'warning'); return; }
+    const statusEl = $('firebase-setup-status');
     try {
-      if (e.target.checked) {
-        await fetch('/api/sync/enable', { method: 'POST' });
-      } else {
-        await fetch('/api/sync/disable', { method: 'POST' });
-      }
-    } catch (_) {}
+      const config = JSON.parse(raw);
+      // Save config
+      const saveRes = await apiPost('/api/firebase/setup', config);
+      if (saveRes.error) { _showSetupStatus(statusEl, saveRes.error, false); return; }
+      // Test connection
+      const testRes = await apiPost('/api/firebase/test', {});
+      if (!testRes.ok) { _showSetupStatus(statusEl, testRes.error || 'Connection failed', false); return; }
+      // Login
+      _showSetupStatus(statusEl, 'Connecting... (browser will open for Google login)', true);
+      const loginRes = await apiPost('/api/firebase/login', {});
+      if (loginRes.error) { _showSetupStatus(statusEl, loginRes.error, false); return; }
+      _showSetupStatus(statusEl, 'Connected! Email: ' + loginRes.email, true);
+      setTimeout(refreshFirebaseUI, 1000);
+    } catch (ex) {
+      _showSetupStatus(statusEl, 'Invalid JSON: ' + ex.message, false);
+    }
+  });
+  $('btn-firebase-logout')?.addEventListener('click', async () => {
+    await fetch('/api/firebase/logout', { method: 'POST' });
+    refreshFirebaseUI();
+  });
+  $('btn-firebase-remove')?.addEventListener('click', async () => {
+    if (!confirm('Remove Firebase config? This will stop cloud sync.')) return;
+    await fetch('/api/firebase/clear', { method: 'POST' });
+    refreshFirebaseUI();
   });
   $('settings-overlay')?.addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
   $('btn-browse-folder')?.addEventListener('click', async () => {
