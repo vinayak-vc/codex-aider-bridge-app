@@ -31,7 +31,7 @@ let _progressTasks = [];
 let _lineCount = 0;
 let _autoScroll = true;
 let _logView = 'parsed';
-let _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
+let _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, aider: 0, info: 0 };
 let _hiddenTags = new Set();
 
 // ── Wizard Navigation ────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ function clearLog() {
   if (terminal) terminal.innerHTML = '';
   const parsed = $('log-parsed');
   if (parsed) { parsed.querySelectorAll('.parsed-event').forEach(e => e.remove()); const pe = $('log-parsed-empty'); if (pe) pe.style.display = ''; }
-  _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
+  _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, aider: 0, info: 0 };
   Object.keys(_tagCounts).forEach(tag => { const el = $(`tag-count-${tag}`); if (el) el.textContent = '0'; });
 }
 
@@ -354,6 +354,7 @@ function _parseLine(rawLine) {
   if (/Bridge start|Plan ready|Pre-flight|Loaded.*task|Project knowledge/.test(line)) return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.info };
   if (/\[proxy\]/.test(line)) return { time, tag: 'proxy', cls: '--proxy', label: 'Proxy', text: line.replace(/.*\[proxy\]\s*/, ''), icon: icons.info };
   if (/\[bridge\]/.test(line)) return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: line.replace(/.*\[bridge\]\s*/, ''), icon: icons.info };
+  if (/\[aider\]/.test(line)) return { time, tag: 'aider', cls: '--task', label: 'Aider', text: line.replace(/.*\[aider\]:\s*/, ''), icon: icons.play };
   if (/Git readiness|gitignore|Rollback point|undo all changes/.test(line)) return null;
   if (/\|\s*INFO\s*\|/.test(line)) return { time, tag: 'info', cls: '--info', label: '', text: line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), icon: '' };
   return null;
