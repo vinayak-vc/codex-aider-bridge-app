@@ -75,12 +75,27 @@ async function checkPending() {
 
 // ── Step 1: Goal ─────────────────────────────────────────────────────────────
 
+function _showPlanLoader(title, sub) {
+  const ov = $('plan-loading-overlay');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  const t = $('plan-loading-title');
+  const s = $('plan-loading-sub');
+  if (t) t.textContent = title || 'Generating plan via supervisor...';
+  if (s) s.textContent = sub || 'This may take 10–30 seconds. Do not close this window.';
+}
+function _hidePlanLoader() {
+  const ov = $('plan-loading-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
 async function generatePlan() {
   const goal = ($('wiz-goal')?.value || '').trim();
   if (!goal) { toast('Please enter a goal.', 'warning'); return; }
 
   const btn = $('wiz-btn-generate');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating plan via supervisor...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  _showPlanLoader('Saving settings...', 'Preparing to generate plan...');
 
   try {
     // Save settings first
@@ -89,10 +104,11 @@ async function generatePlan() {
     await apiPost('/api/settings', settings);
 
     // Send goal directly to supervisor (Claude/Codex) for plan generation.
-    // The supervisor is the expensive cloud AI — it does the thinking.
-    // NO Ollama brief step — the local model is only for coding via Aider.
-    toast('Supervisor is generating task plan...', 'info');
-    const brief = { goal };  // Pass goal as-is to the plan endpoint
+    _showPlanLoader(
+      'Supervisor is generating tasks...',
+      'Claude is analyzing your goal and creating Aider-grade tasks. This may take 10–60 seconds.'
+    );
+    const brief = { goal };
     const plan = await apiPost('/api/run/nl/plan', { repo_root: settings.repo_root, brief });
     _planTasks = plan.tasks || [];
 
@@ -102,7 +118,10 @@ async function generatePlan() {
     }
 
     // Save plan to file
-    if (btn) btn.textContent = '⏳ Saving plan...';
+    _showPlanLoader(
+      `Saving plan (${_planTasks.length} tasks)...`,
+      'Writing plan file to disk...'
+    );
     const confirmed = await apiPost('/api/run/nl/plan/confirm', {
       repo_root: settings.repo_root,
       tasks: _planTasks,
@@ -117,6 +136,7 @@ async function generatePlan() {
   } catch (err) {
     toast(err.message || 'Plan generation failed.', 'error');
   } finally {
+    _hidePlanLoader();
     if (btn) { btn.disabled = false; btn.textContent = 'Generate Plan →'; }
   }
 }

@@ -2646,11 +2646,19 @@ def api_run_nl_plan():
             repo_path = Path(repo_root)
             repo_tree = RepoScanner(repo_path).scan()
 
+            # Plan generation timeout: cap at 120s — plans shouldn't take
+            # more than 2 minutes even from slow supervisors.
+            _plan_timeout = min(int(settings.get("task_timeout", 300)), 120)
+            logger.info(
+                "Generating plan via supervisor '%s' (timeout=%ds)",
+                supervisor_type, _plan_timeout,
+            )
+
             agent = SupervisorAgent(
                 repo_root=repo_path,
                 command=supervisor_cmd,
                 logger=logger,
-                timeout=int(settings.get("task_timeout", 300)),
+                timeout=_plan_timeout,
             )
             plan_text = agent.generate_plan(
                 goal=goal_text,
@@ -2658,6 +2666,7 @@ def api_run_nl_plan():
                 knowledge_context=knowledge_ctx or None,
                 workflow_profile=settings.get("workflow_profile", "standard"),
             )
+            logger.info("Supervisor returned plan (%d chars)", len(plan_text))
 
             parser = TaskParser()
             tasks_parsed = parser.parse(plan_text)
