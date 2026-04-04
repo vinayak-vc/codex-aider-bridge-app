@@ -184,9 +184,10 @@ class FirebaseSync:
             state = str(uuid.uuid4())[:8]
 
             # Build Google OAuth URL
+            _client_id = self._config.get("clientId") or self._config.get("client_id", "")
             auth_url = (
                 f"https://accounts.google.com/o/oauth2/v2/auth?"
-                f"client_id={urllib.parse.quote(self._config.get('clientId', self._api_key))}&"
+                f"client_id={urllib.parse.quote(_client_id)}&"
                 f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
                 f"response_type=code&"
                 f"scope=email%20profile&"
@@ -248,10 +249,12 @@ class FirebaseSync:
     def _exchange_code_for_tokens(self, code: str, redirect_uri: str) -> dict:
         """Exchange OAuth authorization code for Firebase ID token."""
         # Step 1: Exchange code for Google tokens
+        _client_id = self._config.get("clientId") or self._config.get("client_id", "")
+        _client_secret = self._config.get("clientSecret") or self._config.get("client_secret", "")
         body = urllib.parse.urlencode({
             "code": code,
-            "client_id": self._config.get("clientId", ""),
-            "client_secret": self._config.get("clientSecret", ""),
+            "client_id": _client_id,
+            "client_secret": _client_secret,
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
         }).encode()
