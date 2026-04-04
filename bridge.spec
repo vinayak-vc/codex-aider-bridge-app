@@ -27,8 +27,9 @@ a = Analysis(
     pathex=["."],
     binaries=[*_wv_bins],
     datas=[
-        # Include main.py so bridge subprocess can import it
+        # Include main.py and firebase config so bridge subprocess can find them
         ("main.py", "."),
+        ("firebase_config.json", "."),
 
         # Include all Python packages
         ("ui", "ui"),

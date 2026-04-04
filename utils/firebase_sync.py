@@ -29,8 +29,13 @@ else:
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _CREDENTIALS_FILE = _DATA_DIR / "firebase_credentials.json"
-_CONFIG_FILE = _DATA_DIR / "firebase_config.json"
 _SYNC_QUEUE_FILE = _DATA_DIR / "firebase_sync_queue.json"
+
+# Config lookup: bundled with app first, then user's data dir
+_APP_ROOT = Path(__file__).parent.parent
+_BUNDLED_CONFIG = _APP_ROOT / "firebase_config.json"
+_USER_CONFIG = _DATA_DIR / "firebase_config.json"
+_CONFIG_FILE = _BUNDLED_CONFIG if _BUNDLED_CONFIG.exists() else _USER_CONFIG
 
 # Fields that are NEVER synced to Firestore
 _SENSITIVE_FIELDS = {
