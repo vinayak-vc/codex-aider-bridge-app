@@ -134,4 +134,3 @@ class BridgeConfig:
     skip_onboarding_scan: bool = False  # skip one-time source scan on first use
     relay_session_id: Optional[str] = None
     auto_commit: bool = True  # auto-commit after each approved task
-    max_task_retries: int = 10  # default 10 attempts with escalating strategy
