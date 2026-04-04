@@ -350,6 +350,16 @@ export async function initProjectBar() {
   refreshGitStatus();
   refreshRunStatus();
   refreshGpuStatus();
+
+  // Load version info into status bar
+  try {
+    const ver = await fetch('/api/version').then(r => r.json());
+    const el = $('sb-version');
+    if (el) {
+      el.textContent = `v${ver.version}`;
+      el.title = `Version: ${ver.version}\nCommit: ${ver.commit_short || '?'}\nBranch: ${ver.branch || '?'}\nBuild: ${ver.build_date || '?'}\nFull SHA: ${ver.commit || '?'}`;
+    }
+  } catch (_) {}
   setInterval(refreshGpuStatus, 15000); // Refresh GPU status every 15s
 
   // Switcher button toggles dropdown

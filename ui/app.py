@@ -1841,6 +1841,15 @@ def api_sync_delete_account():
     return jsonify({"ok": True})
 
 
+@app.route("/api/version")
+def api_version():
+    try:
+        from utils.version import get_version_info
+        return jsonify(get_version_info())
+    except Exception:
+        return jsonify({"version": "0.4.62", "commit": "", "branch": ""})
+
+
 # ── Per-User Firebase Setup ───────────────────────────────────────────────────
 
 @app.route("/api/firebase/status")
