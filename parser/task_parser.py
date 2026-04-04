@@ -164,6 +164,11 @@ class TaskParser:
             task_id, must_not_exist, "must_not_exist"
         )
 
+        # Optional model field — supervisor may recommend a specific model per task
+        task_model: Any = item.get("model")
+        if task_model is not None and not isinstance(task_model, str):
+            task_model = None  # ignore invalid model values silently
+
         return Task(
             id=task_id,
             files=normalized_files,
@@ -172,6 +177,7 @@ class TaskParser:
             context_files=normalized_context_files,
             must_exist=normalized_must_exist,
             must_not_exist=normalized_must_not_exist,
+            model=task_model,
         )
 
     def _normalize_relative_paths(

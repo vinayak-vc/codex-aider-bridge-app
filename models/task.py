@@ -15,6 +15,7 @@ class Task:
     context_files: list[str] = field(default_factory=list)
     must_exist: list[str] = field(default_factory=list)
     must_not_exist: list[str] = field(default_factory=list)
+    model: Optional[str] = None  # Supervisor-recommended model for this task
 
 
 @dataclass(frozen=True)

@@ -463,6 +463,28 @@ class AiderRunner:
         task: Task,
         file_paths: list[Path],
         aider_context: Optional[AiderContext] = None,
+        model_override: Optional[str] = None,
+    ) -> ExecutionResult:
+        # Per-task model override: temporarily swap model for this run
+        _original_model = self._model
+        if model_override:
+            self._logger.info(
+                "Task %s: model override → %s (default: %s)",
+                task.id, model_override, self._model,
+            )
+            self._model = model_override
+
+        try:
+            return self._run_inner(task, file_paths, aider_context)
+        finally:
+            # Always restore the original model
+            self._model = _original_model
+
+    def _run_inner(
+        self,
+        task: Task,
+        file_paths: list[Path],
+        aider_context: Optional[AiderContext] = None,
     ) -> ExecutionResult:
         # Snapshot file hashes AND raw bytes before Aider runs.
         pre_hashes = self._snapshot_hashes(file_paths)

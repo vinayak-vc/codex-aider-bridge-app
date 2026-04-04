@@ -52,6 +52,7 @@ DEFAULT_SETTINGS: dict = {
     "plan_file": "",
     "dry_run": False,
     "auto_commit": True,
+    "model_lock": False,  # True = always use aider_model, skip smart routing
     "clarifications": [],
 }
 

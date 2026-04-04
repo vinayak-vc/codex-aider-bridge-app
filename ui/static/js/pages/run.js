@@ -488,6 +488,7 @@ function collectSettings() {
     task_timeout: parseInt($('f-task-timeout')?.value || '600', 10),
     max_task_retries: parseInt($('f-max-retries')?.value || '10', 10),
     dry_run: $('f-dry-run')?.checked || false,
+    model_lock: $('f-model-lock')?.checked || false,
     auto_commit: ($('sb-auto-commit')?.checked !== false),
     goal: $('wiz-goal')?.value?.trim() || '',
     plan_file: _planFile,
@@ -505,6 +506,7 @@ function populateSettings(s) {
   if ($('f-task-timeout')) $('f-task-timeout').value = s.task_timeout || 600;
   if ($('f-max-retries')) $('f-max-retries').value = s.max_task_retries || 10;
   if ($('f-dry-run')) $('f-dry-run').checked = !!s.dry_run;
+  if ($('f-model-lock')) $('f-model-lock').checked = !!s.model_lock;
 }
 
 async function saveSettings() {

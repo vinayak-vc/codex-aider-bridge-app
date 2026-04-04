@@ -119,6 +119,8 @@ class BridgeRun:
             cmd.extend(["--plan-file", settings["plan_file"].strip()])
         if settings.get("dry_run"):
             cmd.append("--dry-run")
+        if settings.get("model_lock"):
+            cmd.append("--model-lock")
         if not settings.get("auto_commit", True):
             cmd.append("--no-auto-commit")
         if settings.get("task_timeout"):

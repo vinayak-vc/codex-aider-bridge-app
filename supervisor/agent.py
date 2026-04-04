@@ -62,6 +62,7 @@ class SupervisorAgent:
         knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
         feature_specs: Optional[str] = None,
+        model_roster: Optional[str] = None,
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
         prompt = self._build_plan_prompt(
@@ -72,6 +73,7 @@ class SupervisorAgent:
             knowledge_context,
             workflow_profile,
             feature_specs=feature_specs,
+            model_roster=model_roster,
         )
         self._logger.debug(
             "Plan prompt (%d chars): %.500s%s",
@@ -130,6 +132,7 @@ class SupervisorAgent:
         knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
         feature_specs: Optional[str] = None,
+        model_roster: Optional[str] = None,
     ) -> str:
         idea_block = ""
         if idea_text:
@@ -212,6 +215,7 @@ class SupervisorAgent:
             f"{knowledge_block}"
             f"{idea_block}"
             f"{self._build_feature_specs_block(feature_specs)}"
+            f"{self._build_model_roster_block(model_roster)}"
             f"\nGoal: {goal}\n"
             f"{feedback_block}"
         )
@@ -230,6 +234,25 @@ class SupervisorAgent:
             "Do NOT generate vague 'implement feature X' tasks. The coding model\n"
             "is a small local LLM that cannot read the spec files itself.\n\n"
             f"{feature_specs}\n"
+        )
+
+    @staticmethod
+    def _build_model_roster_block(model_roster: Optional[str]) -> str:
+        """Build the AVAILABLE MODELS prompt block for smart routing."""
+        if not model_roster:
+            return ""
+        return (
+            "\nAVAILABLE MODELS — pick the best model for each task:\n"
+            f"{model_roster}\n\n"
+            "Add a \"model\" field to each task JSON with the model name.\n"
+            "Guidelines:\n"
+            "- Use FAST models for: simple edits, config changes, renames,\n"
+            "  single-function modifications, adding imports, small refactors\n"
+            "- Use SLOW/HIGH-QUALITY models for: new algorithms, complex business\n"
+            "  logic, multi-concern refactors, security-sensitive code, API design\n"
+            "- When in doubt, prefer the fast model — speed matters more than\n"
+            "  marginal quality for most coding tasks\n"
+            "- Omit the \"model\" field to use the user's default model\n\n"
         )
 
     def _build_subplan_prompt(self, task: Task, error_message: str) -> str:
@@ -503,7 +526,8 @@ class SupervisorAgent:
             '          "instruction": { "type": "string", "minLength": 1 },\n'
             '          "type": { "type": "string", "enum": ["create", "modify", "delete", "validate", "read", "investigate"] },\n'
             '          "must_exist": { "type": "array", "items": { "type": "string" } },\n'
-            '          "must_not_exist": { "type": "array", "items": { "type": "string" } }\n'
+            '          "must_not_exist": { "type": "array", "items": { "type": "string" } },\n'
+            '          "model": { "type": "string" }\n'
             "        }\n"
             "      }\n"
             "    }\n"

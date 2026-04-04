@@ -344,6 +344,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--model-lock",
+        action="store_true",
+        help="Lock the model to --aider-model for all tasks. Disables smart model routing.",
+    )
+    parser.add_argument(
         "--aider-no-map",
         action="store_true",
         help=(
@@ -499,6 +504,58 @@ def auto_split_tasks(
     return result
 
 
+# ── Smart model routing ──────────────────────────────────────────────────────
+
+def _get_installed_models_for_routing(
+    logger: logging.Logger,
+) -> list[dict]:
+    """Get installed Ollama models with quality/speed metadata.
+
+    Returns a list of dicts: {name, quality, speed, param_size}.
+    Only includes coding-capable models from model_advisor.MODELS.
+    """
+    try:
+        from utils.model_advisor import MODELS, _get_ollama_models
+    except ImportError:
+        return []
+
+    installed_names = _get_ollama_models()
+    if not installed_names:
+        return []
+
+    result: list[dict] = []
+    for model in MODELS:
+        # Match installed model names (partial match — "qwen2.5-coder:14b" matches "ollama/qwen2.5-coder:14b")
+        bare_name = model.name.replace("ollama/", "")
+        for inst in installed_names:
+            if bare_name in inst or inst in bare_name:
+                result.append({
+                    "name": model.name,
+                    "quality": model.quality,
+                    "speed": model.speed,
+                    "param_size": model.param_size,
+                })
+                break
+
+    if result:
+        logger.info(
+            "Model routing: %d coding model(s) installed: %s",
+            len(result),
+            ", ".join(m["name"] for m in result),
+        )
+    return result
+
+
+def _build_model_roster_text(models: list[dict]) -> str:
+    """Build a text block describing available models for the supervisor prompt."""
+    lines: list[str] = []
+    for m in models:
+        lines.append(
+            f"  {m['name']}  —  {m['speed']}, quality {m['quality']}/10, {m['param_size']} params"
+        )
+    return "\n".join(lines)
+
+
 def _build_feature_manifest(
     goal: str,
     repo_root: Path,
@@ -557,6 +614,7 @@ def obtain_plan(
     logger: logging.Logger,
     knowledge_context: Optional[str] = None,
     feature_specs: Optional[str] = None,
+    model_roster: Optional[str] = None,
 ) -> list[Task]:
     """Ask the supervisor to produce a valid JSON plan, retrying on failure.
 
@@ -576,6 +634,7 @@ def obtain_plan(
                 knowledge_context,
                 config.workflow_profile,
                 feature_specs=feature_specs,
+                model_roster=model_roster,
             )
             tasks = task_parser.parse(plan_text)
 
@@ -791,6 +850,7 @@ def execute_task_with_review(
     aider_context: Optional[AiderContext] = None,
     diagnostics: Optional[RunDiagnostics] = None,
     token_tracker: Optional[TokenTracker] = None,
+    model_override: Optional[str] = None,
 ) -> str:
     """Run one task through the Aider → diff → mechanical check loop.
 
@@ -1115,7 +1175,10 @@ def execute_task_with_review(
         # ── Step 1: Execute via Aider ────────────────────────────────────────
         if diagnostics:
             diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
-        execution_result = runner.run(current_task, selected_files.all_paths, aider_context)
+        execution_result = runner.run(
+            current_task, selected_files.all_paths, aider_context,
+            model_override=model_override,
+        )
 
         if execution_result.exit_code == -1:
             stderr = execution_result.stderr
@@ -2337,9 +2400,42 @@ def main() -> int:
                     "message": "Found feature specs — building manifest for planning",
                 })
 
+            # ── Smart model routing: detect installed models for supervisor ──
+            _model_lock = args.model_lock
+            _installed_models = _get_installed_models_for_routing(logger)
+            _model_roster: Optional[str] = None
+
+            if len(_installed_models) <= 1:
+                if _installed_models:
+                    logger.info("Model routing: only 1 model installed — using %s for all tasks",
+                                _installed_models[0]["name"])
+                # Suggest installing a second model for routing
+                if _installed_models and _installed_models[0].get("speed") == "slow":
+                    logger.info(
+                        "Tip: install a fast model (e.g. 'ollama pull qwen2.5-coder:7b') "
+                        "to enable smart model routing — fast model for simple tasks, "
+                        "current model for complex ones"
+                    )
+                    _emit_structured({
+                        "type": "bridge_status",
+                        "message": "Tip: install qwen2.5-coder:7b for smart model routing",
+                    })
+            elif _model_lock:
+                logger.info("Model routing: model locked to %s — skipping auto-selection",
+                            config.aider_model)
+            else:
+                _model_roster = _build_model_roster_text(_installed_models)
+                logger.info("Model routing: %d models available — supervisor will pick per-task",
+                            len(_installed_models))
+                _emit_structured({
+                    "type": "bridge_status",
+                    "message": f"Smart routing: {len(_installed_models)} models available",
+                })
+
             tasks = obtain_plan(
                 config, supervisor, task_parser, repo_tree, logger,
                 knowledge_context, feature_specs=feature_specs,
+                model_roster=_model_roster,
             )
 
         # Auto-split multi-file tasks into single-file sub-tasks.
@@ -2422,6 +2518,20 @@ def main() -> int:
                 completed_summaries=list(completed_summaries),
             )
 
+            # ── Per-task model override (smart routing) ────────────────────
+            _task_model_override: Optional[str] = None
+            if task.model and not _model_lock and len(_installed_models) > 1:
+                # Validate the supervisor's model pick exists
+                _valid_names = {m["name"] for m in _installed_models}
+                if task.model in _valid_names:
+                    _task_model_override = task.model
+                    logger.info("Task %s: using model %s (supervisor pick)", task.id, task.model)
+                else:
+                    logger.warning(
+                        "Task %s: supervisor picked '%s' but it's not installed — using default",
+                        task.id, task.model,
+                    )
+
             # Record pre-task SHA for rollback on failure
             _pre_task_sha = None
             try:
@@ -2438,6 +2548,7 @@ def main() -> int:
                     aider_context=aider_context,
                     diagnostics=diagnostics,
                     token_tracker=token_tracker,
+                    model_override=_task_model_override,
                 )
                 _consecutive_failures = 0  # Reset circuit breaker on success
             except RuntimeError as task_ex:
