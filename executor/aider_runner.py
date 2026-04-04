@@ -457,7 +457,11 @@ class AiderRunner:
         )
 
         if self._model:
-            arguments.extend(["--model", self._model])
+            # Ensure model has a provider prefix — LiteLLM requires it
+            _model = self._model
+            if _model and "/" not in _model and not _model.startswith("gpt") and not _model.startswith("claude"):
+                _model = f"ollama/{_model}"
+            arguments.extend(["--model", _model])
 
         arguments.extend([
             "--yes-always",
