@@ -499,6 +499,56 @@ def auto_split_tasks(
     return result
 
 
+def _build_feature_manifest(
+    goal: str,
+    repo_root: Path,
+    logger: logging.Logger,
+) -> Optional[str]:
+    """Scan the goal for folder references and read feature spec files.
+
+    If the goal mentions a folder path (e.g. "from missingFeatures/"), the
+    bridge reads all ``.md`` files inside and builds a manifest with each
+    feature's full content.  This manifest is then injected into the
+    supervisor's plan prompt so it can generate specific Aider-grade tasks.
+
+    Returns the manifest string, or None if no folder was found / matched.
+    """
+    # Match patterns like: "from missingFeatures/", "in features/*",
+    # "under docs/specs/", "at root/features/"
+    folder_patterns = re.findall(
+        r'(?:from|in|at|under)\s+([A-Za-z0-9_./\\-]+/)',
+        goal, re.IGNORECASE,
+    )
+
+    for folder_ref in folder_patterns:
+        folder_path = repo_root / folder_ref.rstrip("/")
+        if not folder_path.is_dir():
+            continue
+
+        md_files = sorted(folder_path.glob("*.md"))
+        if not md_files:
+            continue
+
+        logger.info(
+            "Feature manifest: found %d spec(s) in %s",
+            len(md_files), folder_ref,
+        )
+
+        sections: list[str] = []
+        for md_file in md_files:
+            content = md_file.read_text(encoding="utf-8", errors="replace").strip()
+            # Truncate very large specs to 3000 chars each
+            if len(content) > 3000:
+                content = content[:3000] + "\n... (truncated)"
+            sections.append(
+                f"=== FEATURE: {md_file.stem} ===\n{content}"
+            )
+
+        return "\n\n".join(sections)
+
+    return None
+
+
 def obtain_plan(
     config: BridgeConfig,
     supervisor: SupervisorAgent,
@@ -506,6 +556,7 @@ def obtain_plan(
     repo_tree: str,
     logger: logging.Logger,
     knowledge_context: Optional[str] = None,
+    feature_specs: Optional[str] = None,
 ) -> list[Task]:
     """Ask the supervisor to produce a valid JSON plan, retrying on failure.
 
@@ -524,6 +575,7 @@ def obtain_plan(
                 feedback,
                 knowledge_context,
                 config.workflow_profile,
+                feature_specs=feature_specs,
             )
             tasks = task_parser.parse(plan_text)
 
@@ -2277,8 +2329,17 @@ def main() -> int:
                     "No plan file provided and no supervisor configured. "
                     "Either pass --plan-file or set BRIDGE_SUPERVISOR_COMMAND."
                 )
+            # ── Feature manifest: read spec files from folders referenced in goal ─
+            feature_specs = _build_feature_manifest(config.goal, repo_root, logger)
+            if feature_specs:
+                _emit_structured({
+                    "type": "bridge_status",
+                    "message": "Found feature specs — building manifest for planning",
+                })
+
             tasks = obtain_plan(
-                config, supervisor, task_parser, repo_tree, logger, knowledge_context
+                config, supervisor, task_parser, repo_tree, logger,
+                knowledge_context, feature_specs=feature_specs,
             )
 
         # Auto-split multi-file tasks into single-file sub-tasks.

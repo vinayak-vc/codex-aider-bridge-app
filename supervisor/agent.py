@@ -61,6 +61,7 @@ class SupervisorAgent:
         feedback: Optional[str] = None,
         knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
+        feature_specs: Optional[str] = None,
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
         prompt = self._build_plan_prompt(
@@ -70,6 +71,7 @@ class SupervisorAgent:
             feedback,
             knowledge_context,
             workflow_profile,
+            feature_specs=feature_specs,
         )
         self._logger.debug(
             "Plan prompt (%d chars): %.500s%s",
@@ -127,6 +129,7 @@ class SupervisorAgent:
         feedback: Optional[str],
         knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
+        feature_specs: Optional[str] = None,
     ) -> str:
         idea_block = ""
         if idea_text:
@@ -208,8 +211,25 @@ class SupervisorAgent:
             f"Repo structure:\n{repo_tree}\n"
             f"{knowledge_block}"
             f"{idea_block}"
+            f"{self._build_feature_specs_block(feature_specs)}"
             f"\nGoal: {goal}\n"
             f"{feedback_block}"
+        )
+
+    @staticmethod
+    def _build_feature_specs_block(feature_specs: Optional[str]) -> str:
+        """Build the FEATURE SPECIFICATIONS prompt block."""
+        if not feature_specs:
+            return ""
+        return (
+            "\nFEATURE SPECIFICATIONS:\n"
+            "The user wants you to implement each feature described below.\n"
+            "Generate specific Aider-grade tasks for EACH feature specification.\n"
+            "Each task instruction MUST reference exact details from the spec —\n"
+            "function names, parameters, routes, fields, data shapes, etc.\n"
+            "Do NOT generate vague 'implement feature X' tasks. The coding model\n"
+            "is a small local LLM that cannot read the spec files itself.\n\n"
+            f"{feature_specs}\n"
         )
 
     def _build_subplan_prompt(self, task: Task, error_message: str) -> str:
