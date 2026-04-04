@@ -200,6 +200,10 @@
       </label>
     </div>
     <div class="status-bar-right">
+      <span class="status-item" id="sb-cloud-status" style="display:none" title="Cloud sync status">
+        <span class="status-dot" id="sb-cloud-dot" data-status="idle"></span>
+        <span id="sb-cloud-label">Sync off</span>
+      </span>
       <span class="status-item" id="sb-gpu-status" title="GPU status">
         <span class="status-dot" id="sb-gpu-dot" data-status="unknown"></span>
         <span id="sb-gpu-label">GPU: checking...</span>
@@ -343,8 +347,9 @@
   })();
 </script>
 
-<!-- Action logger — records all UI actions for debugging -->
+<!-- Action logger + Firebase auth -->
 <script type="module" src="{{ url_for('static', filename='js/core/action-log.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/core/firebase-auth.js') }}"></script>
 {% block page_script %}{% endblock %}
 </body>
 </html>

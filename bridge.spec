@@ -94,6 +94,7 @@ a = Analysis(
         "utils.checkpoint",
         "utils.telemetry",
         "utils.model_advisor",
+        "utils.firebase_sync",
         "context.project_understanding",
         "bridge_logging",
         "bridge_logging.logger",

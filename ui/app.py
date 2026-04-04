@@ -1692,6 +1692,121 @@ def api_telemetry_save():
     return jsonify({"ok": True, "path": str(path)})
 
 
+# ── Firebase Auth & Sync ─────────────────────────────────────────────────────
+
+@app.route("/api/auth/status")
+def api_auth_status():
+    try:
+        from utils.firebase_sync import get_firebase_sync
+        sync = get_firebase_sync()
+        if not sync:
+            return jsonify({"logged_in": False, "configured": False})
+        return jsonify({**sync.get_user_info(), "configured": True})
+    except Exception:
+        return jsonify({"logged_in": False, "configured": False})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    try:
+        from utils.firebase_sync import get_firebase_sync, AuthError
+        sync = get_firebase_sync()
+        if not sync:
+            return jsonify({"error": "Firebase not configured. Place firebase_config.json in the app data directory."}), 400
+        result = sync.login_with_google()
+        if result.get("ok"):
+            sync.update_profile()
+        return jsonify(result)
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    try:
+        from utils.firebase_sync import get_firebase_sync
+        sync = get_firebase_sync()
+        if sync:
+            sync.logout()
+        return jsonify({"ok": True})
+    except Exception:
+        return jsonify({"ok": True})
+
+
+@app.route("/api/sync/enable", methods=["POST"])
+def api_sync_enable():
+    from utils.firebase_sync import get_firebase_sync
+    sync = get_firebase_sync()
+    if not sync or not sync.is_authenticated():
+        return jsonify({"error": "Login first to enable sync."}), 400
+    sync.set_enabled(True)
+    # Flush any queued operations
+    flushed = sync.flush_queue()
+    return jsonify({"ok": True, "flushed": flushed})
+
+
+@app.route("/api/sync/disable", methods=["POST"])
+def api_sync_disable():
+    from utils.firebase_sync import get_firebase_sync
+    sync = get_firebase_sync()
+    if sync:
+        sync.set_enabled(False)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/sync/status")
+def api_sync_status():
+    from utils.firebase_sync import get_firebase_sync
+    sync = get_firebase_sync()
+    if not sync:
+        return jsonify({"enabled": False, "authenticated": False, "configured": False})
+    status = sync.get_sync_status()
+    status["configured"] = True
+    return jsonify(status)
+
+
+@app.route("/api/sync/push", methods=["POST"])
+def api_sync_push():
+    """Force manual sync of current project data."""
+    from utils.firebase_sync import get_firebase_sync
+    sync = get_firebase_sync()
+    if not sync or not sync.is_enabled():
+        return jsonify({"error": "Sync not enabled."}), 400
+
+    data = request.json or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+
+    if repo_root:
+        project_name = Path(repo_root).name
+        # Push knowledge
+        try:
+            from utils.project_knowledge import load_knowledge
+            knowledge = load_knowledge(Path(repo_root))
+            sync.push_project_meta(project_name, knowledge)
+        except Exception:
+            pass
+        # Push settings
+        sync.push_settings(state_store.load_settings())
+        # Flush queue
+        flushed = sync.flush_queue()
+        return jsonify({"ok": True, "project": project_name, "flushed": flushed})
+
+    return jsonify({"ok": True, "flushed": sync.flush_queue()})
+
+
+@app.route("/api/sync/delete-account", methods=["POST"])
+def api_sync_delete_account():
+    """Delete all cloud data and logout."""
+    from utils.firebase_sync import get_firebase_sync
+    sync = get_firebase_sync()
+    if sync:
+        sync.delete_all_data()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/projects/status")
 def api_projects_status():
     """Return all projects with their last run status and task progress."""

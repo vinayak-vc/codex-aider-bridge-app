@@ -2409,6 +2409,19 @@ def main() -> int:
         except Exception as _rep_ex:
             logger.warning("Could not generate run report: %s", _rep_ex)
 
+        # Firebase cloud sync (non-blocking)
+        try:
+            from utils.firebase_sync import get_firebase_sync
+            _fb = get_firebase_sync()
+            if _fb and _fb.is_enabled():
+                _project_name = repo_root.name
+                _fb.push_run_data(_project_name, token_report)
+                _fb.push_token_data(_project_name, token_report)
+                _fb.flush_queue()
+                logger.info("Cloud sync: pushed run data for %s", _project_name)
+        except Exception as _fb_ex:
+            logger.debug("Cloud sync skipped: %s", _fb_ex)
+
         # Write run diagnostics
         try:
             diag_report = diagnostics.finalize(

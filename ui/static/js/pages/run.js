@@ -534,6 +534,17 @@ function bindControls() {
 
   // Settings panel
   $('wiz-btn-close-settings')?.addEventListener('click', closeSettings);
+
+  // Cloud sync toggle
+  $('f-cloud-sync')?.addEventListener('change', async e => {
+    try {
+      if (e.target.checked) {
+        await fetch('/api/sync/enable', { method: 'POST' });
+      } else {
+        await fetch('/api/sync/disable', { method: 'POST' });
+      }
+    } catch (_) {}
+  });
   $('settings-overlay')?.addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
   $('btn-browse-folder')?.addEventListener('click', async () => {
     try { const d = await fetch('/api/browse/folder').then(r => r.json()); if (d.path) $('f-repo-root').value = d.path; } catch (_) {}
