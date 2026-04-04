@@ -422,28 +422,52 @@ class SupervisorAgent:
             )
 
             try:
-                # Use Popen + communicate() instead of subprocess.run(input=)
-                # because subprocess.run with large input= can deadlock on
-                # Windows when the pipe buffer fills up.
-                proc = subprocess.Popen(
-                    arguments,
-                    stdin=subprocess.PIPE if stdin_prompt else subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=self._repo_root,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    creationflags=_WIN_NO_WINDOW,
-                )
+                # For non-exec commands with large stdin prompts (Claude CLI),
+                # write the prompt to a temp file and pipe it via shell
+                # redirection: `type prompt.txt | claude -p`
+                # Direct stdin piping hangs on Windows with large prompts
+                # because Claude CLI doesn't fully consume piped stdin.
+                if stdin_prompt and sys.platform == "win32":
+                    import tempfile as _tf
+                    prompt_file = Path(tmp_dir) / "prompt_input.txt"
+                    prompt_file.write_text(stdin_prompt, encoding="utf-8")
+                    shell_cmd = f'type "{prompt_file}" | {" ".join(arguments)}'
+                    print(f"[SUPERVISOR] Using shell pipe: type prompt.txt | {' '.join(arguments)}", flush=True)
+                    proc = subprocess.Popen(
+                        shell_cmd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=self._repo_root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=_WIN_NO_WINDOW,
+                        shell=True,
+                    )
+                else:
+                    proc = subprocess.Popen(
+                        arguments,
+                        stdin=subprocess.PIPE if stdin_prompt else subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=self._repo_root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=_WIN_NO_WINDOW,
+                    )
                 try:
                     stdout, stderr = proc.communicate(
-                        input=stdin_prompt,
+                        input=stdin_prompt if not (stdin_prompt and sys.platform == "win32") else None,
                         timeout=self._timeout,
                     )
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                    proc.communicate(timeout=5)  # drain pipes
+                    try:
+                        proc.communicate(timeout=5)
+                    except Exception:
+                        pass
                     print(f"[SUPERVISOR] TIMED OUT after {self._timeout}s!", flush=True)
                     self._logger.error(
                         "Supervisor TIMED OUT after %ds. Command: %s",
