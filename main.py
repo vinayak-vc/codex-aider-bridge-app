@@ -1067,15 +1067,13 @@ def execute_task_with_review(
 
         if execution_result.exit_code == -1:
             stderr = execution_result.stderr
-            if "timed out" in stderr.lower():
+            # Aider couldn't start at all (not found, permissions, etc.)
+            # — but timeouts and stalls are now handled by the runner's auto-retry,
+            # so only raise immediately for non-recoverable launch failures.
+            if "timed out" not in stderr.lower() and "stalled" not in stderr.lower():
                 raise RuntimeError(
-                    f"Task {current_task.id}: Aider timed out after {config.task_timeout_seconds}s. "
-                    "The local LLM may be too slow for this task, or the task targets files that don't exist. "
-                    "Try: increase --task-timeout, use a faster model, or check the file paths in the plan."
+                    f"Task {current_task.id}: Aider could not start. {stderr}"
                 )
-            raise RuntimeError(
-                f"Task {current_task.id}: Aider could not start. {stderr}"
-            )
 
         _retry_budget_seconds += execution_result.duration_seconds
 

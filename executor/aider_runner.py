@@ -62,6 +62,15 @@ class AiderRunner:
     and project-specific code standards. Read-only context files (code standards
     and task-level references) are injected via --read so Aider can consult them
     without accidentally modifying them.
+
+    Performance tuning for local models:
+      - ``--edit-format diff`` → LLM outputs only the changed lines, not the
+        entire file.  Cuts generation time 5–10× for modify tasks.
+      - ``--map-tokens 1024`` → smaller repo-map so slow models spend less time
+        parsing context they'll never use.
+      - ``--map-refresh manual`` → don't re-scan the repo mid-task.
+      - Timeout hierarchy:  Ollama (+120 s) > Aider (+ 60 s) > Bridge timeout,
+        so the bridge always wins and gives a clean error.
     """
 
     def __init__(
@@ -70,7 +79,7 @@ class AiderRunner:
         command: str,
         logger: logging.Logger,
         model: Optional[str] = None,
-        timeout: int = 300,
+        timeout: int = 600,
         no_map: bool = False,
     ) -> None:
         self._repo_root = repo_root
@@ -247,14 +256,49 @@ class AiderRunner:
                 return category, message
         return None
 
-    def run(
+    # ── Estimate how long the LLM generation will take ─────────────────────
+
+    def _estimate_generation_seconds(self, file_paths: list[Path]) -> int:
+        """Rough estimate of how long the LLM will take to generate a response.
+
+        With ``--edit-format diff`` the model outputs only the changed lines
+        (typically 5-20% of the file).  With ``whole`` it rewrites everything.
+        We use diff format, so estimate ~20% of total file tokens as output.
+
+        Returns a conservative estimate in seconds at ~6 tok/s (slow local model).
+        """
+        total_chars = 0
+        for p in file_paths:
+            try:
+                if p.exists():
+                    total_chars += p.stat().st_size
+            except OSError:
+                pass
+        # ~4 chars per token, diff outputs ~20% of file, ~6 tok/s for slow models
+        estimated_output_tokens = (total_chars / 4) * 0.20
+        return max(60, int(estimated_output_tokens / 6) + 30)  # min 60s, +30s overhead
+
+    # ── Core subprocess execution ────────────────────────────────────────
+
+    def _execute_aider(
         self,
         task: Task,
         file_paths: list[Path],
-        aider_context: Optional[AiderContext] = None,
+        aider_context: Optional[AiderContext],
+        *,
+        lightweight: bool = False,
     ) -> ExecutionResult:
+        """Run a single Aider subprocess and return the result.
+
+        When ``lightweight=True``, strips repo-map and context files to minimise
+        input tokens — used as an automatic fallback when the first attempt
+        stalls or times out.
+        """
         try:
-            arguments, _ = self._build_command(task, file_paths, aider_context)
+            arguments, _ = self._build_command(
+                task, file_paths, aider_context,
+                lightweight=lightweight,
+            )
         except (FileNotFoundError, ValueError) as ex:
             return ExecutionResult(
                 task_id=task.id,
@@ -265,32 +309,25 @@ class AiderRunner:
                 command=[self._command],
             )
 
-        # Snapshot file hashes AND raw bytes before Aider runs.
-        # Bytes are needed for the trivial-change detector (whitespace-only edits).
-        pre_hashes = self._snapshot_hashes(file_paths)
-        pre_contents: dict[str, Optional[bytes]] = {
-            str(p): (p.read_bytes() if p.exists() else None) for p in file_paths
-        }
+        self._logger.debug("Running Aider%s: %s",
+                           " (lightweight)" if lightweight else "", arguments)
 
-        self._logger.debug("Running Aider: %s", arguments)
-
-        # Force UTF-8 in the Aider subprocess so rich/charmap errors don't
-        # cause a silent crash on Windows consoles (e.g. deepseek special tokens).
-        # Ensure Ollama/LiteLLM request timeout exceeds our bridge timeout
-        # so the bridge's own timeout is always the one that fires first.
-        _ollama_timeout = str(self._timeout + 120)  # +2min buffer
+        # ── Timeout hierarchy ────────────────────────────────────────────
+        # Ollama (+120 s) > Aider (+60 s) > Bridge timeout
+        # so the bridge's own timeout is always the one that fires first
+        # and we get a clean error instead of a litellm.Timeout crash.
+        _ollama_timeout = str(self._timeout + 120)
 
         _subprocess_env = {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
             "PYTHONUTF8": "1",
-            "BROWSER": "",          # Prevent Aider/LiteLLM from opening browser pages
-            "NO_COLOR": "1",        # Suppress color codes in non-interactive output
-            # Prevent Ollama/LiteLLM from timing out before the bridge does
-            "OLLAMA_KEEP_ALIVE": "10m",               # Keep model loaded in VRAM
-            "OLLAMA_REQUEST_TIMEOUT": _ollama_timeout, # Ollama HTTP request timeout
-            "LITELLM_REQUEST_TIMEOUT": _ollama_timeout,# LiteLLM request timeout
-            "OLLAMA_NUM_PARALLEL": "1",                # Prevent parallel request conflicts
+            "BROWSER": "",                             # Prevent browser opening
+            "NO_COLOR": "1",                           # No ANSI colours
+            "OLLAMA_KEEP_ALIVE": "10m",                # Keep model in VRAM
+            "OLLAMA_REQUEST_TIMEOUT": _ollama_timeout,  # Ollama HTTP timeout
+            "LITELLM_REQUEST_TIMEOUT": _ollama_timeout, # LiteLLM HTTP timeout
+            "OLLAMA_NUM_PARALLEL": "1",                # No parallel requests
         }
 
         _start = time.monotonic()
@@ -323,19 +360,27 @@ class AiderRunner:
             stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
             stderr_thread.start()
 
-            # Read stdout line-by-line — streams to bridge log
+            # ── Stall detection ──────────────────────────────────────────
+            # Track the last time Aider emitted output.  If the LLM goes
+            # silent for >120 s while the overall timeout hasn't fired yet,
+            # it's likely stuck in a loop or waiting for something.
+            _STALL_LIMIT = 180  # seconds of silence before we kill
             _last_output_time = time.monotonic()
+
             for raw_line in proc.stdout:
                 stripped = raw_line.rstrip("\n\r")
                 _stdout_lines.append(stripped)
                 _last_output_time = time.monotonic()
-                # Log every line so it appears in the UI
                 self._logger.info("Task %s [aider]: %s", task.id, stripped)
 
-                # Check timeout
-                if time.monotonic() - _start > self._timeout:
+                elapsed = time.monotonic() - _start
+                silent = time.monotonic() - _last_output_time
+
+                # Hard timeout
+                if elapsed > self._timeout:
                     proc.kill()
-                    self._logger.warning("Task %s: Aider timed out after %ds", task.id, self._timeout)
+                    self._logger.warning(
+                        "Task %s: Aider timed out after %ds", task.id, self._timeout)
                     return ExecutionResult(
                         task_id=task.id,
                         succeeded=False,
@@ -343,7 +388,22 @@ class AiderRunner:
                         stdout="\n".join(_stdout_lines[-50:]),
                         stderr=f"Aider timed out after {self._timeout}s",
                         command=arguments,
-                        duration_seconds=round(time.monotonic() - _start, 2),
+                        duration_seconds=round(elapsed, 2),
+                    )
+
+                # Stall detection
+                if silent > _STALL_LIMIT:
+                    proc.kill()
+                    self._logger.warning(
+                        "Task %s: Aider stalled — no output for %ds", task.id, int(silent))
+                    return ExecutionResult(
+                        task_id=task.id,
+                        succeeded=False,
+                        exit_code=-1,
+                        stdout="\n".join(_stdout_lines[-50:]),
+                        stderr=f"Aider stalled — no output for {int(silent)}s (LLM may be overloaded)",
+                        command=arguments,
+                        duration_seconds=round(elapsed, 2),
                     )
 
             proc.wait(timeout=10)
@@ -352,7 +412,6 @@ class AiderRunner:
             result_stdout = "\n".join(_stdout_lines)
             result_stderr = "\n".join(_stderr_lines)
 
-            # Build a compatible result object
             class _Result:
                 def __init__(self, rc, out, err):
                     self.returncode = rc
@@ -370,60 +429,6 @@ class AiderRunner:
                 command=arguments,
             )
 
-        # Scope enforcement: revert any files the model touched that were NOT
-        # in the task's file list. Reasoning models (deepseek-r1, etc.) tend to
-        # "helpfully" edit nearby files, which can corrupt binary assets or cause
-        # unexpected side-effects.
-        self._revert_out_of_scope_changes(task.id, file_paths)
-
-        # Detect silent failure — Aider exits 0 but never actually writes the
-        # target files, or only makes trivial whitespace/comment changes.
-        silent_failure_msg = self._check_for_silent_failure(
-            task.id, task.type, file_paths, pre_hashes, pre_contents
-        )
-        if silent_failure_msg and result.returncode == 0:
-            return ExecutionResult(
-                task_id=task.id,
-                succeeded=False,
-                exit_code=result.returncode,
-                stdout=result.stdout,
-                stderr=silent_failure_msg,
-                command=arguments,
-                duration_seconds=round(time.monotonic() - _start, 2),
-            )
-
-        # ── Fatal error classification ───────────────────────────────────────
-        # Detect LiteLLM/config/connection errors in stdout even when Aider
-        # exits with code 0.  These errors will never self-heal, so retrying
-        # the exact same config is pointless.
-        fatal = self._classify_fatal_error(result.stdout, result.stderr)
-        if fatal is not None:
-            category, message = fatal
-            return ExecutionResult(
-                task_id=task.id,
-                succeeded=False,
-                exit_code=result.returncode if result.returncode != 0 else 1,
-                stdout=result.stdout,
-                stderr=f"[{category}] {message}",
-                command=arguments,
-                duration_seconds=round(time.monotonic() - _start, 2),
-            )
-
-        interactive_prompt_msg = self._detect_interactive_prompt_output(
-            result.stdout,
-            result.stderr,
-        )
-        if interactive_prompt_msg is not None:
-            return ExecutionResult(
-                task_id=task.id,
-                succeeded=False,
-                exit_code=result.returncode if result.returncode != 0 else -1,
-                stdout=result.stdout,
-                stderr=interactive_prompt_msg,
-                command=arguments,
-                duration_seconds=round(time.monotonic() - _start, 2),
-            )
-
         return ExecutionResult(
             task_id=task.id,
             succeeded=result.returncode == 0,
@@ -433,6 +438,108 @@ class AiderRunner:
             command=arguments,
             duration_seconds=round(time.monotonic() - _start, 2),
         )
+
+    def run(
+        self,
+        task: Task,
+        file_paths: list[Path],
+        aider_context: Optional[AiderContext] = None,
+    ) -> ExecutionResult:
+        # Snapshot file hashes AND raw bytes before Aider runs.
+        pre_hashes = self._snapshot_hashes(file_paths)
+        pre_contents: dict[str, Optional[bytes]] = {
+            str(p): (p.read_bytes() if p.exists() else None) for p in file_paths
+        }
+
+        # Log estimated generation time so timeouts are understandable
+        est = self._estimate_generation_seconds(file_paths)
+        self._logger.info(
+            "Task %s: estimated LLM generation ~%ds (timeout=%ds, diff format)",
+            task.id, est, self._timeout,
+        )
+
+        # ── Attempt 1: normal run ────────────────────────────────────────
+        result_obj = self._execute_aider(task, file_paths, aider_context)
+
+        # ── Auto-retry on timeout with lightweight config ────────────────
+        # If the first attempt timed out or stalled, retry once with
+        # --map-tokens 0 (no repo-map) to slash input tokens.
+        _is_timeout = (
+            result_obj.exit_code == -1
+            and ("timed out" in (result_obj.stderr or "").lower()
+                 or "stalled" in (result_obj.stderr or "").lower())
+        )
+        if _is_timeout:
+            self._logger.warning(
+                "Task %s: first attempt timed out — retrying with lightweight config "
+                "(no repo-map, no context files)",
+                task.id,
+            )
+            # Re-snapshot in case first attempt partially wrote files
+            pre_hashes = self._snapshot_hashes(file_paths)
+            pre_contents = {
+                str(p): (p.read_bytes() if p.exists() else None) for p in file_paths
+            }
+            result_obj = self._execute_aider(
+                task, file_paths, aider_context, lightweight=True,
+            )
+            # If lightweight also timed out, return that error
+            if result_obj.exit_code == -1:
+                return result_obj
+
+        # ── Post-processing (scope check, silent failure, error classification) ─
+
+        # Scope enforcement: revert any files the model touched that were NOT
+        # in the task's file list.
+        self._revert_out_of_scope_changes(task.id, file_paths)
+
+        # Detect silent failure — Aider exits 0 but never actually writes the
+        # target files, or only makes trivial whitespace/comment changes.
+        silent_failure_msg = self._check_for_silent_failure(
+            task.id, task.type, file_paths, pre_hashes, pre_contents
+        )
+        if silent_failure_msg and result_obj.exit_code == 0:
+            result_obj = ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=0,
+                stdout=result_obj.stdout,
+                stderr=silent_failure_msg,
+                command=result_obj.command,
+                duration_seconds=result_obj.duration_seconds,
+            )
+            return result_obj
+
+        # Fatal error classification — detect LiteLLM/config/connection errors
+        fatal = self._classify_fatal_error(result_obj.stdout, result_obj.stderr)
+        if fatal is not None:
+            category, message = fatal
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=result_obj.exit_code if result_obj.exit_code != 0 else 1,
+                stdout=result_obj.stdout,
+                stderr=f"[{category}] {message}",
+                command=result_obj.command,
+                duration_seconds=result_obj.duration_seconds,
+            )
+
+        # Interactive prompt detection
+        interactive_prompt_msg = self._detect_interactive_prompt_output(
+            result_obj.stdout, result_obj.stderr,
+        )
+        if interactive_prompt_msg is not None:
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=result_obj.exit_code if result_obj.exit_code != 0 else -1,
+                stdout=result_obj.stdout,
+                stderr=interactive_prompt_msg,
+                command=result_obj.command,
+                duration_seconds=result_obj.duration_seconds,
+            )
+
+        return result_obj
 
     # ── Scope enforcement ─────────────────────────────────────────────────────
 
@@ -513,6 +620,8 @@ class AiderRunner:
         task: Task,
         file_paths: list[Path],
         aider_context: Optional[AiderContext],
+        *,
+        lightweight: bool = False,
     ) -> tuple[list[str], list[Path]]:
         arguments, searched_locations = resolve_command_arguments(
             self._command, self._repo_root
@@ -535,41 +644,58 @@ class AiderRunner:
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--no-browser",              # prevent opening litellm docs or any browser page
             "--timeout", str(self._timeout + 60),  # LLM request timeout > bridge timeout
+            "--edit-format", "diff",     # LLM outputs only the changed lines, not the
+                                         # entire file.  Critical for slow local models:
+                                         # 360-line file @ 5.9 tok/s → 500 s (whole) vs 60 s (diff).
+            "--map-refresh", "manual",   # Don't re-scan repo mid-task
             "--message",
             self._build_message(task, aider_context, file_paths),
         ])
 
-        if self._no_map:
+        # ── Repo-map size ────────────────────────────────────────────────
+        if self._no_map or lightweight:
+            # No repo-map: fastest possible, used for lightweight retries
             arguments.extend(["--map-tokens", "0"])
+            if lightweight:
+                self._logger.info(
+                    "Task %s: lightweight mode — repo-map disabled, no context files",
+                    task.id,
+                )
+        else:
+            # Reduced repo-map: 1024 instead of Aider's 4096 default.
+            # Saves ~60 s of LLM processing on large repos (485+ files).
+            arguments.extend(["--map-tokens", "1024"])
 
-        # Feature 4: task-level context_files via --read (read-only reference).
-        read_only_paths: list[Path] = []
+        # ── Read-only context files ──────────────────────────────────────
+        # Skip context files in lightweight mode to minimise input tokens.
+        if not lightweight:
+            read_only_paths: list[Path] = []
 
-        for cf in task.context_files:
-            cf_path = self._repo_root / cf
-            if cf_path.exists():
-                read_only_paths.append(cf_path)
-            else:
-                self._logger.debug("context_file not found, skipping --read: %s", cf)
+            for cf in task.context_files:
+                cf_path = self._repo_root / cf
+                if cf_path.exists():
+                    read_only_paths.append(cf_path)
+                else:
+                    self._logger.debug("context_file not found, skipping --read: %s", cf)
 
-        # Feature 2: project-wide standards files via --read.
-        for sf in self._standards_files:
-            read_only_paths.append(sf)
+            # Project-wide standards files via --read.
+            for sf in self._standards_files:
+                read_only_paths.append(sf)
 
-        for mentioned_path in self._find_instruction_reference_files(task, file_paths):
-            read_only_paths.append(mentioned_path)
+            for mentioned_path in self._find_instruction_reference_files(task, file_paths):
+                read_only_paths.append(mentioned_path)
 
-        unique_read_only_paths: list[Path] = []
-        seen_read_only_paths: set[str] = set()
-        for read_only_path in read_only_paths:
-            normalized_path = str(read_only_path.resolve()).lower()
-            if normalized_path in seen_read_only_paths:
-                continue
-            seen_read_only_paths.add(normalized_path)
-            unique_read_only_paths.append(read_only_path)
+            unique_read_only_paths: list[Path] = []
+            seen_read_only_paths: set[str] = set()
+            for read_only_path in read_only_paths:
+                normalized_path = str(read_only_path.resolve()).lower()
+                if normalized_path in seen_read_only_paths:
+                    continue
+                seen_read_only_paths.add(normalized_path)
+                unique_read_only_paths.append(read_only_path)
 
-        for read_only_path in unique_read_only_paths:
-            arguments.extend(["--read", str(read_only_path)])
+            for read_only_path in unique_read_only_paths:
+                arguments.extend(["--read", str(read_only_path)])
 
         # Files Aider will modify.
         for file_path in file_paths:
