@@ -407,6 +407,53 @@
 .log-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* Log view toggle */
+/* ── Pre-flight checklist ── */
+.preflight-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.preflight-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  border: 1px solid var(--color-border-muted);
+}
+.preflight-item.--pass { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 30%, transparent); }
+.preflight-item.--warn { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 30%, transparent); }
+.preflight-item.--fail { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); }
+
+/* ── Goal templates ── */
+.goal-template-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.goal-template-chip {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: all 0.15s;
+}
+.goal-template-chip:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
 .log-view-toggle {
   display: flex;
   gap: 2px;

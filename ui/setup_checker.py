@@ -299,6 +299,144 @@ def _get_process_name(pid: int, flags: int) -> str:
     return f"PID {pid}"
 
 
+def check_preflight(settings: dict) -> dict:
+    """Run pre-launch validation checks. Returns checklist + can_launch flag."""
+    import shutil as _shutil
+    _flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    checks = []
+
+    repo_root = settings.get("repo_root", "").strip()
+    model = settings.get("aider_model", "").strip()
+
+    # 1. Ollama running (critical)
+    ollama = check_ollama()
+    checks.append({
+        "name": "Ollama running",
+        "status": "pass" if ollama.get("installed") and ollama.get("models") is not None else "fail",
+        "critical": True,
+        "message": "Ollama is running" if ollama.get("installed") else (ollama.get("hint") or "Ollama not found"),
+    })
+
+    # 2. Model on GPU (warning)
+    gpu = check_gpu()
+    if gpu.get("has_gpu"):
+        gpu_ok = gpu.get("status") in ("gpu_active", "gpu_ready", "gpu_available")
+        checks.append({
+            "name": "GPU acceleration",
+            "status": "pass" if gpu_ok else "warn",
+            "critical": False,
+            "message": f"GPU: {gpu.get('gpu_name', '?')}" if gpu_ok else "GPU available but Ollama may be using CPU — tasks will be very slow",
+        })
+    else:
+        checks.append({
+            "name": "GPU acceleration",
+            "status": "warn",
+            "critical": False,
+            "message": "No GPU detected — running on CPU will be very slow",
+        })
+
+    # 3. Model fits VRAM (warning)
+    if gpu.get("has_gpu") and model:
+        try:
+            from utils.model_advisor import MODELS
+            bare = model.replace("ollama/", "")
+            match = next((m for m in MODELS if bare in m.name), None)
+            if match and gpu.get("vram_total_gb", 0) < match.min_vram_gb:
+                checks.append({
+                    "name": "Model fits VRAM",
+                    "status": "warn",
+                    "critical": False,
+                    "message": f"{bare} needs {match.min_vram_gb}GB VRAM but GPU has {gpu.get('vram_total_gb')}GB — will fall back to CPU",
+                })
+            elif match:
+                checks.append({
+                    "name": "Model fits VRAM",
+                    "status": "pass",
+                    "critical": False,
+                    "message": f"{bare} fits in {gpu.get('vram_total_gb')}GB VRAM",
+                })
+        except Exception:
+            pass
+
+    # 4. Git repo (warning)
+    if repo_root:
+        try:
+            r = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root,
+                               capture_output=True, text=True, timeout=5, creationflags=_flags)
+            dirty = len(r.stdout.strip().splitlines()) if r.returncode == 0 else 0
+            checks.append({
+                "name": "Git working tree",
+                "status": "pass" if dirty == 0 else "warn",
+                "critical": False,
+                "message": "Clean working tree" if dirty == 0 else f"{dirty} uncommitted changes",
+            })
+        except Exception:
+            checks.append({"name": "Git working tree", "status": "warn", "critical": False, "message": "Could not check git status"})
+
+    # 5. Disk space (warning)
+    if repo_root:
+        try:
+            usage = _shutil.disk_usage(repo_root)
+            free_gb = round(usage.free / (1024 ** 3), 1)
+            checks.append({
+                "name": "Disk space",
+                "status": "pass" if free_gb > 1 else "warn",
+                "critical": False,
+                "message": f"{free_gb} GB free" if free_gb > 1 else f"Low disk space: {free_gb} GB",
+            })
+        except Exception:
+            pass
+
+    # 6. Aider installed (critical)
+    aider = check_aider()
+    checks.append({
+        "name": "Aider installed",
+        "status": "pass" if aider.get("installed") else "fail",
+        "critical": True,
+        "message": f"Aider {aider.get('version', '')}" if aider.get("installed") else (aider.get("hint") or "Aider not found"),
+    })
+
+    can_launch = all(c["status"] != "fail" for c in checks if c.get("critical"))
+
+    # Cost estimate
+    task_count = 0
+    plan_file = settings.get("plan_file", "").strip()
+    if plan_file:
+        try:
+            import json as _json
+            pd = _json.loads(Path(plan_file).read_text(encoding="utf-8"))
+            task_count = len(pd.get("tasks", []))
+        except Exception:
+            pass
+
+    speed_tier_seconds = {"fast": 90, "medium": 150, "slow": 300}
+    model_speed = "medium"
+    if model:
+        try:
+            from utils.model_advisor import MODELS
+            bare = model.replace("ollama/", "")
+            match = next((m for m in MODELS if bare in m.name), None)
+            if match:
+                model_speed = match.speed
+        except Exception:
+            pass
+
+    est_seconds = task_count * speed_tier_seconds.get(model_speed, 150)
+    est_minutes = round(est_seconds / 60, 1)
+    est_supervisor_tokens = task_count * 2000
+    est_aider_tokens = task_count * 3000
+
+    estimate = {
+        "task_count": task_count,
+        "estimated_minutes": est_minutes,
+        "estimated_supervisor_tokens": est_supervisor_tokens,
+        "estimated_aider_tokens": est_aider_tokens,
+        "model_speed": model_speed,
+    }
+
+    return {"checks": checks, "can_launch": can_launch, "estimate": estimate}
+
+
 def check_codex() -> dict:
     path = shutil.which("codex") or shutil.which("codex.cmd")
     return {

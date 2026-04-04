@@ -294,6 +294,30 @@ function init() {
   // GPU
   $('btn-refresh-gpu')?.addEventListener('click', loadGpuInfo);
   $('btn-toggle-gpu-procs')?.addEventListener('click', toggleGpuProcs);
+  // Benchmark
+  $('btn-benchmark')?.addEventListener('click', async () => {
+    const btn = $('btn-benchmark');
+    if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
+    try {
+      const res = await fetch('/api/system/benchmark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+      if (res.error) { alert(res.error); return; }
+      const color = res.speed_tier === 'fast' ? 'var(--color-success)' : res.speed_tier === 'medium' ? 'var(--color-warning)' : 'var(--color-danger)';
+      const body = $('gpu-info-body');
+      if (body) {
+        const benchDiv = document.createElement('div');
+        benchDiv.style.cssText = `margin-top:12px;padding:10px 12px;border-radius:var(--radius-md);border:1px solid var(--color-border-muted);background:var(--color-surface)`;
+        benchDiv.innerHTML = `<div style="font-size:var(--font-size-xs);color:var(--color-text-subtle);margin-bottom:4px">Benchmark: ${esc(res.model)}</div>
+          <div style="display:flex;gap:16px;align-items:baseline">
+            <span style="font-size:var(--font-size-lg);font-weight:700;color:${color}">${res.tokens_per_second} tok/s</span>
+            <span style="font-size:var(--font-size-xs);color:var(--color-text-muted)">~${res.estimated_task_seconds}s per task</span>
+            <span style="font-size:11px;padding:2px 6px;border-radius:var(--radius-pill);background:${color};color:#000;font-weight:600">${res.speed_tier}</span>
+          </div>`;
+        body.appendChild(benchDiv);
+      }
+    } catch (e) { alert('Benchmark failed: ' + e.message); }
+    finally { if (btn) { btn.textContent = 'Test Speed'; btn.disabled = false; } }
+  });
+
   $('btn-unload-model')?.addEventListener('click', async () => {
     const btn = $('btn-unload-model');
     if (btn) { btn.disabled = true; btn.textContent = 'Unloading...'; }

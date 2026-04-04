@@ -30,6 +30,7 @@ RELAY_TASKS_FILE = DATA_DIR / "relay_tasks.json"
 RELAY_UI_STATE_FILE = DATA_DIR / "relay_ui_state.json"
 CHAT_SESSIONS_FILE   = DATA_DIR / "chat_sessions.json"
 RUN_NL_STATES_FILE   = DATA_DIR / "run_nl_states.json"
+PLAN_FAVORITES_FILE  = DATA_DIR / "plan_favorites.json"
 MAX_HISTORY = 50
 MAX_LOG_LINES = 500
 
@@ -357,3 +358,64 @@ def clear_run_nl_state(project_key: str) -> None:
     if project_key in states:
         del states[project_key]
         _save_run_nl_states(states)
+
+
+# ── Plan Favorites ────────────────────────────────────────────────────────────
+
+def load_plan_favorites() -> list[dict]:
+    if PLAN_FAVORITES_FILE.exists():
+        try:
+            return json.loads(PLAN_FAVORITES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def save_plan_favorite(fav: dict) -> None:
+    favs = load_plan_favorites()
+    favs.insert(0, fav)
+    if len(favs) > 50:
+        favs = favs[:50]
+    PLAN_FAVORITES_FILE.write_text(json.dumps(favs, indent=2), encoding="utf-8")
+
+
+def delete_plan_favorite(fav_id: str) -> None:
+    favs = load_plan_favorites()
+    favs = [f for f in favs if f.get("id") != fav_id]
+    PLAN_FAVORITES_FILE.write_text(json.dumps(favs, indent=2), encoding="utf-8")
+
+
+# ── Run Queue ─────────────────────────────────────────────────────────────────
+
+RUN_QUEUE_FILE = DATA_DIR / "run_queue.json"
+
+
+def load_run_queue() -> list[dict]:
+    if RUN_QUEUE_FILE.exists():
+        try:
+            return json.loads(RUN_QUEUE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def append_run_queue(item: dict) -> None:
+    q = load_run_queue()
+    q.append(item)
+    RUN_QUEUE_FILE.write_text(json.dumps(q, indent=2), encoding="utf-8")
+
+
+def pop_run_queue() -> dict | None:
+    q = load_run_queue()
+    if not q:
+        return None
+    item = q.pop(0)
+    RUN_QUEUE_FILE.write_text(json.dumps(q, indent=2), encoding="utf-8")
+    return item
+
+
+def remove_from_queue(index: int) -> None:
+    q = load_run_queue()
+    if 0 <= index < len(q):
+        q.pop(index)
+        RUN_QUEUE_FILE.write_text(json.dumps(q, indent=2), encoding="utf-8")

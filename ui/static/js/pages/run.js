@@ -270,11 +270,54 @@ function _selectProgressTask(taskId) {
   if (title) title.textContent = `Task ${task.id} (${task.type || '?'}) — ${task.status || 'pending'}`;
   if (body) {
     let html = `<p>${_esc(task.instruction || 'No instruction')}</p>`;
-    html += `<p style="margin-top:6px;font-family:var(--font-mono)">Files: ${_esc((task.files || []).join(', '))}</p>`;
-    if (task.commit_sha) html += `<p style="margin-top:4px">Commit: <code>${_esc(task.commit_sha)}</code></p>`;
+    html += `<p style="margin-top:6px;font-family:var(--font-mono);font-size:11px">Files: ${_esc((task.files || []).join(', '))}</p>`;
+    if (task.commit_sha) html += `<p style="margin-top:4px;font-size:11px">Commit: <code>${_esc(task.commit_sha)}</code></p>`;
+
+    // Undo button (Feature 3)
+    if (task.status === 'done' && task.commit_sha && !_isRunning) {
+      html += `<button class="btn btn--danger btn--sm" id="btn-undo-task" data-task-id="${task.id}" style="margin-top:8px">Undo This Task</button>`;
+    }
+
+    // Diff viewer (Feature 2)
+    if (task.diff) {
+      html += `<div style="margin-top:10px;border-top:1px solid var(--color-border-muted);padding-top:8px">
+        <div style="font-size:11px;font-weight:600;color:var(--color-text-subtle);margin-bottom:4px">Diff</div>
+        <pre style="background:#020408;color:#c9d1d9;padding:8px;border-radius:var(--radius-sm);font-size:11px;overflow:auto;max-height:200px;line-height:1.4">${_colorDiff(task.diff)}</pre>
+      </div>`;
+    }
+
     body.innerHTML = html;
+
+    // Bind undo button
+    $('btn-undo-task')?.addEventListener('click', () => _undoTask(task.id));
   }
   pane.style.display = '';
+}
+
+function _colorDiff(diff) {
+  if (!diff) return '';
+  return _esc(diff).split('\n').map(line => {
+    if (line.startsWith('+')) return `<span style="color:var(--color-success)">${line}</span>`;
+    if (line.startsWith('-')) return `<span style="color:var(--color-danger)">${line}</span>`;
+    if (line.startsWith('@@')) return `<span style="color:var(--color-info)">${line}</span>`;
+    return line;
+  }).join('\n');
+}
+
+async function _undoTask(taskId) {
+  if (!confirm(`Undo task ${taskId}? This will revert the git commit.`)) return;
+  try {
+    const settings = collectSettings();
+    const res = await apiPost('/api/run/undo-task', { task_id: taskId, repo_root: settings.repo_root });
+    if (res.ok) {
+      toast(`Task ${taskId} reverted successfully.`, 'success');
+      await loadProgress();
+    } else {
+      toast(res.error || 'Undo failed.', 'error');
+    }
+  } catch (err) {
+    toast(err.message || 'Undo failed.', 'error');
+  }
 }
 
 function _esc(s) {
@@ -333,6 +376,63 @@ function initDragResize() {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
+}
+
+// ── Goal Templates ───────────────────────────────────────────────────────────
+
+const GOAL_TEMPLATES = [
+  { label: 'Add Feature',     tpl: 'Add a {feature_name} feature to {module}. It should {description}.' },
+  { label: 'Fix Bug',         tpl: 'Fix the bug in {file_path} where {bug_description}.' },
+  { label: 'Refactor',        tpl: 'Refactor {module} to use {pattern}. Keep existing tests passing.' },
+  { label: 'Add Tests',       tpl: 'Write unit tests for {module} covering {scenarios}.' },
+  { label: 'API Endpoint',    tpl: 'Create a {method} endpoint at {path} that {description}.' },
+  { label: 'Security Review', tpl: 'Review {file_path} for security vulnerabilities and fix any found.' },
+  { label: 'Performance',     tpl: 'Optimize {component}. Current issue: {problem}. Target: {metric}.' },
+  { label: 'Read / Analyze',  tpl: 'Read {file_path} and tell me {question}.' },
+];
+
+function initGoalTemplates() {
+  const bar = $('goal-template-bar');
+  if (!bar) return;
+  bar.innerHTML = GOAL_TEMPLATES.map(t =>
+    `<button class="goal-template-chip" data-tpl="${_esc(t.tpl)}">${_esc(t.label)}</button>`
+  ).join('');
+  bar.addEventListener('click', e => {
+    const btn = e.target.closest('.goal-template-chip');
+    if (!btn) return;
+    const input = $('nl-input');
+    if (input) {
+      input.value = btn.dataset.tpl;
+      input.focus();
+      // Select first placeholder
+      const m = input.value.match(/\{[^}]+\}/);
+      if (m) {
+        input.setSelectionRange(m.index, m.index + m[0].length);
+      }
+    }
+  });
+}
+
+// ── Desktop Notifications ────────────────────────────────────────────────────
+
+function _requestNotifPermission() {
+  if ('Notification' in window && localStorage.getItem('bridge_notifications') === '1') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function _sendNotification(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    try {
+      const n = new Notification(title, { body });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (_) {}
+  }
+}
+
+function _enableNotifications(enable) {
+  localStorage.setItem('bridge_notifications', enable ? '1' : '0');
+  if (enable) _requestNotifPermission();
 }
 
 function updateCompatWarnings() {
@@ -1191,6 +1291,7 @@ function connectSSE() {
       _setRoleState('role-reviewer', 'done', 'Reviewer');
       _sse.disconnect();
       loadProgress();
+      _sendNotification(ok ? 'Run Complete' : 'Run Failed', ok ? `All tasks passed${sec}.` : `Run finished with failures${sec}.`);
     })
     .on('error', d => {
       showBanner('failure', `Error: ${d.message || 'unknown error'}`);
@@ -1199,11 +1300,18 @@ function connectSSE() {
       // Don't auto-switch — user may want to read the log
     })
     .on('task_update', d => updateProgressFromSSE(d))
+    .on('task_diff', d => {
+      // Store diff on the progress task for the diff viewer
+      const tid = d.task_id;
+      const t = _progressTasks.find(t => t.id === tid);
+      if (t) t.diff = d.diff;
+    })
     .on('stopped', () => {
       showBanner('stopped', 'Run stopped.');
       setRunning(false);
       _sse.disconnect();
       loadProgress();
+      _sendNotification('Run Stopped', 'The run was stopped.');
     })
     .on('supervisor_review_requested', d => {
       const tid = d.task_id || '?';
@@ -1251,6 +1359,43 @@ function connectSSE() {
 
 // ── Launch ────────────────────────────────────────────────────────────────────
 
+async function runPreflight(settings) {
+  const wrap = $('preflight-checklist');
+  const list = $('preflight-list');
+  if (!wrap || !list) return true;
+
+  try {
+    const data = await apiPost('/api/run/preflight', settings);
+    const checks = data.checks || [];
+    if (!checks.length) { wrap.style.display = 'none'; return true; }
+
+    const icons = { pass: '&#x2713;', warn: '&#x26A0;', fail: '&#x2717;' };
+    list.innerHTML = checks.map(c =>
+      `<span class="preflight-item --${c.status}" title="${_esc(c.message)}">${icons[c.status] || '?'} ${_esc(c.name)}</span>`
+    ).join('');
+    wrap.style.display = '';
+
+    // Cost estimate
+    const est = data.estimate;
+    if (est && est.task_count > 0) {
+      list.innerHTML += `<span class="preflight-item --pass" title="Estimated run cost" style="margin-left:auto">
+        ~${est.estimated_minutes} min | ~${(est.estimated_supervisor_tokens/1000).toFixed(0)}K supervisor | ~${(est.estimated_aider_tokens/1000).toFixed(0)}K aider (free)
+      </span>`;
+    }
+
+    if (!data.can_launch) {
+      const fails = checks.filter(c => c.status === 'fail').map(c => c.message).join('; ');
+      toast('Cannot launch: ' + fails, 'error');
+      return false;
+    }
+    // Auto-hide after 5s if all passed
+    setTimeout(() => { wrap.style.display = 'none'; }, 5000);
+    return true;
+  } catch (_) {
+    return true; // Don't block on preflight errors
+  }
+}
+
 async function launchRun() {
   const s = collectSettings();
   if (!s.repo_root) {
@@ -1263,6 +1408,10 @@ async function launchRun() {
     $('nl-input')?.focus();
     return;
   }
+
+  // Pre-flight checks
+  const canLaunch = await runPreflight(s);
+  if (!canLaunch) return;
 
   clearLog();
   hideBanner();
@@ -2159,6 +2308,12 @@ async function init() {
 
   // Enable drag-to-resize on the split divider
   initDragResize();
+
+  // Goal templates
+  initGoalTemplates();
+
+  // Desktop notifications
+  _requestNotifPermission();
 }
 
 init();

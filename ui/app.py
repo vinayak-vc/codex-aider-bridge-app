@@ -1251,6 +1251,17 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
             if proxy:
                 proxy.stop()
 
+            # Run queue: auto-advance to next queued item on success
+            if event_type == "complete" and data.get("status") == "success":
+                next_item = state_store.pop_run_queue()
+                if next_item:
+                    _broadcast("log", {"line": "[queue] Starting next queued run..."})
+                    _broadcast("queue_advance", {"goal": next_item.get("goal", "")})
+                    try:
+                        _start_bridge_run(next_item)
+                    except Exception as qex:
+                        _broadcast("log", {"line": f"[queue] Failed to start next run: {qex}"})
+
     run.add_listener(on_event)
 
     # Start supervisor proxy thread
@@ -1573,6 +1584,186 @@ def api_telemetry_save():
     return jsonify({"ok": True, "path": str(path)})
 
 
+@app.route("/api/projects/status")
+def api_projects_status():
+    """Return all projects with their last run status and task progress."""
+    projects = state_store.load_projects()
+    result = []
+    for p in projects:
+        path = p.get("path", "")
+        if not path:
+            continue
+        entry = {
+            "name": p.get("name") or Path(path).name,
+            "path": path,
+            "last_run_status": "",
+            "last_run_date": "",
+            "tasks_completed": 0,
+            "tasks_total": 0,
+        }
+        # Read task_metrics
+        metrics_file = Path(path) / "bridge_progress" / "task_metrics.json"
+        if metrics_file.exists():
+            try:
+                m = json.loads(metrics_file.read_text(encoding="utf-8"))
+                entry["last_run_status"] = m.get("status", "")
+                entry["tasks_total"] = m.get("planned_tasks", 0)
+                entry["tasks_completed"] = len(m.get("completed_task_ids", []))
+            except Exception:
+                pass
+        # Read checkpoint
+        cp_file = Path(path) / "bridge_progress" / "checkpoint.json"
+        if cp_file.exists():
+            try:
+                cp = json.loads(cp_file.read_text(encoding="utf-8"))
+                entry["tasks_completed"] = max(entry["tasks_completed"], len(cp.get("completed", [])))
+            except Exception:
+                pass
+        # Read last run from history
+        try:
+            history = state_store.load_history()
+            for h in history:
+                if h.get("repo_root") == path:
+                    entry["last_run_date"] = h.get("timestamp", "")
+                    if not entry["last_run_status"]:
+                        entry["last_run_status"] = h.get("status", "")
+                    break
+        except Exception:
+            pass
+        result.append(entry)
+    return jsonify({"projects": result})
+
+
+@app.route("/api/run/undo-task", methods=["POST"])
+def api_undo_task():
+    """Revert the git commit for a specific task."""
+    run = get_run()
+    if run.is_running:
+        return jsonify({"error": "Cannot undo while a run is active."}), 409
+
+    data = request.json or {}
+    task_id = data.get("task_id")
+    repo_root = (data.get("repo_root") or "").strip()
+    if not task_id or not repo_root:
+        return jsonify({"error": "task_id and repo_root required"}), 400
+
+    progress_dir = Path(repo_root) / "bridge_progress"
+    metrics_file = progress_dir / "task_metrics.json"
+    checkpoint_file = progress_dir / "checkpoint.json"
+
+    # Find the commit SHA
+    commit_sha = None
+    try:
+        if metrics_file.exists():
+            metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
+            for t in metrics.get("tasks", []):
+                if t.get("id") == task_id:
+                    commit_sha = t.get("commit_sha")
+                    break
+    except Exception:
+        pass
+
+    if not commit_sha:
+        return jsonify({"error": f"No commit SHA found for task {task_id}"}), 404
+
+    # Verify SHA exists
+    r = _git(repo_root, "cat-file", "-t", commit_sha)
+    if r.returncode != 0:
+        return jsonify({"error": f"Commit {commit_sha} not found in git history"}), 404
+
+    # Revert
+    r = _git(repo_root, "revert", "--no-edit", commit_sha, timeout=30)
+    if r.returncode != 0:
+        return jsonify({"error": f"Git revert failed: {r.stderr.strip()}"}), 500
+
+    # Update checkpoint — remove task_id
+    try:
+        if checkpoint_file.exists():
+            cp = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            completed = cp.get("completed", [])
+            if task_id in completed:
+                completed.remove(task_id)
+                checkpoint_file.write_text(json.dumps({"completed": sorted(completed)}, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    # Update task_metrics — mark task as not completed
+    try:
+        if metrics_file.exists():
+            metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
+            for t in metrics.get("tasks", []):
+                if t.get("id") == task_id:
+                    t["completed"] = False
+                    t["commit_sha"] = None
+                    break
+            if task_id in metrics.get("completed_task_ids", []):
+                metrics["completed_task_ids"].remove(task_id)
+                metrics["completed_tasks"] = len(metrics["completed_task_ids"])
+            metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "task_id": task_id, "reverted_sha": commit_sha})
+
+
+@app.route("/api/plans/list")
+def api_plans_list():
+    return jsonify({"plans": state_store.load_plan_favorites()})
+
+
+@app.route("/api/plans/save", methods=["POST"])
+def api_plans_save():
+    data = request.json or {}
+    name = (data.get("name") or "").strip()
+    tasks = data.get("tasks") or []
+    goal = (data.get("goal") or "").strip()
+    if not name or not tasks:
+        return jsonify({"error": "name and tasks required"}), 400
+    fav = {
+        "id": str(uuid.uuid4())[:8],
+        "name": name,
+        "goal": goal,
+        "tasks": tasks,
+        "task_count": len(tasks),
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    state_store.save_plan_favorite(fav)
+    return jsonify({"ok": True, "id": fav["id"]})
+
+
+@app.route("/api/plans/<plan_id>", methods=["DELETE"])
+def api_plans_delete(plan_id):
+    state_store.delete_plan_favorite(plan_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/run/queue")
+def api_run_queue():
+    return jsonify({"queue": state_store.load_run_queue()})
+
+
+@app.route("/api/run/queue", methods=["POST"])
+def api_run_queue_add():
+    data = request.json or {}
+    data["queued_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state_store.append_run_queue(data)
+    return jsonify({"ok": True, "queue_size": len(state_store.load_run_queue())})
+
+
+@app.route("/api/run/queue/<int:index>", methods=["DELETE"])
+def api_run_queue_remove(index):
+    state_store.remove_from_queue(index)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/run/preflight", methods=["POST"])
+def api_run_preflight():
+    """Run pre-launch validation checks."""
+    data = request.json or {}
+    result = setup_checker.check_preflight(data)
+    return jsonify(result)
+
+
 @app.route("/api/system/gpu-processes")
 def api_gpu_processes():
     """List all processes using the GPU."""
@@ -1659,6 +1850,68 @@ def api_unload_model():
         return jsonify({"ok": True, "model": model, "message": f"Model {model} unloaded from VRAM"})
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/system/benchmark", methods=["POST"])
+def api_benchmark():
+    """Benchmark Ollama model speed — measures tokens/second."""
+    import urllib.request
+    import urllib.error
+
+    data = request.json or {}
+    settings = state_store.load_settings()
+    model = data.get("model") or settings.get("aider_model", "")
+    model = model.replace("ollama/", "")
+    if not model:
+        return jsonify({"error": "No model specified"}), 400
+
+    prompt = "Write a Python function called reverse_string that takes a string and returns it reversed. Handle edge cases like empty strings and None."
+
+    body = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": "5s",
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/generate",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        import time as _time
+        start = _time.time()
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        elapsed = _time.time() - start
+
+        eval_count = result.get("eval_count", 0)
+        eval_duration = result.get("eval_duration", 0)  # nanoseconds
+
+        if eval_duration > 0:
+            tok_per_sec = round(eval_count / (eval_duration / 1e9), 1)
+        elif elapsed > 0:
+            tok_per_sec = round(eval_count / elapsed, 1)
+        else:
+            tok_per_sec = 0
+
+        # Estimate task time: ~500 tokens per typical task
+        est_task_sec = round(500 / max(1, tok_per_sec))
+
+        return jsonify({
+            "model": model,
+            "tokens_generated": eval_count,
+            "elapsed_seconds": round(elapsed, 1),
+            "tokens_per_second": tok_per_sec,
+            "estimated_task_seconds": est_task_sec,
+            "speed_tier": "fast" if tok_per_sec >= 20 else ("medium" if tok_per_sec >= 5 else "slow"),
+        })
+    except urllib.error.URLError as exc:
+        return jsonify({"error": f"Ollama not reachable: {exc}"}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/system/recommend-model")

@@ -33,6 +33,11 @@
 <!-- Run status banner -->
 <div id="run-status-banner" style="display:none;margin-bottom:16px"></div>
 
+<!-- Pre-flight checklist -->
+<div id="preflight-checklist" style="display:none;margin-bottom:16px">
+  <div class="preflight-list" id="preflight-list"></div>
+</div>
+
 <!-- Role indicator strip — shows Planner/Reviewer status during run -->
 <div class="role-strip" id="role-strip" style="display:none">
   <div class="role-badge" id="role-planner" data-state="idle">
@@ -207,6 +212,7 @@
 
       <div class="field">
         <label class="field-label" for="nl-input">Goal / Instruction <span style="color:var(--color-danger)">*</span></label>
+        <div class="goal-template-bar" id="goal-template-bar"></div>
         <textarea id="nl-input" class="input" rows="5"
                   placeholder="Describe what you want to build or change. Example: Add a login screen with email and password. Keep the current UI style."
                   style="resize:vertical"></textarea>
