@@ -781,6 +781,7 @@ def execute_task_with_review(
             return resumed_diff
 
     _failure_reasons: list[str] = []  # Accumulate failure reasons for escalation
+    _escalation_log: list[dict] = []  # Structured log for diagnostics/telemetry
 
     for attempt in range(config.max_task_retries + 1):
 
@@ -791,6 +792,7 @@ def execute_task_with_review(
         # Attempts 8-9:  Diagnostic-informed instruction
         # Attempt 10:    Supervisor takeover prompt (user chooses)
         if attempt == 3 and _failure_reasons:
+            _escalation_log.append({"attempt": attempt + 1, "stage": "escalate_simplify", "failure_count": len(_failure_reasons)})
             logger.info(
                 "Task %s: escalating — simplifying instruction after %d failures",
                 task.id, attempt,
@@ -805,6 +807,7 @@ def execute_task_with_review(
             )
 
         if attempt == 6 and supervisor is not None and _failure_reasons:
+            _escalation_log.append({"attempt": attempt + 1, "stage": "escalate_diagnostic", "failure_count": len(_failure_reasons)})
             logger.info(
                 "Task %s: escalating — requesting supervisor diagnostic after %d failures",
                 task.id, attempt,
@@ -1058,6 +1061,14 @@ def execute_task_with_review(
             if execution_result.stderr:
                 _fail_msg += f": {execution_result.stderr[:150]}"
             _failure_reasons.append(_fail_msg)
+            _escalation_log.append({
+                "attempt": attempt + 1,
+                "stage": "aider_failure",
+                "reason": _fail_msg,
+                "exit_code": execution_result.exit_code,
+                "duration": execution_result.duration_seconds,
+                "stdout_tail": execution_result.stdout[-300:] if execution_result.stdout else "",
+            })
             logger.warning(
                 "Task %s: Aider exited with code %s",
                 current_task.id,
@@ -1157,6 +1168,11 @@ def execute_task_with_review(
 
         if not validation_result.succeeded:
             _failure_reasons.append(f"Validation: {validation_result.message[:150]}")
+            _escalation_log.append({
+                "attempt": attempt + 1,
+                "stage": "validation_failure",
+                "reason": validation_result.message[:200],
+            })
             logger.warning(
                 "Task %s: mechanical check failed — %s",
                 current_task.id,
@@ -1318,6 +1334,7 @@ def execute_task_with_review(
                 continue
 
             _failure_reasons.append(f"Rework: {(review.new_instruction or '')[:150]}")
+            _escalation_log.append({"attempt": attempt + 1, "stage": "rework", "reason": (review.new_instruction or "")[:200], "source": "manual"})
             if diagnostics:
                 diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
             logger.warning(
@@ -1367,6 +1384,7 @@ def execute_task_with_review(
             return diff
 
         _failure_reasons.append(f"Rework: {(review.new_instruction or '')[:150]}")
+        _escalation_log.append({"attempt": attempt + 1, "stage": "rework", "reason": (review.new_instruction or "")[:200], "source": "cli"})
         if diagnostics:
             diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
         logger.warning(
@@ -1380,6 +1398,25 @@ def execute_task_with_review(
         wait_seconds = min(2 ** attempt, 30)
         time.sleep(wait_seconds)
         current_instruction = review.new_instruction  # type: ignore[assignment]
+
+    # Emit escalation data for telemetry/diagnostics before raising
+    if _escalation_log:
+        _emit_structured({
+            "type": "escalation_report",
+            "task_id": task.id,
+            "total_attempts": config.max_task_retries + 1,
+            "failure_count": len(_failure_reasons),
+            "escalation_stages": list({e["stage"] for e in _escalation_log}),
+            "log": _escalation_log,
+        })
+    if diagnostics:
+        diagnostics.record_escalation(task.id, _escalation_log)
+        diagnostics.record_task_failure(
+            task.id,
+            f"Exhausted {config.max_task_retries + 1} attempts. "
+            f"Escalation stages: {', '.join(set(e.get('stage','?') for e in _escalation_log))}. "
+            f"Last reasons: {'; '.join(_failure_reasons[-3:])}"
+        )
 
     reasons_summary = "; ".join(_failure_reasons[-5:]) if _failure_reasons else "unknown"
     raise RuntimeError(
