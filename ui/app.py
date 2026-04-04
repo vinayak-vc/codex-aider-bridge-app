@@ -2622,9 +2622,12 @@ def api_run_nl_plan():
 
     # Determine which supervisor to use for plan generation
     supervisor_type = settings.get("supervisor", "codex")
+    # NOTE: Claude CLI needs -p flag for non-interactive piped mode.
+    # Without it, subprocess.run(["claude"], input=prompt) hangs forever
+    # waiting for an interactive terminal.
     cli_commands = {
         "codex":    "codex.cmd exec --skip-git-repo-check --color never",
-        "claude":   "claude",
+        "claude":   "claude -p",
         "cursor":   "cursor",
         "windsurf": "windsurf",
     }
