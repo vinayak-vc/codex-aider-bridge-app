@@ -499,6 +499,11 @@ def page_run():
     return render_template("run.html", active_page="run")
 
 
+@app.route("/cloud")
+def page_cloud():
+    return render_template("cloud.html", active_page="cloud")
+
+
 @app.route("/git")
 def page_git():
     return render_template("git.html", active_page="git")

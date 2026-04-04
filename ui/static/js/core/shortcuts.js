@@ -13,6 +13,7 @@ const NAV_CHORDS = {
   c: '/chat',
   a: '/relay',
   g: '/git',
+  f: '/cloud',
 };
 
 const CHORD_TIMEOUT_MS = 1500;
@@ -31,6 +32,7 @@ const SHORTCUTS = [
   { keys: ['g', 'c'],     desc: 'Go to Chat'        },
   { keys: ['g', 'a'],     desc: 'Go to AI Relay'    },
   { keys: ['g', 'g'],     desc: 'Go to Git'         },
+  { keys: ['g', 'f'],     desc: 'Go to Cloud'       },
   { keys: ['H'],          desc: 'Help for this page' },
   { keys: ['Ctrl', '↵'],  desc: 'Launch run (Run page)' },
   { keys: ['Esc'],        desc: 'Close modal / overlay' },
