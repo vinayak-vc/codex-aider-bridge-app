@@ -35,10 +35,14 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
-REM ── 3. Clean previous PyInstaller output ────────────────────────────────────
-echo  [2/3] Cleaning previous build artefacts...
+REM ── 3. Clean ALL caches and previous build output ───────────────────────────
+echo  [2/3] Cleaning caches and previous build artefacts...
 if exist build          rmdir /s /q build
 if exist dist\bridge-app.exe del /f /q dist\bridge-app.exe
+REM Delete all __pycache__ folders so PyInstaller never uses stale .pyc files
+for /d /r %%d in (__pycache__) do @if exist "%%d" rmdir /s /q "%%d" 2>nul
+REM Delete PyInstaller spec cache
+if exist __pycache__    rmdir /s /q __pycache__
 
 REM ── 4. PyInstaller — single exe ─────────────────────────────────────────────
 echo  [3/3] Building bridge-app.exe (this may take 1-3 minutes)...
