@@ -422,44 +422,20 @@ class SupervisorAgent:
             )
 
             try:
-                # For non-exec commands with large stdin prompts (Claude CLI),
-                # write the prompt to a temp file and pipe it via shell
-                # redirection: `type prompt.txt | claude -p`
-                # Direct stdin piping hangs on Windows with large prompts
-                # because Claude CLI doesn't fully consume piped stdin.
-                if stdin_prompt and sys.platform == "win32":
-                    import tempfile as _tf
-                    prompt_file = Path(tmp_dir) / "prompt_input.txt"
-                    prompt_file.write_text(stdin_prompt, encoding="utf-8")
-                    shell_cmd = f'type "{prompt_file}" | {" ".join(arguments)}'
-                    print(f"[SUPERVISOR] Using shell pipe: type prompt.txt | {' '.join(arguments)}", flush=True)
-                    proc = subprocess.Popen(
-                        shell_cmd,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        cwd=self._repo_root,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        creationflags=_WIN_NO_WINDOW,
-                        shell=True,
-                    )
-                else:
-                    proc = subprocess.Popen(
-                        arguments,
-                        stdin=subprocess.PIPE if stdin_prompt else subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        cwd=self._repo_root,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        creationflags=_WIN_NO_WINDOW,
-                    )
+                proc = subprocess.Popen(
+                    arguments,
+                    stdin=subprocess.PIPE if stdin_prompt else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=self._repo_root,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=_WIN_NO_WINDOW,
+                )
                 try:
                     stdout, stderr = proc.communicate(
-                        input=stdin_prompt if not (stdin_prompt and sys.platform == "win32") else None,
+                        input=stdin_prompt,
                         timeout=self._timeout,
                     )
                 except subprocess.TimeoutExpired:
@@ -553,7 +529,19 @@ class SupervisorAgent:
             arguments.append(prompt)
             return arguments, None
 
-        # Non-exec commands (Claude CLI, etc.): pass prompt via stdin.
+        # Claude CLI `-p`: pass prompt as positional argument, not stdin.
+        # Piping via stdin causes two problems on Windows:
+        #   1. Claude Code's injection detection flags "You are a..." prompts
+        #      piped via stdin, returning a refusal instead of a plan.
+        #   2. Large stdin (11K+) can hang because Claude CLI doesn't fully
+        #      consume piped input.
+        # Passing as a positional arg avoids both: `claude -p "prompt text"`
+        # Windows CreateProcess limit is 32,767 chars — 11K is well within.
+        if "-p" in arguments:
+            arguments.append(prompt)
+            return arguments, None
+
+        # Fallback for other non-exec commands: use stdin.
         return arguments, prompt
 
     # ------------------------------------------------------------------
