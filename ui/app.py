@@ -2844,6 +2844,48 @@ def api_run_analyze():
         return jsonify({"error": f"Analysis failed: {exc}"}), 500
 
 
+@app.route("/api/run/nl/plan/prompt", methods=["POST"])
+def api_run_nl_plan_prompt():
+    """Return the raw planning prompt for manual copy-paste into Claude."""
+    data = request.get_json(force=True) or {}
+    brief = data.get("brief") or {}
+    goal = str(brief.get("goal") or data.get("goal") or "").strip()
+    repo_root = str(data.get("repo_root", "")).strip()
+
+    if not goal:
+        return jsonify({"error": "goal is required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = settings.get("repo_root", "").strip()
+
+    try:
+        from supervisor.agent import SupervisorAgent
+        from context.repo_scanner import RepoScanner
+
+        repo_path = Path(repo_root)
+        repo_tree = RepoScanner(repo_path).scan()
+        knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
+
+        agent = SupervisorAgent(
+            repo_root=repo_path,
+            command="interactive",  # won't actually run
+            logger=logging.getLogger("bridge_app"),
+            timeout=30,
+        )
+        prompt = agent._build_plan_prompt(
+            goal=goal,
+            repo_tree=repo_tree,
+            idea_text=None,
+            feedback=None,
+            knowledge_context=knowledge_ctx or None,
+            workflow_profile=settings.get("workflow_profile", "standard"),
+        )
+        return jsonify({"prompt": prompt, "chars": len(prompt)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/run/nl/plan/confirm", methods=["POST"])
 def api_run_nl_plan_confirm():
     """Write the confirmed plan JSON to the project's taskJsons/ directory and persist state."""

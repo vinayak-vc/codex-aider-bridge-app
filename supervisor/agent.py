@@ -422,19 +422,53 @@ class SupervisorAgent:
             )
 
             try:
-                # Prompt is always passed as a positional CLI argument (not stdin).
-                # Use Popen with DEVNULL stdin to prevent any interactive waiting.
-                proc = subprocess.Popen(
-                    arguments,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=self._repo_root,
-                    text=True,
+                # Write prompt to temp file. On Windows, large prompts (11K+ chars)
+                # with JSON special chars ({, }, ", \n) get mangled by CLI argument
+                # escaping AND stdin piping fails (deadlock + injection detection).
+                #
+                # Solution: write to file, redirect via shell: `claude -p < file.txt`
+                # This is the ONLY method that reliably works on Windows.
+                prompt_file = Path(tmp_dir) / "prompt_input.txt"
+                prompt_file.write_text(
+                    arguments[-1],  # prompt is last argument
                     encoding="utf-8",
-                    errors="replace",
-                    creationflags=_WIN_NO_WINDOW,
                 )
+                cmd_without_prompt = arguments[:-1]  # strip prompt from args
+
+                if sys.platform == "win32":
+                    # Windows: use shell redirection
+                    shell_cmd = (
+                        " ".join(f'"{a}"' for a in cmd_without_prompt)
+                        + f' < "{prompt_file}"'
+                    )
+                    print(f"[SUPERVISOR] Shell: {cmd_without_prompt[0]} ... < prompt_input.txt ({len(arguments[-1])} chars)", flush=True)
+                    proc = subprocess.Popen(
+                        shell_cmd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=self._repo_root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=_WIN_NO_WINDOW,
+                        shell=True,
+                    )
+                else:
+                    # Unix: open file as stdin handle
+                    stdin_fh = open(prompt_file, "r", encoding="utf-8")
+                    proc = subprocess.Popen(
+                        cmd_without_prompt,
+                        stdin=stdin_fh,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=self._repo_root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                    stdin_fh.close()
+
                 try:
                     stdout, stderr = proc.communicate(timeout=self._timeout)
                 except subprocess.TimeoutExpired:

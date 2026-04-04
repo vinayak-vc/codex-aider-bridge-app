@@ -547,6 +547,24 @@ function bindControls() {
 
   // Step 1
   $('wiz-btn-generate')?.addEventListener('click', generatePlan);
+
+  // Copy Prompt — fallback when Claude CLI subprocess fails
+  $('wiz-btn-copy-prompt')?.addEventListener('click', async () => {
+    const goal = ($('wiz-goal')?.value || '').trim();
+    if (!goal) { toast('Enter a goal first.', 'warning'); return; }
+    const settings = collectSettings();
+    try {
+      const res = await apiPost('/api/run/nl/plan/prompt', {
+        goal, repo_root: settings.repo_root, brief: { goal },
+      });
+      if (res.error) { toast(res.error, 'error'); return; }
+      await navigator.clipboard.writeText(res.prompt);
+      toast(
+        `Prompt copied (${res.chars} chars). Paste into Claude, then import the JSON plan file.`,
+        'success'
+      );
+    } catch (err) { toast(err.message || 'Failed to build prompt.', 'error'); }
+  });
   $('wiz-btn-back-0')?.addEventListener('click', () => goToStep(0));
   $('wiz-btn-settings')?.addEventListener('click', openSettings);
   $('wiz-btn-load-plan')?.addEventListener('click', async () => {
