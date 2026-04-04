@@ -488,38 +488,38 @@ Ollama is already wired for M1 (brief) and M3 (plan generation). The Planner rol
 ## Implementation Checklist
 
 ### Milestone A
-- [ ] Remove `.run-mode-toggle` + `#structured-panel` from `run.html`
-- [ ] Remove mode toggle JS from `run.js`
-- [ ] Remove mode toggle CSS from `run.css`
-- [ ] Add Chatbot supervisor card to supervisor grid in `run.html`
-- [ ] Handle `chatbot` in supervisor selection JS
-- [ ] Test: page loads, goal textarea visible, all supervisor options present
+- [x] Remove `.run-mode-toggle` + `#structured-panel` from `run.html`
+- [x] Remove mode toggle JS from `run.js`
+- [x] Remove mode toggle CSS from `run.css`
+- [x] Add Chatbot supervisor card to supervisor grid in `run.html`
+- [x] Handle `chatbot` in supervisor selection JS
+- [x] Test: page loads, goal textarea visible, all supervisor options present
 
 ### Milestone B
-- [ ] Add `#chatbot-relay-panel` to `run.html`
-- [ ] Port `generateRelayPrompt()` from `relay.js` to `run.js`
-- [ ] Port `renderRelayTaskList()` from `relay.js` to `run.js`
-- [ ] Wire SSE `supervisor_review_requested` → show chatbot panel
-- [ ] Port relay step indicator + task list styles to `run.css`
-- [ ] Add `GET /relay → redirect /run` in `app.py`
-- [ ] Remove AI Relay nav item from `base.html`
-- [ ] Delete `relay.html`, `relay.js`, `relay.css`
-- [ ] Test: full chatbot relay flow on run page
+- [x] Add `#chatbot-relay-panel` to `run.html`
+- [x] Port `generateRelayPrompt()` from `relay.js` to `run.js`
+- [x] Port `renderRelayTaskList()` from `relay.js` to `run.js`
+- [x] Wire SSE `supervisor_review_requested` → show chatbot panel
+- [x] Port relay step indicator + task list styles to `run.css`
+- [x] Add `GET /relay → redirect /run` in `app.py`
+- [x] Remove AI Relay nav item from `base.html`
+- [x] Delete `relay.html`, `relay.js`, `relay.css`
+- [x] Test: full chatbot relay flow on run page
 
 ### Milestone C
-- [ ] Remove supervisor-conditional branch from `bridge_runner.py`
-- [ ] Add `--manual-supervisor` unconditionally
-- [ ] Implement `SupervisorProxyThread` in `app.py`
-- [ ] Integrate proxy thread into `_start_bridge_run()`
-- [ ] Add `POST /api/run/supervisor` route
-- [ ] Make supervisor grid interactive mid-run in `run.html`
-- [ ] Call `/api/run/supervisor` on mid-run supervisor change in `run.js`
-- [ ] Test: run with Codex supervisor → auto-review; switch to Chatbot mid-run → copy-paste card appears
+- [x] Remove supervisor-conditional branch from `bridge_runner.py`
+- [x] Add `--manual-supervisor` unconditionally
+- [x] Implement `SupervisorProxyThread` in `app.py`
+- [x] Integrate proxy thread into `_start_bridge_run()`
+- [x] Add `POST /api/run/supervisor` route
+- [x] Make supervisor grid interactive mid-run in `run.html`
+- [x] Call `/api/run/supervisor` on mid-run supervisor change in `run.js`
+- [x] Test: run with Codex supervisor → auto-review; switch to Chatbot mid-run → copy-paste card appears
 
 ### Milestone D
-- [ ] Add role indicator strip to `run.html`
-- [ ] Add `planner_active/done`, `reviewer_active/done` SSE event handlers in `run.js`
-- [ ] Add role strip CSS to `run.css`
-- [ ] Audit and remove stale `/api/relay/*` routes in `app.py`
-- [ ] Update `CHANGELOG.md`
-- [ ] Full end-to-end test: NL goal → plan → run → review (chatbot) → review (codex) → done
+- [x] Add role indicator strip to `run.html`
+- [x] Add `planner_active/done`, `reviewer_active/done` SSE event handlers in `run.js`
+- [x] Add role strip CSS to `run.css`
+- [x] Audit and remove stale `/api/relay/*` routes in `app.py`
+- [x] Update `CHANGELOG.md`
+- [x] Full end-to-end test: NL goal → plan → run → review (chatbot) → review (codex) → done

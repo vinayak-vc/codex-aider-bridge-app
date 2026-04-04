@@ -225,29 +225,48 @@ Before task execution starts, the bridge now logs a git-readiness preview for th
 ## Features
 
 ### Web UI
-- Multi-page Flask app — Dashboard, Run, Knowledge, History, Tokens, Setup, plus a persistent **Chat Drawer**
+- Multi-page Flask app — Dashboard, Run, Knowledge, History, Tokens, Git, Setup, plus a persistent **Chat Drawer**
+- **Split-panel Run page** — settings/log tabs on left, persistent task progress panel on right with drag-to-resize
+- **Parsed log view** — structured event cards with tag filters (Task, Review, Error, Warning, Bridge, Proxy), toggleable with Raw view
 - Live SVG progress ring, task feed, pause/resume, review panel with diff viewer
-- **Chat drawer** — conversational AI using a local Ollama model with project knowledge context, per-project history restore, `New Chat`, and `Stop`
+- **Task progress panel** — shows all tasks with done/running/failed/pending status, click for diff viewer, undo button, resume from checkpoint
+- **Smart pre-flight check** — validates Ollama, GPU, model VRAM, disk, git, Aider before launch; blocks on critical failures
+- **Goal templates** — 8 pre-built templates (Add Feature, Fix Bug, Refactor, Tests, API, Security, Performance, Read/Analyze)
+- **Chat drawer** — conversational AI using a local Ollama model, auto-unloads from VRAM on close
+- **Git page** — branch management, commit history with bridge task badges, changed files with tree view, inline diff viewer, add-to-gitignore
+- **Knowledge page** — AI Understanding viewer, file registry with tree view, file type icons, click-to-open in VS Code, refresh/auto-refresh
+- **Model speed benchmark** — test Ollama tok/s on Setup page with estimated task time
+- **GPU process manager** — list GPU processes, kill non-essential apps to free VRAM, "Free VRAM" button
+- **Cost estimator** — shows estimated time, supervisor tokens, aider tokens before launch
+- **Desktop notifications** — browser notification when run completes/fails while tab is in background
+- **Project dashboard cards** — per-project status cards with progress bars on Dashboard
+- **Favorite plans** — save and reuse plan templates across projects
+- **Run queue** — queue multiple goals, auto-starts next on completion
+- **VS Code integration** — open project/files in VS Code from status bar and file registry
+- **VS Code-style status bar** — branch, git status, auto-commit toggle, GPU status, run status, task count on every page
+- **UI action logger** — records all clicks, API calls, SSE events for debugging; downloadable as JSON
+- **Product telemetry** — local-only usage analytics with AI analysis prompt
 - Supervisor and model API-key compatibility warnings on the Run page
-- Dark/light theme, keyboard shortcuts (`g+d/r/k/h/t/s/c`, `?` help, `Ctrl+Enter`)
+- Dark theme, keyboard shortcuts (`g+d/r/k/h/t/s/g/c`, `?` help, `Ctrl+Enter`)
 - Onboarding scanner: one-time static scan pre-populates `project_knowledge.json` on first run
-- AI Understanding: auto-generated `AI_UNDERSTANDING.md` with doc discovery
 
 ### CLI & Orchestration
+- **Universal Pipeline** — all supervisor types use `--manual-supervisor`; UI proxy thread dispatches to correct backend (CLI or copy-paste)
+- **Mid-run supervisor switching** — change supervisor during an active run without restarting
+- **Escalating retry strategy** — 10 attempts: standard (1-3), simplified (4-6), supervisor diagnostic (7), diagnostic-informed (8-9), supervisor takeover prompt (10)
+- **Read/Investigate task types** — analysis-only goals skip Aider entirely; supervisor reads files and answers questions
+- **Smart goal routing** — classifies goals as read/investigate/code before plan generation
 - Supervisor agent produces atomic sequential plans from the live repo tree — no hardcoded file lists
 - Supervisor reviews each task's git diff before the next task is allowed to start
+- Plan generation uses the selected supervisor (Claude/Codex CLI), not Ollama
 - Git-readiness pre-flight preview before Aider runs
-- Refuses to work on non-git target repos unless the operator initialises one interactively
-- Manual supervisor mode — filesystem-based review, no external CLI calls
-- **AI Relay mode** — import task JSON, resume task status after restart, and continue runs through copy-paste review with any web AI subscription
-- Approved tasks are auto-committed as small local git commits in the target repo
+- Approved tasks are auto-committed as small local git commits (toggleable)
 - Mechanical validation (file existence, Python syntax, optional CI gate) — zero supervisor tokens
-- Scope enforcement: unexpected file creation outside task scope is detected and failed
-- Micro-task workflow profile: one file per task, one concern, assertions required
-- Supervisor tokens spent on planning and review only — never on mechanical retries
-- Dry-run, resume, auto-approve modes; `--skip-onboarding-scan` flag
+- Scope enforcement: unexpected file creation outside task scope is detected and reverted
+- **Run diagnostics** — `RUN_DIAGNOSTICS.json` with per-task failure analysis and blocking pattern detection
+- **Token tracking** — supervisor + Aider token estimation, per-task breakdown, savings comparison report (`RUN_REPORT.md`)
 - Persistent project intelligence: `project_knowledge.json`, `project_snapshot.json`, `token_log.json`, `LATEST_REPORT.md`
-- Persistent file and console logging
+- Persistent file and console logging; `stdin=DEVNULL` for Aider prevents headless hangs
 
 ---
 

@@ -494,13 +494,13 @@ This document lists the currently implemented features of `codex-aider-bridge-ap
 The UI was fully rebuilt from a single `index.html` into a multi-page Flask application.
 
 ### Pages
-- `/dashboard` — live SVG progress ring (r=58, circumference 364.42), task feed with per-status border colours (running / approved / rework / retrying / failure / dry-run), pause/resume buttons, manual review panel with unified diff viewer and radio decision
-- `/run` — full config form mirroring all CLI flags, 6 supervisor tiles, dry-run toggle, command preview (mirrors `bridge_runner.py build_command()`), advanced accordion, live log terminal with auto-scroll
-- `/chat` — conversational AI (see section 17)
-- `/knowledge` — three-tab layout: Overview (project badges, stat chips, pattern/feature lists), AI Understanding (markdown viewer), File Registry (search, type filter, sortable table, 50-row pagination)
-- `/history` — searchable + filterable run table, inline delete confirmation (no `window.confirm()`), clear-all warning panel, log viewer modal with stats row + full terminal, re-run (saves settings then navigates to `/run`), relative timestamps
-- `/tokens` — 5 stat chips, savings bar with gradient fill, CSS horizontal bar chart, clickable session rows, 4-section detail panel (Supervisor / Savings / Aider / Interactive)
-- `/setup` — 5 dependency check cards with animated status dot, Aider install SSE terminal, Ollama model manager with pull input
+- `/dashboard` — live progress ring, task feed, pause/resume, review panel, project status cards
+- `/run` — split-panel layout: settings/log tabs (left) + task progress panel (right) with drag-to-resize. Parsed/Raw log views with tag filters. Pre-flight checklist, goal templates, cost estimator.
+- `/knowledge` — Overview, AI Understanding viewer, File Registry with tree view + file type icons + click-to-open in VS Code. Refresh/auto-refresh knowledge.
+- `/history` — searchable run table, log modal, re-run, delete
+- `/tokens` — 6 stat chips (including Aider tokens), savings comparison card, per-task breakdown, diagnostics panel
+- `/git` — branch selector, commit history with bridge badges, changed files tree view, diff viewer, gitignore management
+- `/setup` — dependency checks, Aider install, Ollama model manager, GPU status + process manager + benchmark + Free VRAM
 
 ### Frontend Infrastructure
 - CSS custom properties design system (`tokens.css`) — dark default, `[data-theme="light"]` override, persisted in `localStorage`
@@ -509,7 +509,8 @@ The UI was fully rebuilt from a single `index.html` into a multi-page Flask appl
 - Reactive `store.js`: key-based subscription pattern, `get/set/subscribe/snapshot`
 - `api.js`: `apiFetch`, `apiPost`, `apiDelete` with normalised error handling
 - `toast.js`: non-blocking notifications (success / error / info / warning)
-- `shortcuts.js`: `g+d/r/k/h/t/s/c` navigation chords with 1.5 s timeout, `?` help overlay, ignored inside inputs/textareas
+- `shortcuts.js`: `g+d/r/k/h/t/s/g/c` navigation chords with 1.5 s timeout, `?` help overlay, ignored inside inputs/textareas
+- `action-log.js`: records all UI clicks, API calls, SSE events for debugging
 - All icons: heroicons-style inline SVG — no emoji, no icon font
 
 ### Supervisor & Model Compatibility Warnings (Run page)
@@ -553,37 +554,63 @@ Local conversational AI integrated directly into the web UI at `/chat` (shortcut
 
 ---
 
-## 18. AI Relay Supervisor (Planned)
+## 18. Universal Pipeline
 
-Current behavior update:
-- AI Relay is implemented in the web UI
-- Imported or generated tasks are persisted per project and restored after app restart
-- Task cards show status badges such as `Not started`, `Running`, `Waiting review`, `Done`, and `Failed`
-- If tasks exist but there is no live run, AI Relay reopens on **Confirm Tasks**
-- **Run & Review** only restores automatically when there is still a live session to reconnect to
+All supervisor types now use `--manual-supervisor` under the hood. A `SupervisorProxyThread` in the UI backend polls for review requests and dispatches to the correct supervisor (CLI for Claude/Codex, SSE for Chatbot/Manual).
 
-> Status: Spec complete — see `AI_RELAY_SPEC.md`. Implementation pending.
+- Mid-run supervisor switching without restart
+- Chatbot inline relay wizard on the Run page (copy-paste review)
+- Plan generation uses the selected supervisor CLI, not Ollama
+- Role indicator strip: Planner/Reviewer status during runs
 
-Enables using any web-based AI subscription (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok, Cursor chat, Windsurf chat) as the supervisor brain with **no API key**, by making the user the relay between the web AI and the bridge.
+## 19. Escalating Retry Strategy
 
-### Flow
-1. Bridge generates a formatted "plan prompt" including project context → user copies into web AI chat
-2. Web AI returns a structured JSON task plan → user pastes back into bridge
-3. Bridge runs tasks one-by-one through Aider + Ollama (local, free)
-4. After each task, bridge generates a formatted "review packet" (diff + context + decision choices) → user copies into web AI
-5. Web AI responds: `APPROVED` / `REWORK: [instruction]` / `FAILED: [reason]`
-6. User pastes decision back → bridge continues, re-runs task, or generates a replan prompt
+10-attempt retry system with progressive intelligence:
 
-### Key properties
-- Works with any web AI — ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok, Cursor/Windsurf chat panels
-- No API key required — web subscriptions are sufficient
-- Reuses existing manual supervisor infrastructure (decision file mechanism in `bridge_progress/manual_supervisor/`)
-- ~2–3 copy-pastes per task; ~20–30 interactions for a 10-task run
-- Full AI intelligence for planning and review; Ollama handles all code changes locally
+- Attempts 1-3: Standard retries with original instruction
+- Attempts 4-6: Simplified instruction with accumulated failure context
+- Attempt 7: Supervisor diagnostic — analyzes all failures, rewrites instruction
+- Attempts 8-9: Diagnostic-informed retries
+- Attempt 10: Supervisor takeover prompt — user chooses to let supervisor write code
 
-### Files to build (see `AI_RELAY_SPEC.md` for full details)
-- `utils/relay_formatter.py` — plan prompt, review packet, decision parser, replan prompt
-- `ui/templates/relay.html` + `relay.css` + `relay.js` — 3-step wizard (Generate Plan → Confirm → Run+Review)
-- `ui/app.py` — 6 new relay API routes
-- `ui/bridge_runner.py` — `ai_relay` supervisor type (~30 lines, reuses manual supervisor infrastructure)
-- `ui/templates/base.html` — Relay nav item; `shortcuts.js` — `g+a` chord
+Failure reasons accumulated and stored in `RUN_DIAGNOSTICS.json` for product improvement.
+
+## 20. Read/Investigate Task Types
+
+- `read` type: reads files, sends content to supervisor for analysis. No Aider invoked.
+- `investigate` type: reads files + discovers related imports, deep analysis by supervisor.
+- Smart goal routing classifies goals before plan generation (read/investigate/code).
+
+## 21. Git Page
+
+Dedicated `/git` page with:
+- Branch selector with create/switch
+- Commit history with bridge task badges
+- Changed files list with tree view
+- Inline diff viewer
+- Add-to-gitignore action
+
+## 22. Run Diagnostics
+
+`RUN_DIAGNOSTICS.json` written after every run with:
+- Per-task attempt timeline with failure reasons
+- Blocking pattern detection (interactive prompts, timeouts, validation loops)
+- AI-readable summary with actionable suggestions
+- Escalation log for product improvement data
+
+## 23. Product Telemetry
+
+Local-only usage analytics in `telemetry.json`:
+- Run lifecycle events (start, complete, fail, resume)
+- Task events (pass, fail, timeout, rework)
+- Page views and feature usage
+- AI analysis prompt included for automated improvement recommendations
+
+## 24. GPU Management
+
+- GPU status detection via nvidia-smi (VRAM, utilization, Ollama backend)
+- GPU process manager on Setup page with Kill button
+- Model speed benchmark (tok/s measurement)
+- "Free VRAM" button to unload Ollama model
+- Status bar GPU indicator on all pages
+- Model advisor recommends best model for system specs

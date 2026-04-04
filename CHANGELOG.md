@@ -2,6 +2,73 @@
 
 ---
 
+## [2026-04-04] — Major Feature Release
+
+### Added — Run Page
+- **Split-panel layout** with drag-to-resize divider: settings/log on left, task progress on right
+- **Parsed log view** with 7 tag filters (Task, Review, Error, Warning, Bridge, Proxy, Info) and live counts
+- **Task progress panel** with persistent state across restarts (reads checkpoint + task_metrics)
+- **Live diff viewer** — click a completed task to see color-coded diff
+- **Undo task** — one-click `git revert` for the last completed task
+- **Goal templates** — 8 pre-built chips: Add Feature, Fix Bug, Refactor, Tests, API, Security, Performance, Read
+- **Smart pre-flight check** — validates Ollama, GPU, VRAM, disk, git, Aider before launch
+- **Cost estimator** — shows estimated time + tokens in pre-flight checklist
+- **Load Plan File** button — import existing plan JSON from disk with file picker
+- **Resume button** — continue from checkpoint with auto-discovered plan file
+- **Desktop notifications** — browser Notification API on run complete/fail
+
+### Added — Git Page (NEW)
+- Dedicated `/git` page with branch selector, commit history, changed files, diff viewer
+- Tree view for changed files with expand/collapse
+- Add-to-gitignore action on each file/folder
+- Scroll-contained panels (no page scrolling)
+
+### Added — Setup Page
+- **GPU process manager** — list all GPU processes with Kill button to free VRAM
+- **Model speed benchmark** — test tok/s with estimated task time
+- **Free VRAM** button — force-unload Ollama model from GPU memory
+- **GPU status detection** — shows GPU name, VRAM usage, Ollama backend (GPU/CPU)
+
+### Added — Dashboard
+- **Project dashboard cards** — per-project status with progress bars, click to switch
+
+### Added — Knowledge Page
+- **Refresh Knowledge** button — re-scan project files on demand
+- **Auto-refresh** — configurable interval (5/10/15/30 min or Off)
+- **File type icons** — color-coded per extension
+- **Tree view** — toggle between table and tree view
+- **Click-to-open** — open files in VS Code from the registry
+
+### Added — System-wide
+- **VS Code-style status bar** — branch, git status, GPU status, auto-commit toggle, run status, task count, VS Code button
+- **UI action logger** — records all clicks, API calls, SSE events; downloadable as JSON
+- **Product telemetry** — local-only analytics with AI analysis prompt
+- **Favorite plans** — save/load plan templates across projects
+- **Run queue** — queue multiple goals with auto-advance on completion
+
+### Added — Core Engine
+- **Universal Pipeline** — all runs use `--manual-supervisor`; SupervisorProxyThread dispatches to correct backend
+- **Mid-run supervisor switching** — change supervisor without restarting
+- **Escalating retry strategy** — 10 attempts with instruction simplification, supervisor diagnostic, and takeover prompt
+- **Read/Investigate task types** — analysis goals skip Aider entirely
+- **Smart goal routing** — classifies goals before plan generation
+- **Plan generation via supervisor** — Claude/Codex generates plans, not Ollama
+- **Run diagnostics** — `RUN_DIAGNOSTICS.json` with failure patterns and AI-readable summary
+- **Token tracking** — Aider token estimation, per-task breakdown, savings comparison
+- **Escalation data collection** — structured failure records for product improvement
+
+### Fixed
+- Aider stdin hang from UI — `stdin=DEVNULL` prevents headless blocking
+- Chat drawer VRAM — auto-unloads model on close, `keep_alive: 30s`
+- Stale plan file reuse — cleared on regeneration, validated on launch
+- Proxy thread rework hang — tracks requests by filename + mtime
+- Toggle CSS mismatch — `.toggle__track` vs `.toggle-track`
+- CMD windows hidden — `CREATE_NO_WINDOW` on all subprocess calls
+- TaskReport UnboundLocalError in read task handler
+- NL launch saving wrong supervisor setting
+
+---
+
 ## [2026-04-03] - Universal Pipeline and Supervisor Proxy
 
 ### Added
