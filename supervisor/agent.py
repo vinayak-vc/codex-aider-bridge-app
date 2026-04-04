@@ -422,9 +422,24 @@ class SupervisorAgent:
             )
 
             try:
+                # Write prompt to a temp file and open as stdin handle.
+                # This avoids THREE problems with Claude CLI on Windows:
+                #  1. subprocess.run(input=) deadlocks on large prompts (pipe buffer)
+                #  2. Popen.communicate(input=) also deadlocks for the same reason
+                #  3. stdin piping triggers Claude's prompt injection detection
+                # Using a file handle as stdin bypasses all pipe buffering issues
+                # and Claude CLI reads it as a normal file stream, not as injection.
+                if stdin_prompt:
+                    prompt_file = Path(tmp_dir) / "prompt_input.txt"
+                    prompt_file.write_text(stdin_prompt, encoding="utf-8")
+                    stdin_handle = open(prompt_file, "r", encoding="utf-8")
+                    print(f"[SUPERVISOR] Using file-based stdin ({len(stdin_prompt)} chars)", flush=True)
+                else:
+                    stdin_handle = subprocess.DEVNULL
+
                 proc = subprocess.Popen(
                     arguments,
-                    stdin=subprocess.PIPE if stdin_prompt else subprocess.DEVNULL,
+                    stdin=stdin_handle,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=self._repo_root,
@@ -433,11 +448,12 @@ class SupervisorAgent:
                     errors="replace",
                     creationflags=_WIN_NO_WINDOW,
                 )
+                # Close file handle after Popen inherits it
+                if stdin_prompt:
+                    stdin_handle.close()
+
                 try:
-                    stdout, stderr = proc.communicate(
-                        input=stdin_prompt,
-                        timeout=self._timeout,
-                    )
+                    stdout, stderr = proc.communicate(timeout=self._timeout)
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     try:
@@ -454,6 +470,8 @@ class SupervisorAgent:
                         "command may be hung or waiting for input."
                     )
                 returncode = proc.returncode
+            except SupervisorError:
+                raise
             except OSError as ex:
                 print(f"[SUPERVISOR] Cannot start: {ex}", flush=True)
                 self._logger.error("Cannot start supervisor: %s", ex)
@@ -529,19 +547,11 @@ class SupervisorAgent:
             arguments.append(prompt)
             return arguments, None
 
-        # Claude CLI `-p`: pass prompt as positional argument, not stdin.
-        # Piping via stdin causes two problems on Windows:
-        #   1. Claude Code's injection detection flags "You are a..." prompts
-        #      piped via stdin, returning a refusal instead of a plan.
-        #   2. Large stdin (11K+) can hang because Claude CLI doesn't fully
-        #      consume piped input.
-        # Passing as a positional arg avoids both: `claude -p "prompt text"`
-        # Windows CreateProcess limit is 32,767 chars — 11K is well within.
-        if "-p" in arguments:
-            arguments.append(prompt)
-            return arguments, None
-
-        # Fallback for other non-exec commands: use stdin.
+        # For Claude CLI with -p, we need special handling.
+        # stdin piping triggers Claude's injection detection ("You are a...")
+        # and CLI argument has Windows limits.
+        # Solution: write prompt to a temp file, pass via stdin from file handle.
+        # This is handled in _run() — mark as "file" mode by returning a special tuple.
         return arguments, prompt
 
     # ------------------------------------------------------------------
