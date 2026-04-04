@@ -240,7 +240,13 @@ class AiderRunner:
 
         # Force UTF-8 in the Aider subprocess so rich/charmap errors don't
         # cause a silent crash on Windows consoles (e.g. deepseek special tokens).
-        _subprocess_env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        _subprocess_env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "BROWSER": "",          # Prevent Aider/LiteLLM from opening browser pages
+            "NO_COLOR": "1",        # Suppress color codes in non-interactive output
+        }
 
         _start = time.monotonic()
         try:
@@ -439,6 +445,7 @@ class AiderRunner:
             "--no-auto-commits",
             "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
+            "--no-browser",              # prevent opening litellm docs or any browser page
             "--message",
             self._build_message(task, aider_context, file_paths),
         ])

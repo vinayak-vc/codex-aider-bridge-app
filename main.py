@@ -270,8 +270,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-task-retries",
         type=int,
-        default=2,
-        help="Maximum supervisor-requested REWORK cycles per task.",
+        default=10,
+        help="Maximum retry attempts per task (escalating strategy: 1-3 standard, 4-6 simplified, 7 diagnostic, 8-9 informed, 10 takeover).",
     )
     parser.add_argument(
         "--validation-command",
