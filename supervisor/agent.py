@@ -422,29 +422,38 @@ class SupervisorAgent:
             )
 
             try:
-                result = subprocess.run(
+                # Use Popen + communicate() instead of subprocess.run(input=)
+                # because subprocess.run with large input= can deadlock on
+                # Windows when the pipe buffer fills up.
+                proc = subprocess.Popen(
                     arguments,
-                    input=stdin_prompt,
+                    stdin=subprocess.PIPE if stdin_prompt else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     cwd=self._repo_root,
-                    capture_output=True,
                     text=True,
                     encoding="utf-8",
-                    check=False,
-                    timeout=self._timeout,
+                    errors="replace",
                     creationflags=_WIN_NO_WINDOW,
                 )
-            except subprocess.TimeoutExpired as ex:
-                if ex.process:
-                    ex.process.kill()
-                print(f"[SUPERVISOR] TIMED OUT after {self._timeout}s!", flush=True)
-                self._logger.error(
-                    "Supervisor TIMED OUT after %ds. Command: %s",
-                    self._timeout, arguments,
-                )
-                raise SupervisorError(
-                    f"Supervisor timed out after {self._timeout}s — "
-                    "command may be hung or waiting for input."
-                ) from ex
+                try:
+                    stdout, stderr = proc.communicate(
+                        input=stdin_prompt,
+                        timeout=self._timeout,
+                    )
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate(timeout=5)  # drain pipes
+                    print(f"[SUPERVISOR] TIMED OUT after {self._timeout}s!", flush=True)
+                    self._logger.error(
+                        "Supervisor TIMED OUT after %ds. Command: %s",
+                        self._timeout, arguments,
+                    )
+                    raise SupervisorError(
+                        f"Supervisor timed out after {self._timeout}s — "
+                        "command may be hung or waiting for input."
+                    )
+                returncode = proc.returncode
             except OSError as ex:
                 print(f"[SUPERVISOR] Cannot start: {ex}", flush=True)
                 self._logger.error("Cannot start supervisor: %s", ex)
@@ -452,23 +461,21 @@ class SupervisorAgent:
                     f"Cannot start supervisor command '{self._command}': {ex}"
                 ) from ex
 
-            print(f"[SUPERVISOR] Finished: exit={result.returncode}, stdout={len(result.stdout)} chars, stderr={len(result.stderr)} chars", flush=True)
-            if result.stderr.strip():
-                print(f"[SUPERVISOR] stderr: {result.stderr.strip()[:300]}", flush=True)
+            print(f"[SUPERVISOR] Finished: exit={returncode}, stdout={len(stdout)} chars, stderr={len(stderr)} chars", flush=True)
+            if stderr.strip():
+                print(f"[SUPERVISOR] stderr: {stderr.strip()[:300]}", flush=True)
             self._logger.info(
                 "Supervisor finished: exit=%d, stdout=%d chars, stderr=%d chars",
-                result.returncode,
-                len(result.stdout),
-                len(result.stderr),
+                returncode, len(stdout), len(stderr),
             )
 
-            if result.returncode != 0:
+            if returncode != 0:
                 self._logger.error(
-                    "Supervisor stderr: %s", result.stderr.strip()[:500],
+                    "Supervisor stderr: %s", stderr.strip()[:500],
                 )
                 raise SupervisorError(
-                    f"Supervisor exited with code {result.returncode}. "
-                    f"Stderr: {result.stderr.strip()[:500]}"
+                    f"Supervisor exited with code {returncode}. "
+                    f"Stderr: {stderr.strip()[:500]}"
                 )
 
             if output_file.exists():
@@ -476,13 +483,13 @@ class SupervisorAgent:
                 if output:
                     return output
 
-            stdout_output = result.stdout.strip()
+            stdout_output = stdout.strip()
             if stdout_output:
                 return stdout_output
 
             self._logger.error(
                 "Supervisor returned no output. stdout=%r, stderr=%r",
-                result.stdout[:200], result.stderr[:200],
+                stdout[:200], stderr[:200],
             )
             raise SupervisorError("Supervisor returned no output.")
 
@@ -523,9 +530,6 @@ class SupervisorAgent:
             return arguments, None
 
         # Non-exec commands (Claude CLI, etc.): pass prompt via stdin.
-        # On Windows, .cmd files mangle multi-line strings passed as CLI
-        # arguments — newlines are dropped, producing a truncated prompt.
-        # Piping via stdin bypasses this limitation entirely.
         return arguments, prompt
 
     # ------------------------------------------------------------------
