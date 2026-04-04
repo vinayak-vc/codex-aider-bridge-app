@@ -34,6 +34,25 @@ _INTERACTIVE_PROMPT_PATTERNS: tuple[str, ...] = (
     "open docs url",
 )
 
+# Fatal error patterns detected in Aider stdout/stderr.
+# When matched, override exit-code-0 to failure so the bridge doesn't
+# waste retries on a config/connection problem that will never self-heal.
+# Each tuple: (substring_to_match, error_category, human_readable_message)
+_FATAL_ERROR_PATTERNS: list[tuple[str, str, str]] = [
+    ("litellm.BadRequestError", "config_error", "LLM provider rejected the request — check model name and provider prefix"),
+    ("LLM Provider NOT provided", "config_error", "Model name missing provider prefix (e.g. ollama/)"),
+    ("does not exist", "model_error", "Model not found — run 'ollama pull <model>' first"),
+    ("model not found", "model_error", "Model not installed in Ollama"),
+    ("connection refused", "connection_error", "Ollama is not running — start it with 'ollama serve'"),
+    ("connection error", "connection_error", "Cannot reach LLM provider — check network/Ollama"),
+    ("ConnectError", "connection_error", "Cannot connect to LLM provider"),
+    ("api_error", "api_error", "LLM API returned an error"),
+    ("rate_limit", "rate_limit", "Rate limited by LLM provider — wait and retry"),
+    ("invalid_api_key", "auth_error", "Invalid API key for LLM provider"),
+    ("AuthenticationError", "auth_error", "Authentication failed with LLM provider"),
+    ("Could not connect to ollama", "connection_error", "Ollama is not reachable"),
+]
+
 
 class AiderRunner:
     """Runs Aider against a single task, targeting a local LLM.
@@ -211,6 +230,23 @@ class AiderRunner:
             "so Aider does not request confirmation."
         )
 
+    def _classify_fatal_error(self, stdout: str, stderr: str) -> Optional[tuple[str, str]]:
+        """Scan Aider output for known fatal error patterns.
+
+        Returns (category, message) if a fatal error is detected, None otherwise.
+        These errors indicate config/connection problems that will never self-heal,
+        so retrying is pointless.
+        """
+        combined = f"{stdout}\n{stderr}"
+        for pattern, category, message in _FATAL_ERROR_PATTERNS:
+            if pattern.lower() in combined.lower():
+                self._logger.error(
+                    "Aider fatal error detected [%s]: %s (matched: '%s')",
+                    category, message, pattern,
+                )
+                return category, message
+        return None
+
     def run(
         self,
         task: Task,
@@ -240,12 +276,21 @@ class AiderRunner:
 
         # Force UTF-8 in the Aider subprocess so rich/charmap errors don't
         # cause a silent crash on Windows consoles (e.g. deepseek special tokens).
+        # Ensure Ollama/LiteLLM request timeout exceeds our bridge timeout
+        # so the bridge's own timeout is always the one that fires first.
+        _ollama_timeout = str(self._timeout + 120)  # +2min buffer
+
         _subprocess_env = {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
             "PYTHONUTF8": "1",
             "BROWSER": "",          # Prevent Aider/LiteLLM from opening browser pages
             "NO_COLOR": "1",        # Suppress color codes in non-interactive output
+            # Prevent Ollama/LiteLLM from timing out before the bridge does
+            "OLLAMA_KEEP_ALIVE": "10m",               # Keep model loaded in VRAM
+            "OLLAMA_REQUEST_TIMEOUT": _ollama_timeout, # Ollama HTTP request timeout
+            "LITELLM_REQUEST_TIMEOUT": _ollama_timeout,# LiteLLM request timeout
+            "OLLAMA_NUM_PARALLEL": "1",                # Prevent parallel request conflicts
         }
 
         _start = time.monotonic()
@@ -343,6 +388,23 @@ class AiderRunner:
                 exit_code=result.returncode,
                 stdout=result.stdout,
                 stderr=silent_failure_msg,
+                command=arguments,
+                duration_seconds=round(time.monotonic() - _start, 2),
+            )
+
+        # ── Fatal error classification ───────────────────────────────────────
+        # Detect LiteLLM/config/connection errors in stdout even when Aider
+        # exits with code 0.  These errors will never self-heal, so retrying
+        # the exact same config is pointless.
+        fatal = self._classify_fatal_error(result.stdout, result.stderr)
+        if fatal is not None:
+            category, message = fatal
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=result.returncode if result.returncode != 0 else 1,
+                stdout=result.stdout,
+                stderr=f"[{category}] {message}",
                 command=arguments,
                 duration_seconds=round(time.monotonic() - _start, 2),
             )
@@ -472,6 +534,7 @@ class AiderRunner:
             "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--no-browser",              # prevent opening litellm docs or any browser page
+            "--timeout", str(self._timeout + 60),  # LLM request timeout > bridge timeout
             "--message",
             self._build_message(task, aider_context, file_paths),
         ])

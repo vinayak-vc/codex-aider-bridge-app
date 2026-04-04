@@ -332,8 +332,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--task-timeout",
         type=int,
-        default=300,
-        help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 300.",
+        default=600,
+        help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 600.",
     )
     parser.add_argument(
         "--confirm-plan",
@@ -782,6 +782,7 @@ def execute_task_with_review(
 
     _failure_reasons: list[str] = []  # Accumulate failure reasons for escalation
     _escalation_log: list[dict] = []  # Structured log for diagnostics/telemetry
+    _previous_rework_instructions: list[str] = []  # Track rework instructions for dedup
     _retry_budget_seconds = 0.0  # Track cumulative time for retry budget
     _MAX_RETRY_SECONDS = 1800  # 30 minute budget per task
 
@@ -917,7 +918,16 @@ def execute_task_with_review(
                     "Task %s: reused existing manual REWORK decision on rerun",
                     current_task.id,
                 )
-                current_instruction = review.new_instruction or current_instruction
+                _rework_instr = review.new_instruction or current_instruction
+                if _rework_instr in _previous_rework_instructions:
+                    _rework_instr = (
+                        f"{_rework_instr}\n\n"
+                        "NOTE: This exact instruction was tried before and failed. "
+                        f"Previous failure: {_failure_reasons[-1] if _failure_reasons else 'unknown'}. "
+                        "Try a DIFFERENT approach."
+                    )
+                _previous_rework_instructions.append(review.new_instruction or "")
+                current_instruction = _rework_instr
                 wait_seconds = min(2 ** attempt, 30)
                 time.sleep(wait_seconds)
                 continue
@@ -1087,6 +1097,18 @@ def execute_task_with_review(
                 current_task.id,
                 execution_result.exit_code,
             )
+
+            # ── Same-error detection ─────────────────────────────────────
+            # If the last 2 failures are identical, it's a config/connection
+            # problem that will never self-heal.  Stop immediately.
+            if len(_failure_reasons) >= 2 and _failure_reasons[-1] == _failure_reasons[-2]:
+                logger.error(
+                    "Task %s: same error repeated %d times — aborting retries: %s",
+                    current_task.id, 2, _failure_reasons[-1],
+                )
+                raise RuntimeError(
+                    f"Task {current_task.id}: same error repeated — {_failure_reasons[-1]}"
+                )
 
         # Fix #4: catch 0-byte output files — Aider may exit 0 but leave files
         # empty if it was killed mid-write (timeout) or hit an encoding crash.
@@ -1293,6 +1315,30 @@ def execute_task_with_review(
             time.sleep(wait_seconds)
             continue
 
+        # ── Skip review when nothing changed ─────────────────────────────────
+        # If Aider succeeded (exit 0) but produced an empty diff, there's
+        # nothing for the supervisor to review.  Skip straight to retry with a
+        # more explicit instruction — saves supervisor tokens.
+        if execution_result.succeeded and not diff.strip():
+            logger.info(
+                "Task %s: Aider exited 0 but produced no diff — skipping review, retrying",
+                current_task.id,
+            )
+            _failure_reasons.append("Aider exited 0 but no files changed (empty diff)")
+            _escalation_log.append({
+                "attempt": attempt + 1,
+                "stage": "empty_diff",
+                "reason": "Aider reported success but diff is empty",
+            })
+            if attempt >= config.max_task_retries:
+                raise RuntimeError(
+                    f"Task {current_task.id}: Aider reported success but never "
+                    f"modified any files after {attempt + 1} attempts"
+                )
+            wait_seconds = min(2 ** attempt, 30)
+            time.sleep(wait_seconds)
+            continue
+
         # ── Step 4: Review ────────────────────────────────────────────────────
         if manual_supervisor is not None:
             task_report = TaskReport(
@@ -1362,7 +1408,16 @@ def execute_task_with_review(
                 )
             wait_seconds = min(2 ** attempt, 30)
             time.sleep(wait_seconds)
-            current_instruction = review.new_instruction or current_instruction
+            _rework_instr = review.new_instruction or current_instruction
+            if _rework_instr in _previous_rework_instructions:
+                _rework_instr = (
+                    f"{_rework_instr}\n\n"
+                    "NOTE: This exact instruction was tried before and failed. "
+                    f"Previous failure: {_failure_reasons[-1] if _failure_reasons else 'unknown'}. "
+                    "Try a DIFFERENT approach."
+                )
+            _previous_rework_instructions.append(review.new_instruction or "")
+            current_instruction = _rework_instr
             continue
 
         if config.auto_approve or supervisor is None:
@@ -1410,7 +1465,16 @@ def execute_task_with_review(
             )
         wait_seconds = min(2 ** attempt, 30)
         time.sleep(wait_seconds)
-        current_instruction = review.new_instruction  # type: ignore[assignment]
+        _rework_instr = review.new_instruction or current_instruction  # type: ignore[assignment]
+        if _rework_instr in _previous_rework_instructions:
+            _rework_instr = (
+                f"{_rework_instr}\n\n"
+                "NOTE: This exact instruction was tried before and failed. "
+                f"Previous failure: {_failure_reasons[-1] if _failure_reasons else 'unknown'}. "
+                "Try a DIFFERENT approach."
+            )
+        _previous_rework_instructions.append(review.new_instruction or "")
+        current_instruction = _rework_instr
 
     # Emit escalation data for telemetry/diagnostics before raising
     if _escalation_log:
@@ -2216,6 +2280,39 @@ def main() -> int:
         # Circuit breaker: stop after N consecutive failures with same error category
         _consecutive_failures = 0
         _last_error_category = ""
+
+        # ── Model validation test ────────────────────────────────────────
+        # Send a 1-line test prompt through Aider to verify the full
+        # pipeline (Ollama running, model loaded, LiteLLM configured).
+        # Catches config errors before any real task runs.
+        if not args.dry_run:
+            logger.info("Running Aider connection test…")
+            _emit_structured({"type": "bridge_status", "message": "Testing Aider + LLM connection…"})
+            _test_task = Task(
+                id=0,
+                files=[],
+                instruction="Reply with OK. Do not modify any files.",
+                type="validate",
+            )
+            _test_result = runner.run(_test_task, [], None)
+            _test_stdout = (_test_result.stdout or "").lower()
+            _test_stderr = (_test_result.stderr or "").lower()
+            if not _test_result.succeeded or any(
+                err in _test_stdout or err in _test_stderr
+                for err in ["error", "exception", "traceback", "litellm"]
+            ):
+                _diag = _test_result.stderr or _test_result.stdout[:300]
+                logger.error("Aider connection test FAILED: %s", _diag)
+                _emit_structured({
+                    "type": "bridge_status",
+                    "status": "error",
+                    "message": f"Aider connection test failed: {_diag[:200]}",
+                })
+                raise RuntimeError(
+                    f"Aider connection test failed — fix the config before running tasks.\n{_diag}"
+                )
+            logger.info("Aider connection test passed ✓")
+            _emit_structured({"type": "bridge_status", "message": "Aider connection test passed ✓"})
 
         for task_index, task in enumerate(tasks):
             wait_if_paused(repo_root, logger)
