@@ -688,6 +688,7 @@ class AiderRunner:
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--no-browser",              # prevent opening litellm docs or any browser page
             "--no-detect-urls",          # suppress URL detection warnings
+            "--no-suggest-shell-commands",  # prevent shell command suggestions
             "--timeout", str(self._timeout + 60),  # LLM request timeout > bridge timeout
             "--edit-format", "diff",     # LLM outputs only changed lines (5-10× faster)
             "--map-refresh", "manual",   # Don't re-scan repo mid-task
@@ -794,13 +795,17 @@ class AiderRunner:
         # Rules — prevent the most common Aider failure modes
         rules: list[str] = [
             "RULES",
-            "  - CRITICAL: edit only the TARGET FILES listed above — do NOT create"
-            " new files or write to any other path",
+            "  - CRITICAL: edit ONLY the TARGET FILES listed above — do NOT create,"
+            " reference, inspect, or add any other files to the chat",
             "  - CRITICAL: use the exact absolute path shown — do not change the"
             " filename, directory, or extension",
+            "  - CRITICAL: stay scoped — do NOT mention, import, or reason about files"
+            " outside the target list.  If you need info from another file, infer from"
+            " the target file's existing imports and function signatures",
             "  - Do not ask questions or request clarification — implement directly",
             "  - Do not write TODO/stub placeholders — write complete working code",
             "  - Do not remove existing unrelated code",
+            "  - Keep your response SHORT — output only the diff/edit blocks, no explanations",
         ]
         if self._standards_files:
             names = ", ".join(p.name for p in self._standards_files)

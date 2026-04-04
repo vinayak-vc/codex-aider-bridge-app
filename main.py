@@ -1091,10 +1091,23 @@ def execute_task_with_review(
                 "stdout_tail": execution_result.stdout[-300:] if execution_result.stdout else "",
             })
             logger.warning(
-                "Task %s: Aider exited with code %s",
+                "Task %s: Aider failed (exit %s): %s",
                 current_task.id,
                 execution_result.exit_code,
+                _fail_msg[:200],
             )
+
+            # Record failure for diagnostics before retrying
+            if diagnostics:
+                diagnostics.record_aider_result(
+                    task_id=current_task.id,
+                    attempt=attempt + 1,
+                    exit_code=execution_result.exit_code,
+                    succeeded=False,
+                    stdout=execution_result.stdout,
+                    stderr=execution_result.stderr,
+                    duration_seconds=execution_result.duration_seconds,
+                )
 
             # ── Same-error detection ─────────────────────────────────────
             # If the last 2 failures are identical, it's a config/connection
@@ -1107,6 +1120,23 @@ def execute_task_with_review(
                 raise RuntimeError(
                     f"Task {current_task.id}: same error repeated — {_failure_reasons[-1]}"
                 )
+
+            if attempt >= config.max_task_retries:
+                raise RuntimeError(
+                    f"Task {current_task.id} failed after {attempt + 1} attempts: {_fail_msg}"
+                )
+
+            # ── Skip review, retry immediately ───────────────────────────
+            # BUG FIX: Previously, failed executions fell through to diff
+            # collection + manual review, wasting supervisor tokens on a
+            # task that produced no useful output.  Now we backoff and retry.
+            wait_seconds = min(2 ** attempt, 30)
+            logger.info(
+                "Task %s: backing off %ss before retry %s (skipping review — no useful output)",
+                current_task.id, wait_seconds, attempt + 2,
+            )
+            time.sleep(wait_seconds)
+            continue
 
         # Fix #4: catch 0-byte output files — Aider may exit 0 but leave files
         # empty if it was killed mid-write (timeout) or hit an encoding crash.
