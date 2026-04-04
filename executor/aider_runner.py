@@ -51,7 +51,22 @@ _FATAL_ERROR_PATTERNS: list[tuple[str, str, str]] = [
     ("invalid_api_key", "auth_error", "Invalid API key for LLM provider"),
     ("AuthenticationError", "auth_error", "Authentication failed with LLM provider"),
     ("Could not connect to ollama", "connection_error", "Ollama is not reachable"),
+    ("exceeds the", "context_overflow", "Prompt too large for model's context window — try a smaller file or larger model"),
+    ("context length exceeded", "context_overflow", "Prompt exceeds model context window"),
+    ("maximum context length", "context_overflow", "Prompt exceeds model context window"),
 ]
+
+# Patterns that indicate the model gave a useless response because context
+# was too large — the model "acknowledges" instead of actually coding.
+_USELESS_RESPONSE_PATTERNS: tuple[str, ...] = (
+    "i will keep that in mind",
+    "i'll keep that in mind",
+    "let me know if you need",
+    "please let me know",
+    "if you have any questions",
+    "i understand the task",
+    "i'll help you with that",
+)
 
 
 class AiderRunner:
@@ -327,6 +342,10 @@ class AiderRunner:
             "OLLAMA_KEEP_ALIVE": "10m",                # Keep model in VRAM
             "OLLAMA_REQUEST_TIMEOUT": _ollama_timeout,  # Ollama HTTP timeout
             "LITELLM_REQUEST_TIMEOUT": _ollama_timeout, # LiteLLM HTTP timeout
+            # Expand Ollama context window — models like qwen2.5-coder support
+            # 128K natively but Ollama defaults to 2-4K.  Without this, any
+            # prompt >32K tokens gets a useless "I'll keep that in mind" response.
+            "OLLAMA_NUM_CTX": "65536",                 # 64K context window
             "OLLAMA_NUM_PARALLEL": "1",                # No parallel requests
         }
 
@@ -524,6 +543,31 @@ class AiderRunner:
                 duration_seconds=result_obj.duration_seconds,
             )
 
+        # Useless response detection — model acknowledged prompt but didn't code.
+        # Happens when context overflows: model says "I'll keep that in mind"
+        # instead of producing edit blocks.
+        _stdout_lower = (result_obj.stdout or "").lower()
+        for useless_pattern in _USELESS_RESPONSE_PATTERNS:
+            if useless_pattern in _stdout_lower:
+                self._logger.warning(
+                    "Task %s: model gave a useless response ('%s') — likely context overflow",
+                    task.id, useless_pattern,
+                )
+                return ExecutionResult(
+                    task_id=task.id,
+                    succeeded=False,
+                    exit_code=0,
+                    stdout=result_obj.stdout,
+                    stderr=(
+                        f"[context_overflow] Model responded with '{useless_pattern}' "
+                        "instead of code — the prompt likely exceeds the model's context "
+                        "window. Try: reduce file size, use a model with larger context, "
+                        "or split this task into smaller pieces."
+                    ),
+                    command=result_obj.command,
+                    duration_seconds=result_obj.duration_seconds,
+                )
+
         # Interactive prompt detection
         interactive_prompt_msg = self._detect_interactive_prompt_output(
             result_obj.stdout, result_obj.stderr,
@@ -643,10 +687,9 @@ class AiderRunner:
             "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--no-browser",              # prevent opening litellm docs or any browser page
+            "--no-detect-urls",          # suppress URL detection warnings
             "--timeout", str(self._timeout + 60),  # LLM request timeout > bridge timeout
-            "--edit-format", "diff",     # LLM outputs only the changed lines, not the
-                                         # entire file.  Critical for slow local models:
-                                         # 360-line file @ 5.9 tok/s → 500 s (whole) vs 60 s (diff).
+            "--edit-format", "diff",     # LLM outputs only changed lines (5-10× faster)
             "--map-refresh", "manual",   # Don't re-scan repo mid-task
             "--message",
             self._build_message(task, aider_context, file_paths),
@@ -721,20 +764,20 @@ class AiderRunner:
         sections: list[str] = []
 
         if ctx:
-            # Goal
-            goal_text = ctx.goal[:400].rstrip()
+            # Goal — keep short to save tokens for the actual code
+            goal_text = ctx.goal[:200].rstrip()
             sections.append(f"GOAL\n{goal_text}")
 
-            # Task position
+            # Task position + instruction
             sections.append(
                 f"TASK {ctx.task_number} OF {ctx.total_tasks} ({task.type.upper()})\n"
                 f"{task.instruction}"
             )
 
-            # What is already done (last 5 tasks to stay concise)
+            # What is already done — last 3 only (saves ~500 tokens)
             if ctx.completed_summaries:
                 done_lines = "\n".join(
-                    f"  {s}" for s in ctx.completed_summaries[-5:]
+                    f"  {s}" for s in ctx.completed_summaries[-3:]
                 )
                 sections.append(f"ALREADY COMPLETED\n{done_lines}")
         else:
