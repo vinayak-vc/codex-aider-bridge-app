@@ -1,384 +1,14 @@
-// pages/run.js — Run page controller
+// pages/run.js — Wizard-style Run page controller
 
 import { SSEClient } from '/static/js/core/sse.js';
 import { apiPost }   from '/static/js/core/api.js';
 import { toast }     from '/static/js/core/toast.js';
 import { play }      from '/static/js/core/sounds.js';
 
-// ── Tab switching ────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-let _activeTab = 'settings';
-let _logBadgeCount = 0;
-
-function switchRunTab(tabName) {
-  _activeTab = tabName;
-  document.querySelectorAll('#run-tabs .tab').forEach(btn => {
-    btn.classList.toggle('--active', btn.dataset.tab === tabName);
-  });
-  const settingsPanel = $('run-tab-settings');
-  const logPanel      = $('run-tab-log');
-  if (settingsPanel) {
-    settingsPanel.classList.toggle('--active', tabName === 'settings');
-    settingsPanel.style.display = tabName === 'settings' ? '' : 'none';
-  }
-  if (logPanel) {
-    logPanel.classList.toggle('--active', tabName === 'log');
-    logPanel.style.display = tabName === 'log' ? '' : 'none';
-  }
-  // Clear log badge when switching to log tab
-  if (tabName === 'log') {
-    _logBadgeCount = 0;
-    _updateLogBadge();
-    // Scroll to bottom when switching to log
-    const terminal = $('log-terminal');
-    if (terminal) terminal.scrollTop = terminal.scrollHeight;
-  }
-}
-
-function _updateLogBadge() {
-  const badge = $('run-tab-log-badge');
-  if (!badge) return;
-  if (_logBadgeCount > 0 && _activeTab !== 'log') {
-    badge.textContent = _logBadgeCount > 99 ? '99+' : String(_logBadgeCount);
-    badge.style.display = '';
-  } else {
-    badge.style.display = 'none';
-  }
-}
-
-function _incrementLogBadge() {
-  if (_activeTab !== 'log') {
-    _logBadgeCount++;
-    _updateLogBadge();
-  }
-}
-
-// ── Supervisor presets ────────────────────────────────────────────────────────
-
-const SUPERVISOR_CMDS = {
-  codex:    'codex.cmd exec --skip-git-repo-check --color never',
-  claude:   'claude',
-  cursor:   'cursor',
-  windsurf: 'windsurf',
-  chatbot:  null,   // inline relay wizard — handled by UI in Milestone B
-  manual:   null,   // sets manual_supervisor: true
-  custom:   '',     // freeform
-};
-
-// ── Compatibility info ────────────────────────────────────────────────────────
-
-const SUPERVISOR_COMPAT = {
-  codex: {
-    level: 'warning',
-    message:
-      'Codex CLI requires <strong>OPENAI_API_KEY</strong> set in your environment. ' +
-      'ChatGPT Plus / Pro does NOT include API access — ' +
-      'sign up separately at platform.openai.com and add credits.',
-  },
-  claude: {
-    level: 'success',
-    message:
-      'Claude Code works with your <strong>Claude Pro subscription</strong> via ' +
-      '<code>claude login</code> (OAuth — no raw API key needed).',
-  },
-  cursor: {
-    level: 'info',
-    message:
-      'Cursor runs as an IDE and uses your <strong>Cursor subscription</strong>. ' +
-      'Cursor IDE must be installed and licensed on this machine.',
-  },
-  windsurf: {
-    level: 'info',
-    message:
-      'Windsurf runs as an IDE and uses your <strong>Windsurf subscription</strong>. ' +
-      'Windsurf IDE must be installed and licensed on this machine.',
-  },
-  chatbot: {
-    level: 'info',
-    message:
-      '<strong>No API key required.</strong> ' +
-      'At each review point, the UI shows a prompt to copy into any chatbot (ChatGPT, Claude, Gemini…). ' +
-      'Paste the response back and the run continues.',
-  },
-  manual: {
-    level: 'success',
-    message:
-      '<strong>No account or API key required.</strong> ' +
-      'You provide supervisor responses manually — works fully offline.',
-  },
-  custom: {
-    level: 'info',
-    message:
-      'Custom command: ensure the binary is on PATH and any required ' +
-      'environment variables (API keys, tokens) are set before launching.',
-  },
-};
-
-const MODEL_COMPAT = {
-  'gpt-': {
-    level: 'warning',
-    message:
-      'OpenAI models (gpt-*) require <strong>OPENAI_API_KEY</strong>. ' +
-      'ChatGPT Plus / Pro does NOT include API access.',
-  },
-  'claude-': {
-    level: 'warning',
-    message:
-      'Anthropic models (claude-*) require <strong>ANTHROPIC_API_KEY</strong>. ' +
-      'Claude Pro (claude.ai) does NOT include API access — ' +
-      'API billing is separate at console.anthropic.com.',
-  },
-  'o1': {
-    level: 'warning',
-    message:
-      'OpenAI o1 models require <strong>OPENAI_API_KEY</strong>. ' +
-      'ChatGPT Plus / Pro does NOT include API access.',
-  },
-};
-
-function makeBanner(level, html) {
-  // level: 'success' | 'info' | 'warning'
-  const icons = {
-    success: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>',
-    info:    '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>',
-    warning: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>',
-  };
-  const colorMap = {
-    success: 'var(--color-success)',
-    info:    'var(--color-info)',
-    warning: 'var(--color-warning)',
-  };
-  const bgMap = {
-    success: 'rgba(34,197,94,.08)',
-    info:    'rgba(6,182,212,.08)',
-    warning: 'rgba(245,158,11,.08)',
-  };
-  return `<div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:var(--radius-md);border:1px solid ${colorMap[level]};background:${bgMap[level]};font-size:var(--font-size-sm);color:var(--color-text-muted);line-height:1.5">
-    <span style="color:${colorMap[level]};flex-shrink:0;margin-top:1px">${icons[level]}</span>
-    <span>${html}</span>
-  </div>`;
-}
-
-// ── Role indicator strip ─────────────────────────────────────────────────────
-
-function _setRoleState(roleId, state, label) {
-  const badge = $(roleId);
-  const labelEl = $(`${roleId}-label`);
-  if (badge) badge.dataset.state = state;  // 'idle' | 'active' | 'done'
-  if (labelEl && label) labelEl.textContent = label;
-}
-
-function showRoleStrip(visible) {
-  const strip = $('role-strip');
-  if (strip) strip.style.display = visible ? '' : 'none';
-}
-
-function resetRoleStrip() {
-  _setRoleState('role-planner',  'idle', 'Planner');
-  _setRoleState('role-reviewer', 'idle', 'Reviewer');
-  showRoleStrip(false);
-}
-
-// ── Task Progress Panel ──────────────────────────────────────────────────────
-
-let _progressTasks = [];
-let _selectedTaskId = null;
-let _progressPlanFile = '';
-
-async function loadProgress() {
-  try {
-    const data = await fetch('/api/run/progress').then(r => r.json());
-    _progressTasks = data.tasks || [];
-    _progressPlanFile = data.plan_file || '';
-    renderProgressPanel(data);
-  } catch (_) {}
-}
-
-function renderProgressPanel(data) {
-  const bar = $('task-progress-bar');
-  const label = $('task-progress-label');
-  const list = $('task-progress-list');
-  const resumeBtn = $('btn-resume-run');
-  const resumeLabel = $('btn-resume-label');
-
-  const total = data.total_tasks || _progressTasks.length || 0;
-  const done = (data.completed || []).length;
-  const pct = total > 0 ? Math.round(done / total * 100) : 0;
-
-  if (bar) bar.style.width = pct + '%';
-  if (label) label.textContent = total > 0 ? `${done} / ${total} tasks (${pct}%)` : 'No tasks';
-
-  // Resume button
-  if (resumeBtn) {
-    if (data.can_resume && !_isRunning) {
-      const nextId = done + 1;
-      if (resumeLabel) resumeLabel.textContent = `Resume from task ${nextId}`;
-      resumeBtn.style.display = '';
-    } else {
-      resumeBtn.style.display = 'none';
-    }
-  }
-
-  // Task list
-  if (!list) return;
-  if (!_progressTasks.length) {
-    list.innerHTML = '<div class="task-progress-empty">No task data yet. Generate a plan and run it.</div>';
-    return;
-  }
-
-  const statusIcons = {
-    done: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>',
-    running: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>',
-    failed: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>',
-    pending: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><circle cx="12" cy="12" r="9"/></svg>',
-  };
-
-  list.innerHTML = _progressTasks.map(t => {
-    const s = t.status || 'pending';
-    const icon = statusIcons[s] || statusIcons.pending;
-    const files = (t.files || []).join(', ');
-    const title = t.instruction ? t.instruction.slice(0, 50) : `Task ${t.id}`;
-    return `
-      <div class="task-progress-item" data-task-id="${t.id}" title="${_esc(t.instruction || '')}">
-        <span class="task-status-icon --${s}">${icon}</span>
-        <div class="task-progress-info">
-          <div class="task-progress-title">${t.id}. ${_esc(title)}</div>
-          <div class="task-progress-files">${_esc(files)}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  list.querySelectorAll('.task-progress-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const tid = parseInt(el.dataset.taskId, 10);
-      _selectProgressTask(tid);
-      list.querySelectorAll('.task-progress-item').forEach(r => r.classList.remove('--active'));
-      el.classList.add('--active');
-    });
-  });
-}
-
-function _selectProgressTask(taskId) {
-  _selectedTaskId = taskId;
-  const task = _progressTasks.find(t => t.id === taskId);
-  const pane = $('task-detail-pane');
-  const title = $('task-detail-title');
-  const body = $('task-detail-body');
-  if (!pane || !task) { if (pane) pane.style.display = 'none'; return; }
-
-  if (title) title.textContent = `Task ${task.id} (${task.type || '?'}) — ${task.status || 'pending'}`;
-  if (body) {
-    let html = `<p>${_esc(task.instruction || 'No instruction')}</p>`;
-    html += `<p style="margin-top:6px;font-family:var(--font-mono);font-size:11px">Files: ${_esc((task.files || []).join(', '))}</p>`;
-    if (task.commit_sha) html += `<p style="margin-top:4px;font-size:11px">Commit: <code>${_esc(task.commit_sha)}</code></p>`;
-
-    // Undo button (Feature 3)
-    if (task.status === 'done' && task.commit_sha && !_isRunning) {
-      html += `<button class="btn btn--danger btn--sm" id="btn-undo-task" data-task-id="${task.id}" style="margin-top:8px">Undo This Task</button>`;
-    }
-
-    // Diff viewer (Feature 2)
-    if (task.diff) {
-      html += `<div style="margin-top:10px;border-top:1px solid var(--color-border-muted);padding-top:8px">
-        <div style="font-size:11px;font-weight:600;color:var(--color-text-subtle);margin-bottom:4px">Diff</div>
-        <pre style="background:#020408;color:#c9d1d9;padding:8px;border-radius:var(--radius-sm);font-size:11px;overflow:auto;max-height:200px;line-height:1.4">${_colorDiff(task.diff)}</pre>
-      </div>`;
-    }
-
-    body.innerHTML = html;
-
-    // Bind undo button
-    $('btn-undo-task')?.addEventListener('click', () => _undoTask(task.id));
-  }
-  pane.style.display = '';
-}
-
-function _colorDiff(diff) {
-  if (!diff) return '';
-  return _esc(diff).split('\n').map(line => {
-    if (line.startsWith('+')) return `<span style="color:var(--color-success)">${line}</span>`;
-    if (line.startsWith('-')) return `<span style="color:var(--color-danger)">${line}</span>`;
-    if (line.startsWith('@@')) return `<span style="color:var(--color-info)">${line}</span>`;
-    return line;
-  }).join('\n');
-}
-
-async function _undoTask(taskId) {
-  if (!confirm(`Undo task ${taskId}? This will revert the git commit.`)) return;
-  try {
-    const settings = collectSettings();
-    const res = await apiPost('/api/run/undo-task', { task_id: taskId, repo_root: settings.repo_root });
-    if (res.ok) {
-      toast(`Task ${taskId} reverted successfully.`, 'success');
-      await loadProgress();
-    } else {
-      toast(res.error || 'Undo failed.', 'error');
-    }
-  } catch (err) {
-    toast(err.message || 'Undo failed.', 'error');
-  }
-}
-
-function _esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function updateProgressFromSSE(data) {
-  // Update a specific task status in the progress panel
-  const taskId = data.task?.id || data.task_id;
-  if (!taskId) return;
-
-  const existing = _progressTasks.find(t => t.id === taskId);
-  if (existing) {
-    if (data.task?.status === 'approved') existing.status = 'done';
-    else if (data.task?.status === 'running') existing.status = 'running';
-    else if (data.task?.status === 'rework' || data.task?.status === 'retrying') existing.status = 'running';
-  }
-
-  // Re-render with updated data
-  const done = _progressTasks.filter(t => t.status === 'done').length;
-  const total = _progressTasks.length;
-  const bar = $('task-progress-bar');
-  const label = $('task-progress-label');
-  if (bar) bar.style.width = (total > 0 ? Math.round(done / total * 100) : 0) + '%';
-  if (label) label.textContent = `${done} / ${total} tasks (${total > 0 ? Math.round(done / total * 100) : 0}%)`;
-
-  renderProgressPanel({ total_tasks: total, completed: _progressTasks.filter(t => t.status === 'done').map(t => t.id), tasks: _progressTasks, can_resume: false });
-}
-
-// ── Drag-to-resize ──────────────────────────────────────────────────────────
-
-function initDragResize() {
-  const divider = $('run-divider');
-  const rightPanel = $('run-right-panel');
-  if (!divider || !rightPanel) return;
-
-  let startX = 0;
-  let startWidth = 0;
-
-  divider.addEventListener('mousedown', e => {
-    e.preventDefault();
-    startX = e.clientX;
-    startWidth = rightPanel.offsetWidth;
-    divider.classList.add('--dragging');
-
-    const onMove = e2 => {
-      const delta = startX - e2.clientX;
-      const newWidth = Math.max(220, Math.min(500, startWidth + delta));
-      rightPanel.style.width = newWidth + 'px';
-    };
-    const onUp = () => {
-      divider.classList.remove('--dragging');
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-}
-
-// ── Goal Templates ───────────────────────────────────────────────────────────
+// ── Goal Templates ──────────────────────────────────────────────────────────
 
 const GOAL_TEMPLATES = [
   { label: 'Add Feature',     tpl: 'Add a {feature_name} feature to {module}. It should {description}.' },
@@ -387,1933 +17,562 @@ const GOAL_TEMPLATES = [
   { label: 'Add Tests',       tpl: 'Write unit tests for {module} covering {scenarios}.' },
   { label: 'API Endpoint',    tpl: 'Create a {method} endpoint at {path} that {description}.' },
   { label: 'Security Review', tpl: 'Review {file_path} for security vulnerabilities and fix any found.' },
-  { label: 'Performance',     tpl: 'Optimize {component}. Current issue: {problem}. Target: {metric}.' },
   { label: 'Read / Analyze',  tpl: 'Read {file_path} and tell me {question}.' },
 ];
 
-function initGoalTemplates() {
-  const bar = $('goal-template-bar');
-  if (!bar) return;
-  bar.innerHTML = GOAL_TEMPLATES.map(t =>
-    `<button class="goal-template-chip" data-tpl="${_esc(t.tpl)}">${_esc(t.label)}</button>`
-  ).join('');
-  bar.addEventListener('click', e => {
-    const btn = e.target.closest('.goal-template-chip');
-    if (!btn) return;
-    const input = $('nl-input');
-    if (input) {
-      input.value = btn.dataset.tpl;
-      input.focus();
-      // Select first placeholder
-      const m = input.value.match(/\{[^}]+\}/);
-      if (m) {
-        input.setSelectionRange(m.index, m.index + m[0].length);
-      }
-    }
-  });
-}
-
-// ── Desktop Notifications ────────────────────────────────────────────────────
-
-function _requestNotifPermission() {
-  if ('Notification' in window && localStorage.getItem('bridge_notifications') === '1') {
-    Notification.requestPermission().catch(() => {});
-  }
-}
-
-function _sendNotification(title, body) {
-  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-    try {
-      const n = new Notification(title, { body });
-      n.onclick = () => { window.focus(); n.close(); };
-    } catch (_) {}
-  }
-}
-
-function _enableNotifications(enable) {
-  localStorage.setItem('bridge_notifications', enable ? '1' : '0');
-  if (enable) _requestNotifPermission();
-}
-
-function updateCompatWarnings() {
-  // Supervisor banner
-  const sup = document.querySelector('input[name="supervisor"]:checked')?.value || '';
-  const supBanner = $('supervisor-compat-banner');
-  if (supBanner) {
-    const compat = SUPERVISOR_COMPAT[sup];
-    if (compat) {
-      supBanner.innerHTML = makeBanner(compat.level, compat.message);
-      supBanner.style.display = '';
-    } else {
-      supBanner.style.display = 'none';
-    }
-  }
-
-  // Model banner
-  const model = $('f-aider-model')?.value?.trim() || '';
-  const modelBanner = $('model-api-banner');
-  if (modelBanner) {
-    let matched = null;
-    for (const [prefix, info] of Object.entries(MODEL_COMPAT)) {
-      if (model.startsWith(prefix)) { matched = info; break; }
-    }
-    if (matched) {
-      modelBanner.innerHTML = makeBanner(matched.level, matched.message);
-      modelBanner.style.display = '';
-    } else {
-      modelBanner.style.display = 'none';
-    }
-  }
-}
-
-// ── DOM refs ──────────────────────────────────────────────────────────────────
-
-const $ = id => document.getElementById(id);
-
-// ── Natural Language Mode ─────────────────────────────────────────────────────
-
-let _currentBrief = null;
-let _nlTasks = [];
-let _nlSummary = '';
-let _nlProjectKey  = '';   // repo_root used as project key
-
-// Status chip states
-const NL_STATUS = {
-  drafting:           { label: 'Drafting',            mod: '' },
-  generating:         { label: 'Generating…',         mod: '--generating' },
-  needs_clarification:{ label: 'Needs clarification', mod: '--warning' },
-  ready_to_run:       { label: 'Ready to run',        mod: '--success' },
-  plan_ready:         { label: 'Plan ready',          mod: '--info' },
-  plan_confirmed:     { label: 'Plan confirmed',      mod: '--success' },
-};
-
-function _nlStatusFor(brief) {
-  if (!brief) return 'drafting';
-  const confidence = brief.confidence_score ?? 100;
-  if (brief.needs_clarification || confidence < 60) return 'needs_clarification';
-  return 'ready_to_run';
-}
-
-function setNLStatusChip(status) {
-  const row  = $('nl-status-row');
-  const chip = $('nl-status-chip');
-  if (!chip) return;
-  const info = NL_STATUS[status] || NL_STATUS.drafting;
-  chip.textContent = info.label;
-  chip.className = `nl-status-chip${info.mod ? ' ' + info.mod : ''}`;
-  if (row) row.style.display = '';
-}
-
-async function _saveNLState(status, extra = {}) {
-  if (!_nlProjectKey) return;
-  try {
-    const body = {
-      repo_root: _nlProjectKey,
-      message:   $('nl-input')?.value || '',
-      brief:     _currentBrief || {},
-      tasks:     _nlTasks || [],
-      plan_summary: _nlSummary || '',
-      status,
-      confidence_score: _currentBrief?.confidence_score,
-      risks:            _currentBrief?.risks,
-      risk_level:       _currentBrief?.risk_level,
-      ...extra,
-    };
-    await fetch('/api/run/nl/state', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } catch (_) {}
-}
-
-async function _clearNLState() {
-  if (!_nlProjectKey) return;
-  try {
-    await fetch('/api/run/nl/state', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo_root: _nlProjectKey }),
-    });
-  } catch (_) {}
-}
-
-async function _restoreNLState() {
-  if (!_nlProjectKey) return;
-  try {
-    const res   = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
-    const state = await res.json();
-    
-    // Clear UI before potentially restoring
-    if ($('nl-input')) $('nl-input').value = '';
-    _currentBrief = null;
-    _nlTasks = [];
-    _nlSummary = '';
-    _confirmedPlanFile = '';
-    setNLStatusChip('drafting');
-    
-    // Hide NL plan sections
-    const nlPlanOutput = $('nl-plan-output');
-    if (nlPlanOutput) nlPlanOutput.style.display = 'none';
-    const nlConfirmed = $('nl-plan-confirmed-wrap');
-    if (nlConfirmed) nlConfirmed.style.display = 'none';
-
-    if (!state || !state.message) return;
-
-    // Restore textarea
-    if ($('nl-input')) $('nl-input').value = state.message;
-
-    // Restore brief
-    if (state.brief && state.brief.goal) {
-      _currentBrief = state.brief;
-      renderBrief(state.brief);
-    }
-
-    _nlTasks = state.tasks || [];
-    _nlSummary = state.plan_summary || '';
-
-    // Restore plan tasks if present
-    if (Array.isArray(state.tasks) && state.tasks.length) {
-      renderNLTaskList(state.tasks, state.plan_summary || '');
-
-      if (state.plan_status === 'plan_confirmed') {
-        _confirmedPlanFile = state.plan_file || '';
-        const banner = $('nl-plan-confirmed-banner');
-        if (banner) {
-          banner.textContent = _confirmedPlanFile
-            ? `Plan saved → ${_confirmedPlanFile}`
-            : 'Plan confirmed.';
-        }
-        $('nl-plan-confirmed-wrap').style.display = '';
-        $('nl-plan-actions').style.display = 'none';
-      }
-    }
-
-    // Restore status chip
-    const status = state.status || _nlStatusFor(state.brief || null);
-    setNLStatusChip(status);
-  } catch (_) {}
-}
-
-function _renderBriefSection(label, items) {
-  if (!items?.length) return '';
-  return `<div class="nl-brief-section">
-    <div class="nl-brief-label">${label}</div>
-    ${items.map(i => `<div class="nl-brief-item">${escHtml(String(i))}</div>`).join('')}
-  </div>`;
-}
-
-function renderBrief(brief) {
-  _currentBrief = brief;
-  const card = $('nl-brief-card');
-  if (!card) return;
-
-  card.innerHTML = `
-    <div class="nl-brief-section">
-      <div class="nl-brief-label">Goal</div>
-      <div class="nl-brief-goal">${escHtml(brief.goal || '')}</div>
-    </div>
-    ${_renderBriefSection('Assumptions', brief.assumptions)}
-    ${_renderBriefSection('Constraints', brief.constraints)}
-    ${_renderBriefSection('Acceptance Criteria', brief.acceptance_criteria)}
-  `;
-
-  // Confidence badge
-  const confBadge = $('nl-confidence-badge');
-  if (confBadge) {
-    const score = brief.confidence_score ?? 100;
-    confBadge.textContent = `${score}% Confidence`;
-    confBadge.style.display = '';
-    confBadge.className = 'nl-confidence-badge'; // Reset
-    if (score >= 80) confBadge.classList.add('--high');
-    else if (score >= 60) confBadge.classList.add('--medium');
-    else confBadge.classList.add('--low');
-  }
-
-  const qWrap = $('nl-questions-wrap');
-  const qCard = $('nl-questions-card');
-  if (qWrap && qCard) {
-    if (brief.clarification_questions?.length) {
-      qCard.innerHTML = `
-        <div class="nl-brief-section">
-          <div class="nl-brief-label">Clarification Needed</div>
-          ${brief.clarification_questions.map(q => `<div class="nl-brief-item">• ${escHtml(q)}</div>`).join('')}
-        </div>`;
-      qWrap.style.display = '';
-    } else {
-      qWrap.style.display = 'none';
-    }
-  }
-
-  // Risk alert
-  const riskAlert = $('nl-risk-alert');
-  if (riskAlert) {
-    if (brief.risks?.length) {
-      riskAlert.innerHTML = `
-        <div class="nl-brief-section">
-          <div class="nl-brief-label">Potential Risks Detected</div>
-          ${brief.risks.map(r => `<div class="nl-brief-item">• ${escHtml(r)}</div>`).join('')}
-        </div>`;
-      riskAlert.style.display = '';
-    } else {
-      riskAlert.style.display = 'none';
-    }
-  }
-
-  validateSafety();
-  $('nl-brief-output').style.display = '';
-}
-
-function validateSafety() {
-  if (!_currentBrief) return;
-
-  const confidence = _currentBrief.confidence_score ?? 100;
-  const isConfident = confidence >= 60;
-  const isClarified = !(_currentBrief.needs_clarification || _currentBrief.clarification_questions?.length);
-  const riskVerified = !_currentBrief.requires_confirmation || $('f-nl-safety-ack')?.checked;
-
-  const canProceed = isConfident && isClarified && riskVerified;
-
-  const btnPlan = $('btn-generate-plan');
-  if (btnPlan) btnPlan.disabled = !canProceed;
-
-  // Show/hide safety wrap if risky or low confidence
-  const safetyWrap = $('nl-safety-wrap');
-  if (safetyWrap) {
-    const shouldShow = _currentBrief.requires_confirmation || !isConfident;
-    safetyWrap.style.display = shouldShow ? '' : 'none';
-    
-    // If low confidence and no risks, hide the alert box itself but keep wrap for clarify info
-    const risks = _currentBrief.risks || [];
-    const riskAlert = $('nl-risk-alert');
-    if (riskAlert) riskAlert.style.display = risks.length ? '' : 'none';
-  }
-}
-
-async function generateBrief() {
-  const message = $('nl-input')?.value?.trim();
-  if (!message) {
-    toast('Please describe what you want to build.', 'warning');
-    $('nl-input')?.focus();
-    return;
-  }
-
-  const btn = $('btn-generate-brief');
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-  setNLStatusChip('generating');
-  $('nl-brief-output').style.display = 'none';
-
-  try {
-    const settings = await fetch('/api/settings').then(r => r.json());
-    if (!_nlProjectKey) _nlProjectKey = settings.repo_root || '';
-    const res = await fetch('/api/run/brief', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, repo_root: _nlProjectKey }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Failed to generate brief.');
-    renderBrief(data);
-    const status = _nlStatusFor(data);
-    setNLStatusChip(status);
-    await _saveNLState(status);
-  } catch (err) {
-    toast(err.message || 'Failed to generate brief.', 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/> </svg> Generate Brief';
-    }
-  }
-}
-
-async function applyBrief() {
-  if (!_currentBrief) return;
-
-  // Update the goal textarea with the refined goal from the brief
-  const nlInput = $('nl-input');
-  if (nlInput && _currentBrief.goal) {
-    nlInput.value = _currentBrief.goal;
-  }
-
-  // Fold constraints + acceptance criteria into the clarifications field
-  const clarEl = $('f-clarifications');
-  const extras = [
-    ...(_currentBrief.constraints || []).map(c => `Constraint: ${c}`),
-    ...(_currentBrief.acceptance_criteria || []).map(a => `Acceptance: ${a}`),
-  ];
-  if (extras.length && clarEl) {
-    const existing = clarEl.value.trim() || '';
-    clarEl.value = existing ? `${existing}\n${extras.join('\n')}` : extras.join('\n');
-    // Auto-open advanced accordion
-    const trigger = $('adv-trigger');
-    const body    = $('adv-body');
-    if (trigger?.getAttribute('aria-expanded') !== 'true') {
-      trigger?.setAttribute('aria-expanded', 'true');
-      body?.classList.remove('--hidden');
-    }
-  }
-
-  updateCommandPreview();
-  await _saveNLState('ready_to_run');
-  toast('Goal updated from brief — generate a plan or launch directly.', 'success');
-}
-
-// ── Plan generation ───────────────────────────────────────────────────────────
-
-let _confirmedPlanFile = '';
-
-function renderNLTaskList(tasks, summary) {
-  _nlTasks = tasks || [];
-  _nlSummary = summary || '';
-  const list = $('nl-task-list');
-  if (!list) return;
-
-  list.innerHTML = tasks.map(t => {
-    const type  = t.type || 'modify';
-    const files = (t.files || []).join(', ');
-    return `<div class="nl-task-item">
-      <div class="nl-task-num">${t.id}</div>
-      <div class="nl-task-body">
-        <div class="nl-task-head">
-          <span class="nl-task-title">${escHtml(t.title || t.instruction?.slice(0, 60) || '')}</span>
-          <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
-        </div>
-        <div class="nl-task-instruction">${escHtml(t.instruction || '')}</div>
-        ${files ? `<div class="nl-task-files">${escHtml(files)}</div>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-
-  const summaryEl = $('nl-plan-summary');
-  if (summaryEl) {
-    summaryEl.textContent = summary || '';
-    summaryEl.style.display = summary ? '' : 'none';
-  }
-
-  $('nl-plan-output').style.display = '';
-  $('nl-plan-actions').style.display = 'flex';
-  $('nl-plan-confirmed-wrap').style.display = 'none';
-}
-
-async function generatePlan() {
-  if (!_currentBrief?.goal) {
-    toast('Generate a brief first, then generate a plan.', 'warning');
-    return;
-  }
-
-  const btn = $('btn-generate-plan');
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating plan…'; }
-  setNLStatusChip('generating');
-  $('nl-plan-output').style.display = 'none';
-
-  try {
-    const res  = await fetch('/api/run/nl/plan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo_root: _nlProjectKey, brief: _currentBrief }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Plan generation failed.');
-
-    renderNLTaskList(data.tasks, data.plan_summary);
-    setNLStatusChip('plan_ready');
-    await _saveNLState('plan_ready', {
-      tasks:        data.tasks,
-      plan_summary: data.plan_summary,
-      plan_status:  'plan_ready',
-      plan_file:    '',  // Clear any stale plan file from previous confirm
-    });
-    _confirmedPlanFile = '';
-  } catch (err) {
-    toast(err.message || 'Plan generation failed.', 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg> Generate Plan';
-    }
-  }
-}
-
-async function confirmPlan() {
-  const taskItems = $('nl-task-list')?.querySelectorAll('.nl-task-item');
-  if (!taskItems?.length) {
-    toast('No plan to confirm.', 'warning');
-    return;
-  }
-
-  const btn = $('btn-confirm-plan');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
-  // Extract current tasks from the rendered list (use the saved state)
-  try {
-    const stateRes = await fetch(`/api/run/nl/state?repo_root=${encodeURIComponent(_nlProjectKey)}`);
-    const state    = await stateRes.json();
-    const tasks    = state.tasks || [];
-    const summary  = state.plan_summary || '';
-
-    const res  = await fetch('/api/run/nl/plan/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        repo_root:    _nlProjectKey,
-        tasks,
-        plan_summary: summary,
-        brief:        _currentBrief || {},
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Confirm failed.');
-
-    _confirmedPlanFile = data.plan_file || '';
-
-    // Show confirmed banner
-    const banner = $('nl-plan-confirmed-banner');
-    if (banner) {
-      banner.textContent = _confirmedPlanFile
-        ? `Plan saved → ${_confirmedPlanFile}`
-        : 'Plan confirmed.';
-    }
-    $('nl-plan-confirmed-wrap').style.display = '';
-    $('nl-plan-actions').style.display = 'none';
-
-    setNLStatusChip('plan_confirmed');
-    toast('Plan confirmed and saved.', 'success');
-  } catch (err) {
-    toast(err.message || 'Failed to confirm plan.', 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Plan'; }
-  }
-}
-
-// ── Settings → form ──────────────────────────────────────────────────────────
-
-function populateForm(s) {
-  const nlInput = $('nl-input');
-  if (nlInput && s.goal) nlInput.value = s.goal;
-  $('f-repo-root').value         = s.repo_root         || '';
-  $('f-aider-model').value       = s.aider_model       || 'ollama/mistral';
-  $('f-dry-run').checked         = !!s.dry_run;
-  $('f-validation-cmd').value    = s.validation_command || '';
-  $('f-max-retries').value       = s.max_task_retries   ?? 2;
-  $('f-max-plan-attempts').value = s.max_plan_attempts  ?? 3;
-  $('f-task-timeout').value      = s.task_timeout       ?? 300;
-  $('f-idea-file').value         = s.idea_file          || '';
-  $('f-plan-output-file').value  = s.plan_output_file   || '';
-
-  // Clarifications (stored as array, shown as one-per-line)
-  const clars = s.clarifications;
-  $('f-clarifications').value = Array.isArray(clars)
-    ? clars.join('\n')
-    : (clars || '');
-
-  // Supervisor radio
-  const sup = s.supervisor || 'codex';
-  const radio = document.querySelector(`input[name="supervisor"][value="${sup}"]`);
-  if (radio) radio.checked = true;
-
-  // Custom supervisor command
-  if (sup === 'custom') {
-    $('f-supervisor-command').value = s.supervisor_command || '';
-    $('supervisor-custom-wrap').style.display = '';
-  }
-
-  updateCommandPreview();
-  updateCompatWarnings();
-}
-
-// ── Form → settings object ────────────────────────────────────────────────────
-
-function collectSettings() {
-  const sup = document.querySelector('input[name="supervisor"]:checked')?.value || 'codex';
-  const clarRaw = $('f-clarifications').value.trim();
-  const clarifications = clarRaw
-    ? clarRaw.split('\n').map(l => l.trim()).filter(Boolean)
-    : [];
-
-  const settings = {
-    goal:               ($('nl-input')?.value || '').trim(),
-    repo_root:          $('f-repo-root').value.trim(),
-    aider_model:        $('f-aider-model').value.trim(),
-    supervisor:         sup,
-    manual_supervisor:  true,  // Universal pipeline: all runs use --manual-supervisor
-    supervisor_command: sup === 'custom' ? $('f-supervisor-command').value.trim()
-                      : (SUPERVISOR_CMDS[sup] || ''),
-    dry_run:            $('f-dry-run').checked,
-    auto_commit:        ($('sb-auto-commit')?.checked !== false),
-    validation_command: $('f-validation-cmd').value.trim(),
-    max_task_retries:   parseInt($('f-max-retries').value, 10)      || 2,
-    max_plan_attempts:  parseInt($('f-max-plan-attempts').value, 10) || 3,
-    task_timeout:       parseInt($('f-task-timeout').value, 10)      || 300,
-    idea_file:          $('f-idea-file').value.trim(),
-    plan_output_file:   $('f-plan-output-file').value.trim(),
-    clarifications,
-  };
-
-  return settings;
-}
-
-// ── Command preview (mirrors bridge_runner.py build_command) ──────────────────
-
-function updateCommandPreview() {
-  const s   = collectSettings();
-  const pre = $('cmd-preview');
-  if (!pre) return;
-
-  const parts = [];
-  parts.push({ cls: 'cmd-exe',  text: 'python main.py' });
-
-  if (s.goal)
-    parts.push({ cls: 'cmd-goal', text: JSON.stringify(s.goal) });
-
-  if (s.repo_root)
-    parts.push({ cls: 'cmd-flag', text: `--repo-root ${s.repo_root}` });
-  if (s.idea_file)
-    parts.push({ cls: 'cmd-flag', text: `--idea-file ${s.idea_file}` });
-  if (s.aider_model)
-    parts.push({ cls: 'cmd-flag', text: `--aider-model ${s.aider_model}` });
-  // Universal pipeline: all runs use --manual-supervisor internally,
-  // but show the actual supervisor for clarity
-  parts.push({ cls: 'cmd-flag', text: '--manual-supervisor' });
-  if (s.supervisor && s.supervisor !== 'manual')
-    parts.push({ cls: 'cmd-info', text: `# supervisor: ${s.supervisor}` });
-  if (!s.auto_commit)
-    parts.push({ cls: 'cmd-flag', text: '--no-auto-commit' });
-  if (s.validation_command)
-    parts.push({ cls: 'cmd-flag', text: `--validation-command "${s.validation_command}"` });
-  if (s.max_plan_attempts && s.max_plan_attempts !== 3)
-    parts.push({ cls: 'cmd-flag', text: `--max-plan-attempts ${s.max_plan_attempts}` });
-  if (s.max_task_retries && s.max_task_retries !== 2)
-    parts.push({ cls: 'cmd-flag', text: `--max-task-retries ${s.max_task_retries}` });
-  if (s.task_timeout && s.task_timeout !== 300)
-    parts.push({ cls: 'cmd-flag', text: `--task-timeout ${s.task_timeout}` });
-  if (s.plan_output_file)
-    parts.push({ cls: 'cmd-flag', text: `--plan-output-file ${s.plan_output_file}` });
-  if (s.dry_run)
-    parts.push({ cls: 'cmd-flag', text: '--dry-run' });
-  for (const c of (s.clarifications || []))
-    parts.push({ cls: 'cmd-flag', text: `--clarification "${c}"` });
-
-  parts.push({ cls: '', text: '--log-level INFO' });
-
-  pre.innerHTML = parts
-    .map(p => p.cls
-      ? `<span class="${p.cls}">${escHtml(p.text)}</span>`
-      : escHtml(p.text))
-    .join(' \\\n  ');
-}
-
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-// ── Log terminal ──────────────────────────────────────────────────────────────
-
-let _lineCount = 0;
-let _autoScroll = true;
-let _logView = 'parsed'; // 'parsed' | 'raw'
-let _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
-let _hiddenTags = new Set();
-
-function _switchLogView(view) {
-  _logView = view;
-  const parsed = $('log-parsed');
-  const raw = $('log-terminal');
-  const tagBar = $('log-tag-bar');
-  $('btn-log-parsed')?.classList.toggle('--active', view === 'parsed');
-  $('btn-log-raw')?.classList.toggle('--active', view === 'raw');
-  if (parsed) parsed.style.display = view === 'parsed' ? '' : 'none';
-  if (raw) raw.style.display = view === 'raw' ? '' : 'none';
-  if (tagBar) tagBar.style.display = view === 'parsed' ? '' : 'none';
-}
-
-function _updateTagCount(tag) {
-  _tagCounts[tag] = (_tagCounts[tag] || 0) + 1;
-  const el = $(`tag-count-${tag}`);
-  if (el) el.textContent = _tagCounts[tag];
-}
-
-function _toggleTag(tag) {
-  if (_hiddenTags.has(tag)) {
-    _hiddenTags.delete(tag);
-  } else {
-    _hiddenTags.add(tag);
-  }
-  // Update button state
-  document.querySelectorAll('.log-tag').forEach(btn => {
-    btn.classList.toggle('--active', !_hiddenTags.has(btn.dataset.tag));
-  });
-  // Show/hide events
-  const parsed = $('log-parsed');
-  if (!parsed) return;
-  parsed.querySelectorAll('.parsed-event').forEach(ev => {
-    const evTag = ev.dataset.tag || '';
-    ev.dataset.hidden = _hiddenTags.has(evTag) ? 'true' : 'false';
-  });
-}
-
-function _parseLine(rawLine) {
-  // Extract timestamp
-  const tsMatch = rawLine.match(/(\d{2}:\d{2}:\d{2})/);
-  const time = tsMatch ? tsMatch[1] : '';
-
-  // Classify the line
-  const line = rawLine;
-  const trimmed = line.trim();
-
-  // Skip raw JSON bridge events in parsed view
-  if (trimmed.startsWith('{"_bridge_event"')) return null;
-
-  const I = (color) => `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="${color}" width="14" height="14">`;
-  const icons = {
-    play:    `${I('var(--color-accent)')}<path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>`,
-    check:   `${I('var(--color-success)')}<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>`,
-    refresh: `${I('var(--color-warning)')}<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>`,
-    error:   `${I('var(--color-danger)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
-    warn:    `${I('var(--color-warning)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
-    info:    `${I('var(--color-info)')}<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>`,
-    swap:    `${I('var(--color-info)')}<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>`,
-  };
-
-  // Task start
-  let m = line.match(/Task\s+(\d+)\s*[—-]\s*attempt\s+(\d+)\/(\d+)\s*[—-]\s*files:\s*(.+)/);
-  if (m) return { time, tag: 'task', cls: '--task', label: `Task ${m[1]}`, text: `Attempt ${m[2]}/${m[3]} — ${m[4].trim()}`, icon: icons.play };
-
-  // Supervisor approved
-  if (/supervisor approved|auto-approved/.test(line)) {
-    m = line.match(/Task\s+(\d+)/);
-    return { time, tag: 'review', cls: '--review', label: m ? `Task ${m[1]} Approved` : 'Approved', text: 'Supervisor approved', icon: icons.check };
-  }
-
-  // Rework
-  m = line.match(/supervisor requested rework[^:]*:\s*(.+)/);
-  if (m) return { time, tag: 'review', cls: '--warning', label: 'Rework', text: m[1], icon: icons.refresh };
-
-  // Mechanical check failed
-  if (/mechanical check failed/.test(line)) {
-    const msg = line.replace(/.*mechanical check failed[^—]*[—-]\s*/, '');
-    return { time, tag: 'warning', cls: '--warning', label: 'Validation Failed', text: msg || 'Mechanical check failed', icon: icons.warn };
-  }
-
-  // Error
-  if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line)) {
-    const msg = line.replace(/.*\|\s*(ERROR|CRITICAL)\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, tag: 'error', cls: '--error', label: 'Error', text: msg, icon: icons.error };
-  }
-
-  // Warning
-  if (/\|\s*WARNING\s*\|/.test(line)) {
-    const msg = line.replace(/.*\|\s*WARNING\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, tag: 'warning', cls: '--warning', label: 'Warning', text: msg, icon: icons.warn };
-  }
-
-  // Bridge lifecycle
-  if (/Bridge start|Plan ready|Pre-flight|Loaded.*task|Project knowledge|Project understanding|Validator/.test(line)) {
-    const msg = line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: msg, icon: icons.info };
-  }
-
-  // Proxy events
-  if (/\[proxy\]/.test(line)) {
-    const msg = line.replace(/.*\[proxy\]\s*/, '');
-    return { time, tag: 'proxy', cls: '--proxy', label: 'Proxy', text: msg, icon: icons.swap };
-  }
-
-  // [bridge] events
-  if (/\[bridge\]/.test(line)) {
-    const msg = line.replace(/.*\[bridge\]\s*/, '');
-    return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: msg, icon: icons.info };
-  }
-
-  // Skip noise
-  if (/Git readiness|Added.*bridge entries|gitignore|Rollback point|undo all changes|_bridge_event/.test(line)) return null;
-
-  // Generic INFO
-  if (/\|\s*INFO\s*\|/.test(line)) {
-    const msg = line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, '');
-    return { time, tag: 'info', cls: '--info', label: '', text: msg, icon: '' };
-  }
-
-  return null;
-}
-
-function _appendParsedEvent(parsed) {
-  const container = $('log-parsed');
-  if (!container) return;
-  const emptyEl = $('log-parsed-empty');
-  if (emptyEl) emptyEl.style.display = 'none';
-
-  // Update tag count
-  if (parsed.tag) _updateTagCount(parsed.tag);
-
-  const div = document.createElement('div');
-  div.className = `parsed-event ${parsed.cls}`;
-  div.dataset.tag = parsed.tag || '';
-  if (_hiddenTags.has(parsed.tag)) div.dataset.hidden = 'true';
-  div.innerHTML = `
-    <span class="parsed-time">${_esc(parsed.time)}</span>
-    <span class="parsed-icon">${parsed.icon}</span>
-    <span class="parsed-content">${parsed.label ? `<span class="parsed-label">${_esc(parsed.label)}</span>` : ''}${_esc(parsed.text)}</span>
-    <span class="parsed-tag">${_esc(parsed.tag)}</span>
-  `;
-  container.appendChild(div);
-
-  if (_autoScroll) container.scrollTop = container.scrollHeight;
-}
-
-function appendLog(rawLine) {
-  const terminal = $('log-terminal');
-  if (!terminal) return;
-
-  // Hide empty-state placeholder
-  const empty = $('log-empty');
-  if (empty) empty.style.display = 'none';
-
-  _lineCount++;
-  const countEl = $('log-line-count');
-  if (countEl) countEl.textContent = `${_lineCount} line${_lineCount !== 1 ? 's' : ''}`;
-
-  // Raw view — colour-coded
-  const line = rawLine;
-  let cls = '';
-  if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line))  cls = 'log-error';
-  else if (/\|\s*WARNING\s*\|/.test(line))       cls = 'log-warn';
-  else if (/supervisor approved|✓|approved/.test(line)) cls = 'log-ok';
-  else if (/Bridge start|plan_ready|starting/.test(line)) cls = 'log-info';
-  else if (line.trim().startsWith('{"_bridge_event"')) cls = 'log-event';
-
-  const span = document.createElement('span');
-  if (cls) span.className = cls;
-  span.textContent = line + '\n';
-  terminal.appendChild(span);
-
-  if (_logView === 'raw' && _autoScroll) terminal.scrollTop = terminal.scrollHeight;
-
-  // Parsed view — structured cards
-  const parsed = _parseLine(rawLine);
-  if (parsed) _appendParsedEvent(parsed);
-
-  _incrementLogBadge();
-}
-
-function clearLog() {
-  const terminal = $('log-terminal');
-  if (!terminal) return;
-  _lineCount = 0;
-  const countEl = $('log-line-count');
-  if (countEl) countEl.textContent = '0 lines';
-
-  // Clear raw terminal
-  const spans = terminal.querySelectorAll('span.log-error, span.log-warn, span.log-ok, span.log-info, span.log-event, span:not(#log-empty span)');
-  spans.forEach(s => s.remove());
-  const empty = $('log-empty');
-  if (empty) empty.style.display = '';
-
-  // Clear parsed log
-  const parsed = $('log-parsed');
-  if (parsed) {
-    parsed.querySelectorAll('.parsed-event').forEach(e => e.remove());
-    const pe = $('log-parsed-empty');
-    if (pe) pe.style.display = '';
-  }
-
-  // Reset tag counts
-  _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
-  Object.keys(_tagCounts).forEach(tag => {
-    const el = $(`tag-count-${tag}`);
-    if (el) el.textContent = '0';
-  });
-}
-
-// ── Run status banner ─────────────────────────────────────────────────────────
-
-function showBanner(type, message) {
-  const el = $('run-status-banner');
-  if (!el) return;
-  el.className = `run-status-banner --${type}`;
-  el.textContent = message;
-  el.style.display = '';
-}
-
-function hideBanner() {
-  const el = $('run-status-banner');
-  if (el) el.style.display = 'none';
-}
-
-// ── Run state ─────────────────────────────────────────────────────────────────
+// ── State ────────────────────────────────────────────────────────────────────
 
 let _sse = null;
 let _isRunning = false;
+let _currentStep = 0;
+let _planTasks = [];
+let _planFile = '';
+let _progressTasks = [];
+let _lineCount = 0;
+let _autoScroll = true;
+let _logView = 'parsed';
+let _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
+let _hiddenTags = new Set();
 
-function setRunning(running) {
-  _isRunning = running;
-  const form  = $('run-form');
-  const btnL  = $('btn-launch-run');
-  const btnS  = $('btn-stop-run');
-  const hint  = $('run-shortcut-hint');
+// ── Wizard Navigation ────────────────────────────────────────────────────────
 
-  if (form)  form.querySelectorAll('input, textarea, button.model-preset, button.num-btn, .accordion-trigger').forEach(el => {
-    // Keep chatbot wizard interactive elements active during run
-    if (el.closest('#chatbot-relay-panel')) return;
-    // Keep supervisor radios interactive mid-run (universal pipeline: mid-run switch)
-    if (el.name === 'supervisor') return;
-    el.disabled = running;
+function goToStep(step) {
+  _currentStep = step;
+  document.querySelectorAll('.wizard-step').forEach(el => {
+    el.classList.toggle('--active', parseInt(el.dataset.step) === step);
   });
-  if (btnL)  { btnL.disabled = running; btnL.style.display = running ? 'none' : ''; }
-  if (btnS)  btnS.style.display = running ? '' : 'none';
-  if (hint)  hint.style.display = running ? 'none' : '';
-
-  // Re-apply chatbot visibility rules (chatbot hides Launch button etc.)
-  if (!running) _cbShowOrHide();
 }
 
-// ── SSE handling ──────────────────────────────────────────────────────────────
+// ── Step 0: Check for pending work ───────────────────────────────────────────
 
-function connectSSE() {
-  if (_sse) _sse.disconnect();
-  _sse = new SSEClient('/api/run/stream');
-  _sse
-    .on('log',        d => appendLog(d.line || ''))
-    .on('start',      () => {
-      showBanner('running', 'Run in progress…');
-      _setRoleState('role-planner', 'active', 'Planner — generating...');
-      showRoleStrip(true);
-    })
-    .on('complete', d => {
-      const ok  = d.status === 'success';
-      const sec = d.elapsed ? ` in ${d.elapsed}s` : '';
-      showBanner(ok ? 'success' : 'failure',
-        ok ? `Run completed successfully${sec}.` : `Run finished with failures${sec}.`);
-      setRunning(false);
-      _setRoleState('role-reviewer', 'done', 'Reviewer');
-      _sse.disconnect();
-      loadProgress();
-      _sendNotification(ok ? 'Run Complete' : 'Run Failed', ok ? `All tasks passed${sec}.` : `Run finished with failures${sec}.`);
-    })
-    .on('error', d => {
-      showBanner('failure', `Error: ${d.message || 'unknown error'}`);
-      setRunning(false);
-      _sse.disconnect();
-      // Don't auto-switch — user may want to read the log
-    })
-    .on('task_update', d => updateProgressFromSSE(d))
-    .on('task_diff', d => {
-      // Store diff on the progress task for the diff viewer
-      const tid = d.task_id;
-      const t = _progressTasks.find(t => t.id === tid);
-      if (t) t.diff = d.diff;
-    })
-    .on('stopped', () => {
-      showBanner('stopped', 'Run stopped.');
-      setRunning(false);
-      _sse.disconnect();
-      loadProgress();
-      _sendNotification('Run Stopped', 'The run was stopped.');
-    })
-    .on('supervisor_review_requested', d => {
-      const tid = d.task_id || '?';
-      if (d.manual) {
-        appendLog(`[proxy] Task ${tid}: manual review required`);
-      } else {
-        appendLog(`[proxy] Task ${tid}: chatbot review required — copy the prompt above`);
-      }
-      // Reviewer role is active
-      _setRoleState('role-reviewer', 'active', `Reviewer — task ${tid}`);
-    })
-    .on('supervisor_review_submitted', d => {
-      const tid = d.task_id || '?';
-      const dec = d.decision?.decision || 'pass';
-      const label = dec === 'pass' ? 'PASSED' : `REWORK: ${d.decision?.instruction || ''}`;
-      appendLog(`[proxy] Task ${tid}: supervisor auto-reviewed — ${label}`);
-    })
-    .on('plan_ready', d => {
-      const n = d.task_count || d.total_tasks || '?';
-      appendLog(`[bridge] Plan ready — ${n} tasks`);
-      // Planner role done, reviewer role starts
-      _setRoleState('role-planner', 'done', 'Planner');
-      _setRoleState('role-reviewer', 'active', 'Reviewer');
-      showRoleStrip(true);
-    })
-    .on('planner_active', d => {
-      _setRoleState('role-planner', 'active', `Planner — ${d.task_count || '?'} tasks`);
-      showRoleStrip(true);
-    })
-    .on('planner_done', () => {
-      _setRoleState('role-planner', 'done', 'Planner');
-    })
-    .on('reviewer_active', d => {
-      const idx = d.task_index || '?';
-      const tot = d.task_total || '?';
-      const title = d.task_title ? ` — ${d.task_title}` : '';
-      _setRoleState('role-reviewer', 'active', `Reviewer — task ${idx}/${tot}${title}`);
-    })
-    .on('reviewer_done', d => {
-      const dec = d.decision || '';
-      _setRoleState('role-reviewer', 'done', 'Reviewer');
-    })
-    .connect();
+async function checkPending() {
+  try {
+    const data = await fetch('/api/run/progress').then(r => r.json());
+    const total = data.total_tasks || 0;
+    const done = (data.completed || []).length;
+    _planFile = data.plan_file || '';
+
+    if (total > 0 && done < total && _planFile) {
+      // Unfinished work found
+      _progressTasks = data.tasks || [];
+      const pct = Math.round(done / total * 100);
+      const settings = await fetch('/api/settings').then(r => r.json());
+
+      $('wiz-resume-project').textContent = settings.repo_root || 'Unknown project';
+      $('wiz-resume-bar').style.width = pct + '%';
+      $('wiz-resume-stats').textContent = `${done} / ${total} tasks (${pct}%) — Last status: ${data.last_status || '?'}`;
+      $('wiz-resume-card').style.display = '';
+      $('wiz-no-pending').style.display = 'none';
+    } else {
+      $('wiz-resume-card').style.display = 'none';
+      $('wiz-no-pending').style.display = '';
+    }
+  } catch (_) {
+    $('wiz-resume-card').style.display = 'none';
+    $('wiz-no-pending').style.display = '';
+  }
 }
 
-// ── Launch ────────────────────────────────────────────────────────────────────
+// ── Step 1: Goal ─────────────────────────────────────────────────────────────
 
-async function runPreflight(settings) {
-  const wrap = $('preflight-checklist');
-  const list = $('preflight-list');
-  if (!wrap || !list) return true;
+async function generatePlan() {
+  const goal = ($('wiz-goal')?.value || '').trim();
+  if (!goal) { toast('Please enter a goal.', 'warning'); return; }
+
+  const btn = $('wiz-btn-generate');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
 
   try {
+    // Save settings first
+    const settings = collectSettings();
+    settings.goal = goal;
+    await apiPost('/api/settings', settings);
+
+    // Generate brief
+    const brief = await apiPost('/api/run/brief', { goal, repo_root: settings.repo_root });
+    // Generate plan
+    const plan = await apiPost('/api/run/nl/plan', { repo_root: settings.repo_root, brief });
+    _planTasks = plan.tasks || [];
+
+    if (!_planTasks.length) {
+      toast('No tasks generated. Try a more specific goal.', 'warning');
+      return;
+    }
+
+    // Confirm plan (save to file)
+    const confirmed = await apiPost('/api/run/nl/plan/confirm', {
+      repo_root: settings.repo_root,
+      tasks: _planTasks,
+      plan_summary: plan.plan_summary || '',
+      brief,
+    });
+    _planFile = confirmed.plan_file || '';
+
+    renderPlanReview();
+    goToStep(2);
+  } catch (err) {
+    toast(err.message || 'Plan generation failed.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Plan →'; }
+  }
+}
+
+function renderPlanReview() {
+  $('wiz-plan-count').textContent = `${_planTasks.length} tasks`;
+  const list = $('wiz-task-list');
+  if (!list) return;
+
+  list.innerHTML = _planTasks.map((t, i) => `
+    <div class="wiz-task-item">
+      <span class="wiz-task-num">${t.id || i + 1}</span>
+      <div class="wiz-task-body">
+        <div class="wiz-task-title">${_esc(t.instruction || t.title || 'Task ' + (i + 1))}</div>
+        <div class="wiz-task-files">${_esc((t.files || []).join(', '))}</div>
+      </div>
+      <span class="wiz-task-type">${_esc(t.type || '?')}</span>
+    </div>
+  `).join('');
+
+  // Run preflight
+  runPreflight();
+}
+
+async function runPreflight() {
+  const wrap = $('wiz-preflight');
+  const list = $('wiz-preflight-list');
+  if (!wrap || !list) return;
+
+  try {
+    const settings = collectSettings();
+    settings.plan_file = _planFile;
     const data = await apiPost('/api/run/preflight', settings);
     const checks = data.checks || [];
-    if (!checks.length) { wrap.style.display = 'none'; return true; }
+    if (!checks.length) { wrap.style.display = 'none'; return; }
 
     const icons = { pass: '&#x2713;', warn: '&#x26A0;', fail: '&#x2717;' };
     list.innerHTML = checks.map(c =>
       `<span class="preflight-item --${c.status}" title="${_esc(c.message)}">${icons[c.status] || '?'} ${_esc(c.name)}</span>`
     ).join('');
-    wrap.style.display = '';
 
     // Cost estimate
     const est = data.estimate;
     if (est && est.task_count > 0) {
-      list.innerHTML += `<span class="preflight-item --pass" title="Estimated run cost" style="margin-left:auto">
-        ~${est.estimated_minutes} min | ~${(est.estimated_supervisor_tokens/1000).toFixed(0)}K supervisor | ~${(est.estimated_aider_tokens/1000).toFixed(0)}K aider (free)
+      list.innerHTML += `<span class="preflight-item --pass" style="margin-left:auto">
+        ~${est.estimated_minutes}min | ~${(est.estimated_supervisor_tokens/1000).toFixed(0)}K sup | ~${(est.estimated_aider_tokens/1000).toFixed(0)}K aider
       </span>`;
     }
-
-    if (!data.can_launch) {
-      const fails = checks.filter(c => c.status === 'fail').map(c => c.message).join('; ');
-      toast('Cannot launch: ' + fails, 'error');
-      return false;
-    }
-    // Auto-hide after 5s if all passed
-    setTimeout(() => { wrap.style.display = 'none'; }, 5000);
-    return true;
-  } catch (_) {
-    return true; // Don't block on preflight errors
-  }
+    wrap.style.display = '';
+  } catch (_) { wrap.style.display = 'none'; }
 }
+
+// ── Step 3: Launch Run ───────────────────────────────────────────────────────
 
 async function launchRun() {
-  const s = collectSettings();
-  if (!s.repo_root) {
-    toast('Please set a project folder first.', 'warning');
-    $('f-repo-root')?.focus();
-    return;
-  }
-  if (!s.goal) {
-    toast('Please enter a goal / instruction.', 'warning');
-    $('nl-input')?.focus();
-    return;
-  }
+  const settings = collectSettings();
+  settings.plan_file = _planFile;
+  if (!settings.repo_root) { toast('Set project folder in Settings.', 'warning'); return; }
+  if (!_planFile) { toast('No plan file. Generate a plan first.', 'warning'); return; }
 
-  // Pre-flight checks
-  const canLaunch = await runPreflight(s);
-  if (!canLaunch) return;
+  // Populate progress panel from plan tasks
+  _progressTasks = _planTasks.map(t => ({ ...t, status: 'pending' }));
+  renderProgressPanel();
 
+  _isRunning = true;
+  goToStep(3);
+  $('wiz-done-overlay').style.display = 'none';
   clearLog();
-  hideBanner();
-  resetRoleStrip();
-  setRunning(true);
-  switchRunTab('log');
   connectSSE();
 
   try {
     play('launch');
-    await apiPost('/api/run', s);
+    await apiPost('/api/settings', settings);
+    await apiPost('/api/run', settings);
   } catch (err) {
-    showBanner('failure', err.message || 'Failed to start run.');
-    setRunning(false);
-    _sse?.disconnect();
-    toast(err.message || 'Failed to start run.', 'error');
+    toast(err.message || 'Launch failed.', 'error');
+    _isRunning = false;
   }
 }
 
-async function launchNLRun() {
-  if (!_nlProjectKey) {
-    const settings = await fetch('/api/settings').then(r => r.json());
-    _nlProjectKey = settings.repo_root || '';
+async function resumeRun() {
+  const settings = collectSettings();
+  settings.plan_file = _planFile;
+  if (!_planFile) {
+    try {
+      const saved = await fetch('/api/settings').then(r => r.json());
+      settings.plan_file = saved.plan_file || '';
+      _planFile = settings.plan_file;
+    } catch (_) {}
   }
-  if (!_nlProjectKey) {
-    toast('No project folder configured.', 'error');
-    return;
-  }
+  if (!settings.plan_file) { toast('No plan file found.', 'warning'); return; }
 
+  renderProgressPanel();
+  _isRunning = true;
+  goToStep(3);
+  $('wiz-done-overlay').style.display = 'none';
   clearLog();
-  hideBanner();
-  resetRoleStrip();
-  setRunning(true);
-  switchRunTab('log');
   connectSSE();
 
   try {
-    // Save current UI settings so the backend uses the correct supervisor
-    const currentSettings = collectSettings();
-    await apiPost('/api/settings', currentSettings);
-
     play('launch');
-    const res = await fetch('/api/run/nl/launch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo_root: _nlProjectKey }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Failed to start run.');
-
-    // Update session state so we know which run was last launched
-    await _saveNLState('running', { last_run_id: data.run_id });
+    await apiPost('/api/settings', settings);
+    await apiPost('/api/run', settings);
   } catch (err) {
-    showBanner('failure', err.message || 'Failed to start run.');
-    setRunning(false);
-    _sse?.disconnect();
-    toast(err.message || 'Failed to start run.', 'error');
+    toast(err.message || 'Resume failed.', 'error');
+    _isRunning = false;
   }
 }
 
-// ── Chatbot Relay Wizard ──────────────────────────────────────────────────────
-// Ported from relay.js — handles the inline copy-paste supervisor flow
-// All IDs are prefixed with "chatbot-" to avoid conflicts with run page IDs.
+// ── SSE ──────────────────────────────────────────────────────────────────────
 
-let _cbStep = 1;
-let _cbTasks = [];
-let _cbCurrentTaskId = null;
-let _cbCompletedTasks = 0;
-let _cbTotalTasks = 0;
-let _cbLiveRunActive = false;
-let _cbRelaySessionId = '';
-
-function _cbExecTaskCount(tasks = _cbTasks) {
-  return (tasks || []).filter(t => String(t?.status || '').toLowerCase() !== 'skipped').length;
-}
-
-function _cbGoToStep(n, force = false) {
-  if (!force && n === 1 && _cbTasks.length > 0) {
-    toast('Use "Discard Tasks" to return to Step 1.', 'warning');
-    return;
-  }
-  _cbStep = n;
-  for (let i = 1; i <= 3; i++) {
-    const panel = $(`chatbot-panel-${i}`);
-    if (panel) panel.style.display = i === n ? '' : 'none';
-    const ind = $(`chatbot-step-indicator-${i}`);
-    if (ind) {
-      ind.dataset.active = String(i === n);
-      ind.dataset.done   = String(i < n);
-    }
-  }
-}
-
-function _cbUpdateProgress(done, total) {
-  _cbCompletedTasks = done;
-  _cbTotalTasks     = total;
-  const pct = total > 0 ? Math.round(done / total * 100) : 0;
-  const bar = $('chatbot-progress-bar');
-  const lbl = $('chatbot-progress-label');
-  if (bar) bar.style.width = pct + '%';
-  if (lbl) lbl.textContent = `${done} / ${total}`;
-}
-
-function _cbSetStatus(status, label) {
-  const chip = $('chatbot-status-chip');
-  const lbl  = $('chatbot-status-label');
-  if (chip) chip.dataset.status = status;
-  if (lbl)  lbl.textContent     = label;
-}
-
-function _cbUpdateControls() {
-  const stopBtn    = $('chatbot-btn-stop');
-  const submitBtn  = $('chatbot-btn-submit-decision');
-  const confirmBtn = $('chatbot-btn-confirm-tasks');
-  const discardBtn = $('chatbot-btn-back-to-step1');
-  if (stopBtn)    stopBtn.disabled    = !_cbLiveRunActive;
-  if (submitBtn)  submitBtn.disabled  = !_cbLiveRunActive;
-  if (confirmBtn) confirmBtn.disabled = _cbLiveRunActive || _cbExecTaskCount() === 0;
-  if (discardBtn) discardBtn.disabled = _cbLiveRunActive;
-  document.querySelectorAll('[data-relay-task-action]').forEach(btn => {
-    btn.disabled = _cbLiveRunActive;
-  });
-}
-
-async function _cbGeneratePrompt() {
-  if (_cbTasks.length > 0) {
-    toast('Discard current tasks before generating a new plan.', 'warning');
-    return;
-  }
-  const goal     = ($('nl-input')?.value || '').trim();
-  const repoRoot = ($('f-repo-root')?.value || '').trim();
-  if (!goal) { toast('Please enter a goal first.', 'warning'); $('nl-input')?.focus(); return; }
-
-  const btn = $('chatbot-btn-generate-prompt');
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-  try {
-    const data = await apiPost('/api/relay/generate-prompt', { goal, repo_root: repoRoot });
-    const box  = $('chatbot-prompt-output');
-    if (box) box.textContent = data.prompt;
-    const wrap = $('chatbot-prompt-output-wrap');
-    if (wrap) wrap.style.display = '';
-    const pasteWrap = $('chatbot-plan-paste-wrap');
-    if (pasteWrap) pasteWrap.style.display = '';
-  } catch (err) {
-    toast(err.message || 'Failed to generate prompt.', 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Generate Prompt'; }
-  }
-}
-
-async function _cbImportPlan() {
-  if (_cbTasks.length > 0) {
-    toast('Discard current tasks before importing a new plan.', 'warning');
-    return;
-  }
-  const raw   = ($('chatbot-plan-paste')?.value || '').trim();
-  const errEl = $('chatbot-import-plan-error');
-  if (errEl) errEl.style.display = 'none';
-  if (!raw) { toast('Please paste the AI response first.', 'warning'); return; }
-
-  const btn = $('chatbot-btn-import-plan');
-  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
-  try {
-    const data = await apiPost('/api/relay/import-plan', { raw_text: raw });
-    _cbTasks          = data.tasks || [];
-    _cbRelaySessionId = data.relay_session_id || _cbRelaySessionId;
-    _cbCompletedTasks = 0;
-    _cbTotalTasks     = _cbExecTaskCount(_cbTasks);
-    _cbRenderTaskList(_cbTasks);
-    _cbUpdateProgress(0, _cbTotalTasks);
-    _cbGoToStep(2);
-    _cbUpdateControls();
-  } catch (err) {
-    const msg = err.message || 'Failed to parse plan.';
-    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
-    toast(msg, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Import Plan'; }
-  }
-}
-
-function _cbRenderTaskList(tasks) {
-  const list = $('chatbot-relay-task-list');
-  if (!list) return;
-  if (!tasks?.length) {
-    list.innerHTML = '<p class="text-subtle" style="font-size:var(--font-size-sm)">No tasks found.</p>';
-    return;
-  }
-  list.innerHTML = tasks.map(t => {
-    const type        = String(t.type || 'modify').toLowerCase();
-    const status      = String(t.status || 'not_started').toLowerCase();
-    const statusLabel = String(t.status_label || 'Not started');
-    const canSkip     = !['running','waiting_review','approved','success','skipped'].includes(status);
-    const canRestore  = status === 'skipped';
-    const actionHtml  = canSkip
-      ? `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="skip" data-task-id="${escHtml(t.id)}">Skip</button>`
-      : canRestore
-      ? `<button class="btn btn--secondary btn--sm relay-task-action" data-relay-task-action="restore" data-task-id="${escHtml(t.id)}">Restore</button>`
-      : '';
-    return `
-    <div class="relay-task-item" data-status="${escHtml(status)}">
-      <div class="relay-task-num">${t.id}</div>
-      <div class="relay-task-body">
-        <div class="relay-task-head">
-          <div class="relay-task-title">
-            <span>${escHtml(t.title || '')}</span>
-            <span class="relay-task-type-badge" data-type="${escHtml(type)}">${escHtml(type)}</span>
-            <span class="relay-task-status-badge" data-status="${escHtml(status)}">${escHtml(statusLabel)}</span>
-          </div>
-          <div class="relay-task-actions">${actionHtml}</div>
-        </div>
-        <div class="relay-task-instruction">${escHtml(t.instruction || '')}</div>
-        ${t.files?.length ? `<div class="relay-task-files">${t.files.map(escHtml).join(', ')}</div>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-  _cbUpdateControls();
-}
-
-async function _cbToggleSkip(taskId, skip) {
-  if (_cbLiveRunActive) { toast('Stop the run before changing skipped tasks.', 'warning'); return; }
-  try {
-    const data = await apiPost('/api/relay/tasks/skip', { task_id: taskId, skip });
-    _cbTasks          = data.tasks || [];
-    _cbRelaySessionId = data.relay_session_id || _cbRelaySessionId;
-    _cbCompletedTasks = data.completed_tasks || 0;
-    _cbTotalTasks     = data.total_tasks || _cbExecTaskCount(_cbTasks);
-    _cbRenderTaskList(_cbTasks);
-    _cbUpdateProgress(_cbCompletedTasks, _cbTotalTasks);
-    toast(skip ? `Task ${taskId} skipped.` : `Task ${taskId} restored.`, 'success');
-  } catch (err) {
-    toast(err.message || 'Could not update task.', 'error');
-  }
-}
-
-async function _cbDiscardAndReturnToPlan() {
-  if (_cbLiveRunActive) { toast('Stop the run before discarding tasks.', 'warning'); return; }
-  _cbRelaySessionId = '';
-  _cbTasks          = [];
-  _cbCurrentTaskId  = null;
-  _cbCompletedTasks = 0;
-  _cbTotalTasks     = 0;
-  const taskList = $('chatbot-relay-task-list');
-  if (taskList) taskList.innerHTML = '';
-  [$('chatbot-done-panel'), $('chatbot-review-panel')].forEach(el => {
-    if (el) el.style.display = 'none';
-  });
-  await fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
-  _cbSetStatus('idle', 'Ready');
-  _cbUpdateProgress(0, 0);
-  _cbGoToStep(1, true);
-  _cbUpdateControls();
-  toast('Tasks discarded.', 'success');
-}
-
-async function _cbLaunchRun() {
-  const settings = {
-    goal:              ($('nl-input')?.value || '').trim(),
-    repo_root:         ($('f-repo-root')?.value || '').trim(),
-    aider_model:       ($('f-aider-model')?.value || 'ollama/mistral').trim(),
-    supervisor:        'chatbot',
-    manual_supervisor: true,
-    workflow_profile:  'standard',
-    max_task_retries:  Math.max(0, parseInt($('f-max-retries')?.value || 2, 10) || 2),
-    relay_session_id:  _cbRelaySessionId,
-  };
-  _cbGoToStep(3);
-  _cbLiveRunActive = true;
-  _cbUpdateControls();
-  _cbSetStatus('running', 'Running…');
-  _cbUpdateProgress(0, _cbExecTaskCount());
-
-  clearLog();
-  hideBanner();
-  resetRoleStrip();
-  setRunning(true);
-
+function connectSSE() {
   if (_sse) _sse.disconnect();
   _sse = new SSEClient('/api/run/stream');
   _sse
-    .on('log',                 d => appendLog(d.line || ''))
-    .on('review_required',     d => _cbOnReviewNeeded(d))
-    .on('progress',  d => _cbUpdateProgress(d.completed, d.total))
-    .on('plan_ready', d => { _cbTotalTasks = d.task_count || 0; _cbUpdateProgress(0, _cbTotalTasks); })
-    .on('complete',  d => _cbOnRunComplete(d))
-    .on('error',     d => _cbOnRunComplete({ status: 'failure', message: d.message }))
-    .on('stopped',   () => _cbOnRunComplete({ status: 'stopped' }))
+    .on('log', d => appendLog(d.line || ''))
+    .on('start', () => {})
+    .on('task_update', d => updateProgressFromSSE(d))
+    .on('task_diff', d => {
+      const t = _progressTasks.find(t => t.id === (d.task_id || 0));
+      if (t) t.diff = d.diff;
+    })
+    .on('complete', d => {
+      _isRunning = false;
+      _sse.disconnect();
+      const ok = d.status === 'success';
+      showDone(ok, d.elapsed ? `${d.elapsed}s` : '');
+      _sendNotification(ok ? 'Run Complete' : 'Run Failed', ok ? 'All tasks passed.' : 'Run had failures.');
+    })
+    .on('error', d => {
+      _isRunning = false;
+      _sse.disconnect();
+      showDone(false, d.message || 'Error');
+      _sendNotification('Run Error', d.message || 'Unknown error');
+    })
+    .on('stopped', () => {
+      _isRunning = false;
+      _sse.disconnect();
+      showDone(false, 'Stopped by user');
+    })
     .connect();
+}
 
-  try {
-    play('launch');
-    await apiPost('/api/run', settings);
-  } catch (err) {
-    _cbSetStatus('failure', 'Failed to start');
-    toast(err.message || 'Failed to start run.', 'error');
-    _sse?.disconnect();
-    setRunning(false);
-    _cbLiveRunActive = false;
-    _cbUpdateControls();
+function showDone(success, detail) {
+  const overlay = $('wiz-done-overlay');
+  const icon = $('wiz-done-icon');
+  const title = $('wiz-done-title');
+  const sub = $('wiz-done-sub');
+  if (!overlay) return;
+
+  if (icon) icon.innerHTML = success
+    ? '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-success)" width="48" height="48"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>'
+    : '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-danger)" width="48" height="48"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>';
+  if (title) title.textContent = success ? 'Run Complete' : 'Run Failed';
+  if (sub) sub.textContent = detail;
+  overlay.style.display = '';
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────
+
+function appendLog(rawLine) {
+  const terminal = $('log-terminal');
+  if (terminal) {
+    const span = document.createElement('span');
+    let cls = '';
+    if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(rawLine)) cls = 'log-error';
+    else if (/\|\s*WARNING\s*\|/.test(rawLine)) cls = 'log-warn';
+    else if (/supervisor approved/.test(rawLine)) cls = 'log-ok';
+    else if (/Bridge start|plan_ready/.test(rawLine)) cls = 'log-info';
+    if (cls) span.className = cls;
+    span.textContent = rawLine + '\n';
+    terminal.appendChild(span);
+    if (_logView === 'raw' && _autoScroll) terminal.scrollTop = terminal.scrollHeight;
+  }
+
+  _lineCount++;
+  const countEl = $('log-line-count');
+  if (countEl) countEl.textContent = `${_lineCount} lines`;
+
+  const parsed = _parseLine(rawLine);
+  if (parsed) _appendParsedEvent(parsed);
+}
+
+function clearLog() {
+  _lineCount = 0;
+  const countEl = $('log-line-count');
+  if (countEl) countEl.textContent = '0 lines';
+  const terminal = $('log-terminal');
+  if (terminal) terminal.innerHTML = '';
+  const parsed = $('log-parsed');
+  if (parsed) { parsed.querySelectorAll('.parsed-event').forEach(e => e.remove()); const pe = $('log-parsed-empty'); if (pe) pe.style.display = ''; }
+  _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, info: 0 };
+  Object.keys(_tagCounts).forEach(tag => { const el = $(`tag-count-${tag}`); if (el) el.textContent = '0'; });
+}
+
+function _switchLogView(view) {
+  _logView = view;
+  $('btn-log-parsed')?.classList.toggle('--active', view === 'parsed');
+  $('btn-log-raw')?.classList.toggle('--active', view === 'raw');
+  const p = $('log-parsed'); if (p) p.style.display = view === 'parsed' ? '' : 'none';
+  const r = $('log-terminal'); if (r) r.style.display = view === 'raw' ? '' : 'none';
+  const t = $('log-tag-bar'); if (t) t.style.display = view === 'parsed' ? '' : 'none';
+}
+
+function _toggleTag(tag) {
+  if (_hiddenTags.has(tag)) _hiddenTags.delete(tag); else _hiddenTags.add(tag);
+  document.querySelectorAll('.log-tag').forEach(btn => btn.classList.toggle('--active', !_hiddenTags.has(btn.dataset.tag)));
+  $('log-parsed')?.querySelectorAll('.parsed-event').forEach(ev => { ev.dataset.hidden = _hiddenTags.has(ev.dataset.tag) ? 'true' : 'false'; });
+}
+
+// ── Parsed Log ───────────────────────────────────────────────────────────────
+
+function _parseLine(rawLine) {
+  const tsMatch = rawLine.match(/(\d{2}:\d{2}:\d{2})/);
+  const time = tsMatch ? tsMatch[1] : '';
+  const line = rawLine;
+  if (line.trim().startsWith('{"_bridge_event"')) return null;
+
+  const I = (c) => `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="${c}" width="12" height="12">`;
+  const icons = {
+    play: `${I('var(--color-accent)')}<path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>`,
+    check: `${I('var(--color-success)')}<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>`,
+    warn: `${I('var(--color-warning)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
+    error: `${I('var(--color-danger)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
+    info: `${I('var(--color-info)')}<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>`,
+  };
+
+  let m;
+  m = line.match(/Task\s+(\d+)\s*[—-]\s*attempt\s+(\d+)\/(\d+)\s*[—-]\s*files:\s*(.+)/);
+  if (m) return { time, tag: 'task', cls: '--task', label: `Task ${m[1]}`, text: `Attempt ${m[2]}/${m[3]} — ${m[4].trim()}`, icon: icons.play };
+
+  if (/supervisor approved|auto-approved/.test(line)) { m = line.match(/Task\s+(\d+)/); return { time, tag: 'review', cls: '--review', label: m ? `Task ${m[1]} Approved` : 'Approved', text: '', icon: icons.check }; }
+
+  m = line.match(/supervisor requested rework[^:]*:\s*(.+)/);
+  if (m) return { time, tag: 'review', cls: '--warning', label: 'Rework', text: m[1], icon: icons.warn };
+
+  if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line)) return { time, tag: 'error', cls: '--error', label: 'Error', text: line.replace(/.*\|\s*(ERROR|CRITICAL)\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.error };
+  if (/\|\s*WARNING\s*\|/.test(line)) return { time, tag: 'warning', cls: '--warning', label: 'Warning', text: line.replace(/.*\|\s*WARNING\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.warn };
+  if (/Bridge start|Plan ready|Pre-flight|Loaded.*task|Project knowledge/.test(line)) return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.info };
+  if (/\[proxy\]/.test(line)) return { time, tag: 'proxy', cls: '--proxy', label: 'Proxy', text: line.replace(/.*\[proxy\]\s*/, ''), icon: icons.info };
+  if (/\[bridge\]/.test(line)) return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: line.replace(/.*\[bridge\]\s*/, ''), icon: icons.info };
+  if (/Git readiness|gitignore|Rollback point|undo all changes/.test(line)) return null;
+  if (/\|\s*INFO\s*\|/.test(line)) return { time, tag: 'info', cls: '--info', label: '', text: line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), icon: '' };
+  return null;
+}
+
+function _appendParsedEvent(p) {
+  const container = $('log-parsed');
+  if (!container) return;
+  const emptyEl = $('log-parsed-empty');
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (p.tag) { _tagCounts[p.tag] = (_tagCounts[p.tag] || 0) + 1; const el = $(`tag-count-${p.tag}`); if (el) el.textContent = _tagCounts[p.tag]; }
+  const div = document.createElement('div');
+  div.className = `parsed-event ${p.cls}`;
+  div.dataset.tag = p.tag || '';
+  if (_hiddenTags.has(p.tag)) div.dataset.hidden = 'true';
+  div.innerHTML = `<span class="parsed-time">${_esc(p.time)}</span><span class="parsed-icon">${p.icon}</span><span class="parsed-content">${p.label ? `<span class="parsed-label">${_esc(p.label)}</span>` : ''}${_esc(p.text)}</span><span class="parsed-tag">${_esc(p.tag)}</span>`;
+  container.appendChild(div);
+  if (_autoScroll) container.scrollTop = container.scrollHeight;
+}
+
+// ── Task Progress ────────────────────────────────────────────────────────────
+
+function renderProgressPanel() {
+  const bar = $('task-progress-bar');
+  const label = $('task-progress-label');
+  const list = $('task-progress-list');
+  if (!list) return;
+
+  const done = _progressTasks.filter(t => t.status === 'done').length;
+  const total = _progressTasks.length;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  if (bar) bar.style.width = pct + '%';
+  if (label) label.textContent = `${done} / ${total} tasks (${pct}%)`;
+
+  const statusIcons = {
+    done: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-success)" width="12" height="12"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>',
+    running: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-accent)" width="12" height="12"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>',
+    failed: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-danger)" width="12" height="12"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>',
+    pending: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--color-text-subtle)" width="12" height="12"><circle cx="12" cy="12" r="9"/></svg>',
+  };
+
+  list.innerHTML = _progressTasks.map(t => {
+    const s = t.status || 'pending';
+    return `<div class="task-progress-item" data-task-id="${t.id}"><span class="task-status-icon --${s}">${statusIcons[s] || statusIcons.pending}</span><div class="task-progress-info"><div class="task-progress-title">${t.id}. ${_esc((t.instruction || '').slice(0, 40))}</div><div class="task-progress-files">${_esc((t.files || []).join(', '))}</div></div></div>`;
+  }).join('');
+
+  list.querySelectorAll('.task-progress-item').forEach(el => {
+    el.addEventListener('click', () => selectTask(parseInt(el.dataset.taskId, 10)));
+  });
+}
+
+function updateProgressFromSSE(data) {
+  const taskId = data.task?.id || data.task_id;
+  if (!taskId) return;
+  const t = _progressTasks.find(t => t.id === taskId);
+  if (t) {
+    if (data.task?.status === 'approved') t.status = 'done';
+    else if (data.task?.status === 'running') t.status = 'running';
+  }
+  renderProgressPanel();
+}
+
+function selectTask(taskId) {
+  const task = _progressTasks.find(t => t.id === taskId);
+  const pane = $('task-detail-pane');
+  if (!pane || !task) { if (pane) pane.style.display = 'none'; return; }
+  $('task-detail-title').textContent = `Task ${task.id} (${task.type || '?'}) — ${task.status || 'pending'}`;
+  let html = `<p>${_esc(task.instruction || '')}</p>`;
+  if (task.files?.length) html += `<p style="margin-top:4px;font-family:var(--font-mono);font-size:10px">Files: ${_esc(task.files.join(', '))}</p>`;
+  if (task.diff) html += `<pre style="margin-top:8px;background:#020408;color:#c9d1d9;padding:6px;border-radius:4px;font-size:10px;overflow:auto;max-height:150px">${_esc(task.diff)}</pre>`;
+  $('task-detail-body').innerHTML = html;
+  pane.style.display = '';
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+function _sendNotification(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    try { const n = new Notification(title, { body }); n.onclick = () => { window.focus(); n.close(); }; } catch (_) {}
   }
 }
 
-async function _cbOnReviewNeeded(data) {
-  _cbCurrentTaskId = data.task_id;
-  _cbSetStatus('waiting_review', 'Waiting for review…');
-  _cbGoToStep(3);
+// ── Settings ─────────────────────────────────────────────────────────────────
 
-  const tidEl    = $('chatbot-review-task-id');
-  const attBadge = $('chatbot-attempt-badge');
-  if (tidEl)    tidEl.textContent    = _cbCurrentTaskId;
-  if (attBadge) attBadge.textContent = `attempt ${data.attempt || 1}`;
+function openSettings() { $('settings-overlay').style.display = ''; }
+function closeSettings() { $('settings-overlay').style.display = 'none'; saveSettings(); }
 
-  try {
-    const params = new URLSearchParams({
-      task_id:          _cbCurrentTaskId,
-      repo_root:        ($('f-repo-root')?.value || '').trim(),
-      goal:             ($('nl-input')?.value || '').trim(),
-      relay_session_id: _cbRelaySessionId,
-    });
-    const resp    = await fetch(`/api/relay/review-packet?${params}`);
-    const payload = await resp.json();
-    if (resp.ok) {
-      const box = $('chatbot-review-packet');
-      if (box) box.textContent = payload.packet;
-    }
-  } catch (_) {}
-
-  const decPaste = $('chatbot-decision-paste');
-  if (decPaste) decPaste.value = '';
-  const decErr = $('chatbot-decision-error');
-  if (decErr) decErr.style.display = 'none';
-  const replanWrap = $('chatbot-replan-wrap');
-  if (replanWrap) replanWrap.style.display = 'none';
-
-  const panel = $('chatbot-review-panel');
-  if (panel) panel.style.display = '';
+function collectSettings() {
+  const sup = document.querySelector('input[name="supervisor"]:checked')?.value || 'claude';
+  return {
+    repo_root: $('f-repo-root')?.value?.trim() || '',
+    aider_model: $('f-aider-model')?.value?.trim() || '',
+    supervisor: sup,
+    manual_supervisor: true,
+    supervisor_command: sup === 'custom' ? $('f-supervisor-command')?.value?.trim() || '' : '',
+    validation_command: $('f-validation-cmd')?.value?.trim() || '',
+    task_timeout: parseInt($('f-task-timeout')?.value || '600', 10),
+    max_task_retries: parseInt($('f-max-retries')?.value || '10', 10),
+    dry_run: $('f-dry-run')?.checked || false,
+    auto_commit: ($('sb-auto-commit')?.checked !== false),
+    goal: $('wiz-goal')?.value?.trim() || '',
+    plan_file: _planFile,
+  };
 }
 
-async function _cbSubmitDecision() {
-  if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
-  const raw   = ($('chatbot-decision-paste')?.value || '').trim();
-  const errEl = $('chatbot-decision-error');
-  if (errEl) errEl.style.display = 'none';
-  if (!raw)  { toast("Please paste the AI's decision.", 'warning'); return; }
-
-  const btn = $('chatbot-btn-submit-decision');
-  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
-  try {
-    const data = await apiPost('/api/relay/submit-decision', {
-      raw_text:         raw,
-      task_id:          _cbCurrentTaskId,
-      repo_root:        ($('f-repo-root')?.value || '').trim(),
-      relay_session_id: _cbRelaySessionId,
-    });
-    if (data.decision === 'fail') {
-      await _cbLoadReplanPrompt();
-    } else {
-      const panel = $('chatbot-review-panel');
-      if (panel) panel.style.display = 'none';
-      _cbSetStatus('running', 'Running…');
-      toast(`Decision submitted: ${data.decision}`, 'success');
-    }
-  } catch (err) {
-    const msg = err.message || 'Failed to submit decision.';
-    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
-    toast(msg, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Submit Decision'; }
-  }
+function populateSettings(s) {
+  if ($('f-repo-root')) $('f-repo-root').value = s.repo_root || '';
+  if ($('f-aider-model')) $('f-aider-model').value = s.aider_model || '';
+  const sup = s.supervisor || 'claude';
+  const radio = document.querySelector(`input[name="supervisor"][value="${sup}"]`);
+  if (radio) radio.checked = true;
+  if ($('f-supervisor-command')) { $('f-supervisor-command').value = s.supervisor_command || ''; $('f-supervisor-command').style.display = sup === 'custom' ? '' : 'none'; }
+  if ($('f-validation-cmd')) $('f-validation-cmd').value = s.validation_command || '';
+  if ($('f-task-timeout')) $('f-task-timeout').value = s.task_timeout || 600;
+  if ($('f-max-retries')) $('f-max-retries').value = s.max_task_retries || 10;
+  if ($('f-dry-run')) $('f-dry-run').checked = !!s.dry_run;
 }
 
-async function _cbLoadReplanPrompt() {
-  try {
-    const data = await apiPost('/api/relay/replan-prompt', {
-      task_id:          _cbCurrentTaskId,
-      repo_root:        ($('f-repo-root')?.value || '').trim(),
-      goal:             ($('nl-input')?.value || '').trim(),
-      relay_session_id: _cbRelaySessionId,
-      failed_reason:    ($('chatbot-decision-paste')?.value || '').replace(/^FAILED:\s*/i, '').trim(),
-    });
-    const box  = $('chatbot-replan-packet');
-    if (box) box.textContent = data.prompt;
-    const wrap = $('chatbot-replan-wrap');
-    if (wrap) wrap.style.display = '';
-  } catch (err) {
-    toast('Could not generate replan prompt: ' + err.message, 'error');
-  }
+async function saveSettings() {
+  try { await apiPost('/api/settings', collectSettings()); } catch (_) {}
 }
 
-async function _cbSubmitReplan() {
-  if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
-  const raw   = ($('chatbot-replan-paste')?.value || '').trim();
-  const errEl = $('chatbot-replan-error');
-  if (errEl) errEl.style.display = 'none';
-  if (!raw)  { toast('Please paste the replacement tasks.', 'warning'); return; }
-
-  const btn = $('chatbot-btn-submit-replan');
-  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
-  try {
-    const data = await apiPost('/api/relay/import-replan', {
-      raw_text: raw,
-      task_id:  _cbCurrentTaskId,
-    });
-    _cbTasks      = data.tasks || [];
-    _cbTotalTasks = _cbExecTaskCount(_cbTasks);
-    _cbRenderTaskList(_cbTasks);
-    _cbUpdateProgress(_cbCompletedTasks, _cbTotalTasks);
-    toast(`Replan imported: ${data.count} tasks remaining.`, 'success');
-    const panel = $('chatbot-review-panel');
-    if (panel) panel.style.display = 'none';
-    _cbSetStatus('running', 'Running…');
-  } catch (err) {
-    const msg = err.message || 'Failed to import replan.';
-    if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
-    toast(msg, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Import Replacement Tasks'; }
-  }
-}
-
-function _cbOnRunComplete(data) {
-  const status  = data.status || 'failure';
-  const elapsed = data.elapsed ? ` in ${data.elapsed}s` : '';
-  _cbLiveRunActive = false;
-  _cbUpdateControls();
-  _cbSetStatus(status, _cbStatusLabel(status));
-  setRunning(false);
-  if (_sse) { _sse.disconnect(); _sse = null; }
-
-  const panel = $('chatbot-review-panel');
-  if (panel) panel.style.display = 'none';
-  const done = $('chatbot-done-panel');
-  if (done)  done.style.display = '';
-
-  const icon = done?.querySelector('.relay-done-icon');
-  if (icon) icon.dataset.failed = String(status === 'failure');
-  const title = $('chatbot-done-title');
-  const sub   = $('chatbot-done-sub');
-  if (title) title.textContent = status === 'success' ? 'Run complete!' : status === 'stopped' ? 'Run stopped' : 'Run failed';
-  if (sub)   sub.textContent   = `${_cbCompletedTasks} / ${_cbTotalTasks} tasks completed${elapsed}.`;
-}
-
-function _cbStatusLabel(status) {
-  return String(status || 'idle').replace(/_/g, ' ')
-    .split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-}
-
-function _cbCopyText(elementId, btnId) {
-  const text = $(elementId)?.textContent || '';
-  navigator.clipboard?.writeText(text).then(() => {
-    const btn = $(btnId);
-    if (btn) {
-      const orig = btn.textContent;
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = orig; }, 1500);
-    }
-  }).catch(() => toast('Copy failed — please copy manually.', 'warning'));
-}
-
-function _cbReset() {
-  _cbStep           = 1;
-  _cbTasks          = [];
-  _cbCurrentTaskId  = null;
-  _cbCompletedTasks = 0;
-  _cbTotalTasks     = 0;
-  _cbLiveRunActive  = false;
-  _cbRelaySessionId = '';
-  if (_sse) { _sse.disconnect(); _sse = null; }
-  ['chatbot-plan-paste','chatbot-decision-paste','chatbot-replan-paste'].forEach(id => {
-    const el = $(id);
-    if (el) el.value = '';
-  });
-  ['chatbot-prompt-output-wrap','chatbot-plan-paste-wrap','chatbot-review-panel',
-   'chatbot-done-panel','chatbot-replan-wrap','chatbot-import-plan-error',
-   'chatbot-decision-error','chatbot-replan-error'].forEach(id => {
-    const el = $(id);
-    if (el) el.style.display = 'none';
-  });
-  const log = $('chatbot-log');
-  if (log) log.textContent = '';
-  fetch('/api/relay/state', { method: 'DELETE' }).catch(() => {});
-  _cbGoToStep(1, true);
-  _cbUpdateControls();
-}
-
-function _cbShowOrHide() {
-  const sup   = document.querySelector('input[name="supervisor"]:checked')?.value || '';
-  const panel = $('chatbot-relay-panel');
-  const nlPanel = $('nl-panel');
-  const dryRow = document.querySelector('.toggle-row');  // dry run toggle
-  const cmdPreview = $('cmd-preview')?.closest('.field');
-  const advTrigger = $('adv-trigger')?.closest('.accordion');
-  const launchBtn = $('btn-launch-run');
-
-  const isChatbot = sup === 'chatbot';
-
-  // Show/hide chatbot wizard
-  if (panel) panel.style.display = isChatbot ? '' : 'none';
-  // Hide NL panel and other settings when chatbot is active (chatbot wizard replaces them)
-  if (nlPanel) nlPanel.style.display = isChatbot ? 'none' : '';
-  if (dryRow) dryRow.style.display = isChatbot ? 'none' : '';
-  if (cmdPreview) cmdPreview.style.display = isChatbot ? 'none' : '';
-  if (advTrigger) advTrigger.style.display = isChatbot ? 'none' : '';
-  // Hide top Launch button when chatbot is active (chatbot has its own launch)
-  if (launchBtn) launchBtn.style.display = isChatbot ? 'none' : '';
-}
-
-function bindChatbotControls() {
-  $('chatbot-btn-generate-prompt')?.addEventListener('click',   _cbGeneratePrompt);
-  $('chatbot-btn-copy-prompt')?.addEventListener('click',       () => _cbCopyText('chatbot-prompt-output', 'chatbot-btn-copy-prompt'));
-  $('chatbot-btn-import-plan')?.addEventListener('click',       _cbImportPlan);
-  $('chatbot-btn-back-to-step1')?.addEventListener('click',     _cbDiscardAndReturnToPlan);
-  $('chatbot-btn-confirm-tasks')?.addEventListener('click',     _cbLaunchRun);
-  $('chatbot-relay-task-list')?.addEventListener('click', e => {
-    const btn = e.target.closest('[data-relay-task-action]');
-    if (!btn) return;
-    const taskId = parseInt(btn.dataset.taskId || '0', 10);
-    if (!taskId) return;
-    void _cbToggleSkip(taskId, btn.dataset.relayTaskAction === 'skip');
-  });
-  $('chatbot-btn-stop')?.addEventListener('click', async () => {
-    if (!_cbLiveRunActive) { toast('No active run.', 'warning'); return; }
-    try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {}
-  });
-  $('chatbot-btn-copy-packet')?.addEventListener('click',   () => _cbCopyText('chatbot-review-packet', 'chatbot-btn-copy-packet'));
-  $('chatbot-btn-submit-decision')?.addEventListener('click', _cbSubmitDecision);
-  $('chatbot-btn-copy-replan')?.addEventListener('click',   () => _cbCopyText('chatbot-replan-packet', 'chatbot-btn-copy-replan'));
-  $('chatbot-btn-submit-replan')?.addEventListener('click',  _cbSubmitReplan);
-  $('chatbot-btn-new-run')?.addEventListener('click',        _cbReset);
-}
-
-// ── Bind controls ─────────────────────────────────────────────────────────────
+// ── Init ─────────────────────────────────────────────────────────────────────
 
 function bindControls() {
-  // NL brief controls
-  $('btn-generate-brief')?.addEventListener('click', generateBrief);
+  // Step 0
+  $('wiz-btn-resume')?.addEventListener('click', resumeRun);
+  $('wiz-btn-start-new')?.addEventListener('click', () => goToStep(1));
+  $('wiz-btn-new-run')?.addEventListener('click', () => goToStep(1));
 
-  // Regenerate brief — clear brief + plan, keep textarea message
-  $('btn-regenerate-brief')?.addEventListener('click', () => {
-    $('nl-brief-output').style.display = 'none';
-    $('nl-plan-output').style.display = 'none';
-    _currentBrief = null;
-    _confirmedPlanFile = '';
-    $('nl-input')?.focus();
-  });
-
-  // Plan controls
-  $('btn-generate-plan')?.addEventListener('click', generatePlan);
-  $('btn-confirm-plan')?.addEventListener('click', confirmPlan);
-  $('btn-regenerate-plan')?.addEventListener('click', () => {
-    $('nl-plan-output').style.display = 'none';
-    _confirmedPlanFile = '';
-    setNLStatusChip(_nlStatusFor(_currentBrief));
-  });
-
-  // New Conversation — clear everything including server state
-  $('btn-new-conversation')?.addEventListener('click', async () => {
-    if ($('nl-input')) $('nl-input').value = '';
-    $('nl-brief-output').style.display = 'none';
-    $('nl-plan-output').style.display = 'none';
-    $('nl-status-row').style.display = 'none';
-    _currentBrief = null;
-    _confirmedPlanFile = '';
-    await _clearNLState();
-    $('nl-input')?.focus();
-  });
-
-  let saveTimeout = null;
-  $('nl-input')?.addEventListener('input', () => {
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(() => _saveNLState('drafting'), 1000);
-  });
-
-  $('nl-input')?.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      generateBrief();
-    }
-  });
-
-  window.addEventListener('bridge:project-switched', async e => {
-    const newPath = e.detail?.path;
-    if (newPath && newPath !== _nlProjectKey) {
-      _nlProjectKey = newPath;
-      // We might want to clear existing UI if switching projects while on Run page
-      _currentBrief = null;
-      _nlTasks = [];
-      _nlSummary = '';
-      _confirmedPlanFile = '';
-      
-      // Optionally reset form if it doesn't match the new project root in settings
-      // but usually settings are updated by the project switcher already.
-      await _restoreNLState();
-    }
-  });
-
-  // Launch / stop
-  $('btn-launch-run')?.addEventListener('click', launchRun);
-  $('btn-launch-nl-run')?.addEventListener('click', launchNLRun);
-  $('f-nl-safety-ack')?.addEventListener('change', validateSafety);
-  $('btn-stop-run')?.addEventListener('click', async () => {
-    try {
-      await apiPost('/api/run/stop');
-    } catch (err) {
-      toast(err.message || 'Stop failed.', 'error');
-    }
-  });
-
-  // Ctrl+Enter from anywhere outside the goal textarea launches the run
-  // (the goal textarea itself uses Ctrl+Enter for generateBrief)
-  document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !_isRunning
-        && document.activeElement?.id !== 'nl-input') {
-      e.preventDefault();
-      launchRun();
-    }
-  });
-
-  // Browse folder
-  $('btn-browse-folder')?.addEventListener('click', async () => {
-    try {
-      const d = await fetch('/api/browse/folder').then(r => r.json());
-      if (d.path) { $('f-repo-root').value = d.path; updateCommandPreview(); }
-    } catch (_) {}
-  });
-
-  // Browse file
-  $('btn-browse-file')?.addEventListener('click', async () => {
-    try {
-      const d = await fetch('/api/browse/file').then(r => r.json());
-      if (d.path) { $('f-idea-file').value = d.path; updateCommandPreview(); }
-    } catch (_) {}
-  });
-
-  // Model presets
-  document.querySelectorAll('.model-preset').forEach(btn => {
-    btn.addEventListener('click', () => {
-      $('f-aider-model').value = btn.dataset.model;
-      updateCommandPreview();
-    });
-  });
-
-  // Model input change → update compat warning
-  $('f-aider-model')?.addEventListener('input', updateCompatWarnings);
-
-  // Number +/- buttons
-  document.querySelectorAll('.num-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const input = $(btn.dataset.target);
-      if (!input) return;
-      const delta = parseInt(btn.dataset.delta, 10);
-      const min   = parseInt(input.min, 10) || 0;
-      const max   = parseInt(input.max, 10) || 9999;
-      input.value = Math.max(min, Math.min(max, (parseInt(input.value, 10) || 0) + delta));
-      updateCommandPreview();
-    });
-  });
-
-  // Supervisor radio → show/hide custom input, chatbot wizard, update preview, mid-run switch
-  document.querySelectorAll('input[name="supervisor"]').forEach(r => {
-    r.addEventListener('change', async () => {
-      const isCustom = r.value === 'custom';
-      const wrap = $('supervisor-custom-wrap');
-      if (wrap) wrap.style.display = isCustom ? '' : 'none';
-      updateCommandPreview();
-      updateCompatWarnings();
-      _cbShowOrHide();
-
-      // Mid-run supervisor switch via universal pipeline proxy
-      if (_isRunning) {
-        try {
-          const body = { supervisor: r.value };
-          if (isCustom) body.supervisor_command = $('f-supervisor-command')?.value?.trim() || '';
-          await apiPost('/api/run/supervisor', body);
-          toast(`Supervisor switched to ${r.value}. Takes effect on next review.`, 'info');
-        } catch (err) {
-          toast(err.message || 'Failed to switch supervisor.', 'error');
-        }
-      }
-    });
-  });
-  $('f-supervisor-command')?.addEventListener('input', updateCommandPreview);
-
-  // All form inputs → live preview update
-  ['nl-input','f-repo-root','f-aider-model','f-dry-run','f-validation-cmd',
-   'f-max-retries','f-max-plan-attempts','f-task-timeout',
-   'f-idea-file','f-plan-output-file','f-clarifications']
-    .forEach(id => {
-      const el = $(id);
-      if (el) el.addEventListener('input', updateCommandPreview);
-    });
-
-  // Auto-scroll toggle
-  $('log-autoscroll')?.addEventListener('change', e => { _autoScroll = e.target.checked; });
-
-  // Clear log
-  $('btn-clear-log')?.addEventListener('click', clearLog);
-
-  // Stdin input — send text to running process
-  const stdinInput = $('log-stdin-input');
-  const btnSend    = $('btn-log-send');
-
-  async function sendStdin() {
-    const text = stdinInput?.value?.trim();
-    if (!text) return;
-    try {
-      await apiPost('/api/run/input', { text });
-      if (stdinInput) stdinInput.value = '';
-      play('inputSent');
-    } catch (err) {
-      toast(err.message || 'Could not send input.', 'error');
-    }
-  }
-
-  stdinInput?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); sendStdin(); }
-  });
-  btnSend?.addEventListener('click', sendStdin);
-
-  // Advanced accordion
-  const trigger = $('adv-trigger');
-  const body    = $('adv-body');
-  trigger?.addEventListener('click', () => {
-    const expanded = trigger.getAttribute('aria-expanded') === 'true';
-    trigger.setAttribute('aria-expanded', String(!expanded));
-    body?.classList.toggle('--hidden', expanded);
-  });
-
-  // Tab switching
-  document.querySelectorAll('#run-tabs .tab').forEach(btn => {
-    btn.addEventListener('click', () => switchRunTab(btn.dataset.tab));
-  });
-
-  // Log view toggle (parsed/raw)
-  $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
-  $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
-
-  // Tag filter toggles
-  document.querySelectorAll('.log-tag').forEach(btn => {
-    btn.addEventListener('click', () => _toggleTag(btn.dataset.tag));
-  });
-
-  // Task progress panel
-  $('btn-refresh-progress')?.addEventListener('click', loadProgress);
-
-  // Load plan file from disk (JSON filter)
-  $('btn-load-plan')?.addEventListener('click', async () => {
+  // Step 1
+  $('wiz-btn-generate')?.addEventListener('click', generatePlan);
+  $('wiz-btn-back-0')?.addEventListener('click', () => goToStep(0));
+  $('wiz-btn-settings')?.addEventListener('click', openSettings);
+  $('wiz-btn-load-plan')?.addEventListener('click', async () => {
     try {
       const d = await fetch('/api/browse/file?filter=json').then(r => r.json());
       if (!d.path) return;
-
-      // Save as the plan file in settings and NL state
-      const settings = collectSettings();
-      settings.plan_file = d.path;
-      await apiPost('/api/settings', settings);
-
-      // Also save in NL state so Launch This Run can use it
-      const repo = settings.repo_root;
-      if (repo) {
-        await apiPost('/api/run/nl/state', {
-          repo_root: repo,
-          plan_file: d.path,
-          plan_status: 'plan_confirmed',
-          status: 'plan_confirmed',
-          brief: { goal: settings.goal || 'Loaded from plan file' },
-          tasks: [],
-        });
-      }
-
-      // Load plan tasks directly via the import API for immediate display
-      try {
-        const planResp = await fetch('/api/run/import-plan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plan_file: d.path }),
-        }).then(r => r.json());
-
-        if (planResp.tasks?.length) {
-          _progressTasks = planResp.tasks;
-          renderProgressPanel({
-            total_tasks: planResp.tasks.length,
-            completed: planResp.completed || [],
-            tasks: planResp.tasks,
-            can_resume: planResp.can_resume || false,
-          });
-        }
-      } catch (_) {}
-
-      toast('Plan loaded: ' + d.path.split(/[\\/]/).pop() + ' — ' + (_progressTasks.length || 0) + ' tasks', 'success');
-      await loadProgress();
-    } catch (err) {
-      toast(err.message || 'Failed to load plan file.', 'error');
-    }
-  });
-  $('btn-resume-run')?.addEventListener('click', async () => {
-    // Resume uses the existing plan file + checkpoint skips completed tasks
-    const settings = collectSettings();
-
-    // Use plan file from: 1) progress panel discovery, 2) saved settings, 3) saved NL state
-    settings.plan_file = _progressPlanFile || settings.plan_file || '';
-    if (!settings.plan_file) {
-      try {
-        const saved = await fetch('/api/settings').then(r => r.json());
-        settings.plan_file = saved.plan_file || '';
-      } catch (_) {}
-    }
-    if (!settings.plan_file) {
-      toast('No plan file found. Load a plan file first.', 'warning');
-      return;
-    }
-    clearLog();
-    hideBanner();
-    resetRoleStrip();
-    setRunning(true);
-    switchRunTab('log');
-    connectSSE();
-    try {
-      play('launch');
-      await apiPost('/api/run', settings);
-    } catch (err) {
-      showBanner('failure', err.message || 'Resume failed.');
-      setRunning(false);
-      _sse?.disconnect();
-    }
+      _planFile = d.path;
+      const res = await apiPost('/api/run/import-plan', { plan_file: d.path });
+      _planTasks = res.tasks || [];
+      renderPlanReview();
+      goToStep(2);
+      toast(`Loaded ${_planTasks.length} tasks`, 'success');
+    } catch (err) { toast(err.message || 'Failed to load plan.', 'error'); }
   });
 
-  // Chatbot wizard controls
-  bindChatbotControls();
+  // Goal templates
+  const bar = $('goal-template-bar');
+  if (bar) {
+    bar.innerHTML = GOAL_TEMPLATES.map(t => `<button class="goal-template-chip" data-tpl="${_esc(t.tpl)}">${_esc(t.label)}</button>`).join('');
+    bar.addEventListener('click', e => {
+      const btn = e.target.closest('.goal-template-chip');
+      if (btn && $('wiz-goal')) { $('wiz-goal').value = btn.dataset.tpl; $('wiz-goal').focus(); }
+    });
+  }
+
+  // Step 2
+  $('wiz-btn-back-1')?.addEventListener('click', () => goToStep(1));
+  $('wiz-btn-regenerate')?.addEventListener('click', generatePlan);
+  $('wiz-btn-launch')?.addEventListener('click', launchRun);
+
+  // Step 3
+  $('wiz-btn-stop')?.addEventListener('click', async () => { try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {} });
+  $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
+  $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
+  document.querySelectorAll('.log-tag').forEach(btn => btn.addEventListener('click', () => _toggleTag(btn.dataset.tag)));
+  $('log-autoscroll')?.addEventListener('change', e => { _autoScroll = e.target.checked; });
+  $('btn-log-send')?.addEventListener('click', async () => {
+    const input = $('log-stdin-input'); if (!input?.value?.trim()) return;
+    try { await apiPost('/api/run/input', { text: input.value.trim() }); input.value = ''; } catch (_) {}
+  });
+  $('log-stdin-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('btn-log-send')?.click(); } });
+
+  // Done overlay
+  $('wiz-btn-new-after-done')?.addEventListener('click', () => { $('wiz-done-overlay').style.display = 'none'; goToStep(1); });
+  $('wiz-btn-view-log')?.addEventListener('click', () => { $('wiz-done-overlay').style.display = 'none'; });
+
+  // Settings panel
+  $('wiz-btn-close-settings')?.addEventListener('click', closeSettings);
+  $('settings-overlay')?.addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
+  $('btn-browse-folder')?.addEventListener('click', async () => {
+    try { const d = await fetch('/api/browse/folder').then(r => r.json()); if (d.path) $('f-repo-root').value = d.path; } catch (_) {}
+  });
+  document.querySelectorAll('input[name="supervisor"]').forEach(r => {
+    r.addEventListener('change', () => { $('f-supervisor-command').style.display = r.value === 'custom' ? '' : 'none'; });
+  });
+
+  // Keyboard shortcuts
+  $('wiz-goal')?.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); generatePlan(); } });
 }
-
-// ── Hydrate from live run (if one is already running when page loads) ─────────
-
-async function hydrateExistingRun() {
-  try {
-    const status = await fetch('/api/run/status').then(r => r.json());
-    const alive    = status.is_running || status.status === 'running' || status.status === 'paused';
-    const finished = ['success', 'failure', 'stopped'].includes(status.status);
-
-    if (!alive && !finished) return;
-
-    // Always replay logged lines so the terminal is populated
-    const log = await fetch('/api/run/log').then(r => r.json());
-    if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
-
-    if (alive) {
-      // Active run — switch to log so user sees live output
-      switchRunTab('log');
-      setRunning(true);
-      showBanner('running', 'Run in progress…');
-      connectSSE();
-    } else {
-      // Run already finished — stay on Settings tab, show banner at top
-      // User can click Log tab to see output if they want
-      setRunning(false);
-      showBanner(
-        status.status,
-        status.status === 'success' ? 'Run completed successfully.' :
-        status.status === 'stopped' ? 'Run was stopped.'            : 'Run finished with errors.'
-      );
-    }
-  } catch (_) {}
-}
-
-// ── Entry point ───────────────────────────────────────────────────────────────
 
 async function init() {
   bindControls();
 
   // Load saved settings
-  let settings = {};
   try {
-    settings = await fetch('/api/settings').then(r => r.json());
-    populateForm(settings);
-  } catch (_) {
-    updateCommandPreview();
-  }
+    const settings = await fetch('/api/settings').then(r => r.json());
+    populateSettings(settings);
+  } catch (_) {}
 
-  // Set project key for NL persistence
-  _nlProjectKey = (settings.repo_root || '').trim();
+  // Check if a run is active
+  try {
+    const status = await fetch('/api/run/status').then(r => r.json());
+    if (status.is_running || status.status === 'running') {
+      _isRunning = true;
+      goToStep(3);
+      connectSSE();
+      const log = await fetch('/api/run/log').then(r => r.json());
+      if (Array.isArray(log.lines)) log.lines.forEach(l => appendLog(l));
+      return;
+    }
+  } catch (_) {}
 
-  // Show/hide chatbot wizard based on saved supervisor setting
-  _cbShowOrHide();
-  _cbUpdateControls();
+  // Check for pending work
+  await checkPending();
 
-  // Restore NL conversation state if present
-  await _restoreNLState();
-
-  // If a run is already active, show live state
-  await hydrateExistingRun();
-  updateCompatWarnings();
-
-  // Load task progress from persisted checkpoint
-  await loadProgress();
-
-  // Enable drag-to-resize on the split divider
-  initDragResize();
-
-  // Goal templates
-  initGoalTemplates();
-
-  // Desktop notifications
-  _requestNotifPermission();
+  // Request notification permission
+  if ('Notification' in window) Notification.requestPermission().catch(() => {});
 }
 
 init();
