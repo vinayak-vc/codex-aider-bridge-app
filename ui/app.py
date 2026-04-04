@@ -1902,6 +1902,58 @@ def api_firebase_clear():
     return jsonify({"ok": True})
 
 
+@app.route("/dashboard/cloud")
+def page_cloud_dashboard():
+    """Serve the personal cloud dashboard with user's Firebase config injected."""
+    from utils.firebase_user_setup import get_user_setup
+    setup = get_user_setup()
+    config = {}
+    if setup.is_configured():
+        config = {
+            "apiKey": setup._config.get("apiKey", ""),
+            "authDomain": setup._config.get("authDomain", ""),
+            "projectId": setup._config.get("projectId", ""),
+        }
+    # Inject config into the template
+    html = render_template("cloud_dashboard.html")
+    config_script = f"<script>window.__FIREBASE_CONFIG__ = {json.dumps(config)};</script>"
+    html = html.replace("</head>", f"{config_script}</head>")
+    return html
+
+
+@app.route("/api/firebase/dashboard-url")
+def api_firebase_dashboard_url():
+    """Get the URL for the user's personal cloud dashboard."""
+    from utils.firebase_user_setup import get_user_setup
+    setup = get_user_setup()
+    if not setup.is_configured():
+        return jsonify({"url": None, "local_url": "/dashboard/cloud"})
+    return jsonify({
+        "url": f"https://{setup._config.get('projectId', '')}.web.app",
+        "local_url": "/dashboard/cloud",
+        "project_id": setup._config.get("projectId", ""),
+    })
+
+
+@app.route("/api/firebase/export-dashboard")
+def api_firebase_export_dashboard():
+    """Export the dashboard as a standalone HTML file for Firebase Hosting deployment."""
+    from utils.firebase_user_setup import get_user_setup
+    setup = get_user_setup()
+    config = {}
+    if setup.is_configured():
+        config = {
+            "apiKey": setup._config.get("apiKey", ""),
+            "authDomain": setup._config.get("authDomain", ""),
+            "projectId": setup._config.get("projectId", ""),
+        }
+    html = render_template("cloud_dashboard.html")
+    config_script = f"<script>window.__FIREBASE_CONFIG__ = {json.dumps(config)};</script>"
+    html = html.replace("</head>", f"{config_script}</head>")
+    return Response(html, mimetype="text/html",
+                    headers={"Content-Disposition": "attachment; filename=index.html"})
+
+
 @app.route("/api/projects/status")
 def api_projects_status():
     """Return all projects with their last run status and task progress."""

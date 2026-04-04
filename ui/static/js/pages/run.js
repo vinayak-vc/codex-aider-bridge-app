@@ -604,6 +604,9 @@ function bindControls() {
     await fetch('/api/firebase/logout', { method: 'POST' });
     refreshFirebaseUI();
   });
+  $('btn-firebase-export-dashboard')?.addEventListener('click', () => {
+    window.open('/api/firebase/export-dashboard', '_blank');
+  });
   $('btn-firebase-remove')?.addEventListener('click', async () => {
     if (!confirm('Remove Firebase config? This will stop cloud sync.')) return;
     await fetch('/api/firebase/clear', { method: 'POST' });
