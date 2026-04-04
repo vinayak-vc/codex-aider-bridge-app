@@ -2409,16 +2409,49 @@ def main() -> int:
         except Exception as _rep_ex:
             logger.warning("Could not generate run report: %s", _rep_ex)
 
-        # Firebase cloud sync (non-blocking)
+        # Firebase cloud sync — dual destination (user's Firestore + admin metrics)
         try:
-            from utils.firebase_sync import get_firebase_sync
-            _fb = get_firebase_sync()
-            if _fb and _fb.is_enabled():
+            from utils.firebase_user_setup import get_user_setup
+            _fbu = get_user_setup()
+            if _fbu.is_configured() and _fbu.is_authenticated():
                 _project_name = repo_root.name
-                _fb.push_run_data(_project_name, token_report)
-                _fb.push_token_data(_project_name, token_report)
-                _fb.flush_queue()
-                logger.info("Cloud sync: pushed run data for %s", _project_name)
+
+                # 1. Push to USER's Firestore (full run + token data)
+                _run_data = {
+                    "status": token_report.get("status", ""),
+                    "tasks_planned": token_report.get("aider", {}).get("tasks_executed", 0) + token_report.get("aider", {}).get("tasks_skipped", 0),
+                    "tasks_completed": token_report.get("aider", {}).get("tasks_executed", 0),
+                    "elapsed_seconds": token_report.get("elapsed_seconds", 0),
+                    "supervisor": token_report.get("supervisor_command", ""),
+                    "model": config.aider_model or "",
+                    "supervisor_tokens": token_report.get("supervisor", {}).get("total", 0),
+                    "aider_tokens": token_report.get("aider", {}).get("estimated_tokens", 0),
+                    "tokens_saved": token_report.get("savings", {}).get("tokens_saved", 0),
+                    "savings_percent": token_report.get("savings", {}).get("savings_percent", 0),
+                    "timestamp": token_report.get("timestamp", ""),
+                }
+                import uuid as _uuid
+                _run_id = token_report.get("session_id", str(_uuid.uuid4())[:8])
+                try:
+                    _fbu.write_to_user_firestore(f"projects/{_project_name}/runs/{_run_id}", _run_data)
+                except Exception:
+                    pass
+
+                # 2. Push anonymized metrics to ADMIN's Firebase
+                try:
+                    _fbu.push_admin_metrics({
+                        "project_names": [_project_name],
+                        "total_tasks": _run_data["tasks_completed"],
+                        "total_runs": 1,
+                        "total_supervisor_tokens": _run_data["supervisor_tokens"],
+                        "total_aider_tokens": _run_data["aider_tokens"],
+                        "total_tokens_saved": _run_data["tokens_saved"],
+                        "avg_savings_percent": _run_data["savings_percent"],
+                    })
+                except Exception:
+                    pass
+
+                logger.info("Cloud sync: pushed to user's Firestore + admin metrics for %s", _project_name)
         except Exception as _fb_ex:
             logger.debug("Cloud sync skipped: %s", _fb_ex)
 

@@ -590,12 +590,18 @@ def api_get_settings():
 def api_save_settings():
     settings = request.json or {}
     state_store.save_settings(settings)
-    # Firebase sync: push settings
+    # Firebase sync: push settings to user's Firestore
     try:
-        from utils.firebase_sync import get_firebase_sync
-        _fb = get_firebase_sync()
-        if _fb and _fb.is_enabled():
-            _fb.push_settings(settings)
+        from utils.firebase_user_setup import get_user_setup
+        _fbu = get_user_setup()
+        if _fbu.is_configured() and _fbu.is_authenticated():
+            _safe_settings = {
+                "default_model": settings.get("aider_model", ""),
+                "default_supervisor": settings.get("supervisor", ""),
+                "auto_commit": settings.get("auto_commit", True),
+                "task_timeout": settings.get("task_timeout", 600),
+            }
+            _fbu.write_to_user_firestore("settings/global", _safe_settings)
     except Exception:
         pass
     return jsonify({"ok": True})
@@ -3175,12 +3181,21 @@ def api_knowledge_refresh():
 
         files_count = len(knowledge.get("files", {}))
 
-        # Firebase sync: push project metadata
+        # Firebase sync: push project metadata to user's Firestore
         try:
-            from utils.firebase_sync import get_firebase_sync
-            _fb = get_firebase_sync()
-            if _fb and _fb.is_enabled():
-                _fb.push_project_meta(repo_path.name, knowledge)
+            from utils.firebase_user_setup import get_user_setup
+            _fbu = get_user_setup()
+            if _fbu.is_configured() and _fbu.is_authenticated():
+                _meta = {
+                    "name": repo_path.name,
+                    "language": knowledge.get("project", {}).get("language", ""),
+                    "type": knowledge.get("project", {}).get("type", ""),
+                    "file_count": len(knowledge.get("files", {})),
+                    "patterns": knowledge.get("patterns", [])[:10],
+                    "features_done": knowledge.get("features_done", [])[:20],
+                    "last_refreshed": knowledge.get("project", {}).get("last_refreshed", ""),
+                }
+                _fbu.write_to_user_firestore(f"projects/{repo_path.name}/knowledge/latest", _meta)
         except Exception:
             pass
 
