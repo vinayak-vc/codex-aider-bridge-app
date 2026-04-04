@@ -552,6 +552,14 @@ function bindControls() {
 
   // Step 3
   $('wiz-btn-stop')?.addEventListener('click', async () => { try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {} });
+  $('wiz-btn-back-from-log')?.addEventListener('click', () => {
+    if (_isRunning) {
+      if (!confirm('A run is active. Stop it and go back?')) return;
+      fetch('/api/run/stop', { method: 'POST' }).catch(() => {});
+      _isRunning = false;
+    }
+    goToStep(1);
+  });
   $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
   $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
   document.querySelectorAll('.log-tag').forEach(btn => btn.addEventListener('click', () => _toggleTag(btn.dataset.tag)));

@@ -1,6 +1,6 @@
 """Version tracking — auto-increments on each commit."""
 
-VERSION = "0.4.62"
+VERSION = "0.4.63"
 BUILD_DATE = "2026-04-04"
 
 def get_version_info() -> dict:
