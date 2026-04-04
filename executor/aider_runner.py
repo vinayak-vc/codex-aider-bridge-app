@@ -249,50 +249,72 @@ class AiderRunner:
         }
 
         _start = time.monotonic()
+        _stdout_lines: list[str] = []
+        _stderr_lines: list[str] = []
+
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 arguments,
                 cwd=self._repo_root,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                check=False,
-                timeout=self._timeout,
+                bufsize=1,
                 env=_subprocess_env,
                 creationflags=_WIN_NO_WINDOW,
-                stdin=subprocess.DEVNULL,  # Never wait for input — prevents hang on hidden prompts
+                stdin=subprocess.DEVNULL,
             )
-        except subprocess.TimeoutExpired as ex:
-            # Kill the hung process
-            try:
-                if ex.process:
-                    ex.process.kill()
-            except Exception:
-                pass
-            # Capture any partial output for diagnosis
-            partial_out = ""
-            partial_err = ""
-            try:
-                if ex.stdout:
-                    partial_out = ex.stdout if isinstance(ex.stdout, str) else ex.stdout.decode("utf-8", errors="replace")
-                if ex.stderr:
-                    partial_err = ex.stderr if isinstance(ex.stderr, str) else ex.stderr.decode("utf-8", errors="replace")
-            except Exception:
-                pass
-            self._logger.warning(
-                "Task %s: Aider timed out after %ds. Partial stdout (%d chars): %.500s",
-                task.id, self._timeout, len(partial_out), partial_out[-500:] if partial_out else "(none)",
-            )
-            return ExecutionResult(
-                task_id=task.id,
-                succeeded=False,
-                exit_code=-1,
-                stdout=partial_out[-2000:],
-                stderr=f"Aider timed out after {self._timeout}s. " + (partial_err[-500:] if partial_err else ""),
-                command=arguments,
-                duration_seconds=round(time.monotonic() - _start, 2),
-            )
+
+            import threading
+
+            def _read_stderr():
+                for line in proc.stderr:
+                    stripped = line.rstrip("\n\r")
+                    _stderr_lines.append(stripped)
+                    self._logger.debug("Task %s [aider stderr]: %s", task.id, stripped)
+
+            stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+            stderr_thread.start()
+
+            # Read stdout line-by-line — streams to bridge log
+            _last_output_time = time.monotonic()
+            for raw_line in proc.stdout:
+                stripped = raw_line.rstrip("\n\r")
+                _stdout_lines.append(stripped)
+                _last_output_time = time.monotonic()
+                # Log every line so it appears in the UI
+                self._logger.info("Task %s [aider]: %s", task.id, stripped)
+
+                # Check timeout
+                if time.monotonic() - _start > self._timeout:
+                    proc.kill()
+                    self._logger.warning("Task %s: Aider timed out after %ds", task.id, self._timeout)
+                    return ExecutionResult(
+                        task_id=task.id,
+                        succeeded=False,
+                        exit_code=-1,
+                        stdout="\n".join(_stdout_lines[-50:]),
+                        stderr=f"Aider timed out after {self._timeout}s",
+                        command=arguments,
+                        duration_seconds=round(time.monotonic() - _start, 2),
+                    )
+
+            proc.wait(timeout=10)
+            stderr_thread.join(timeout=5)
+
+            result_stdout = "\n".join(_stdout_lines)
+            result_stderr = "\n".join(_stderr_lines)
+
+            # Build a compatible result object
+            class _Result:
+                def __init__(self, rc, out, err):
+                    self.returncode = rc
+                    self.stdout = out
+                    self.stderr = err
+            result = _Result(proc.returncode, result_stdout, result_stderr)
+
         except OSError as ex:
             return ExecutionResult(
                 task_id=task.id,
