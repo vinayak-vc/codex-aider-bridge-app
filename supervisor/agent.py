@@ -167,8 +167,8 @@ class SupervisorAgent:
             )
 
         return (
-            "You are a Tech Supervisor. Your only job is to decompose a development goal into\n"
-            "an atomic sequential plan for a developer tool called Aider.\n\n"
+            "Decompose the development goal below into an atomic sequential task plan\n"
+            "for a coding tool called Aider. Return ONLY valid JSON.\n\n"
             "CRITICAL CONTEXT — AIDER RUNS ON A SMALL LOCAL LLM (7-14B parameters):\n"
             "The coding model has a 32K token context window and runs at 6-65 tok/s.\n"
             "It can only see the target file(s) you specify — it cannot browse the repo.\n"
@@ -257,7 +257,7 @@ class SupervisorAgent:
 
     def _build_subplan_prompt(self, task: Task, error_message: str) -> str:
         return (
-            "You are a Tech Supervisor. A development task failed mechanical validation.\n\n"
+            "A development task failed mechanical validation.\n\n"
             "Create 1–3 atomic correction sub-tasks that fix the specific error.\n\n"
             "STRICT RULES:\n"
             "- Return ONLY JSON. No prose. No code. No questions.\n"
@@ -281,7 +281,7 @@ class SupervisorAgent:
         exit_summary = "succeeded" if result.exit_code == 0 else f"failed (exit code {result.exit_code})"
 
         return (
-            "You are a Tech Supervisor reviewing completed developer work.\n"
+            "Review the completed developer work below.\n"
             "Reply with exactly one of these two forms (nothing else):\n"
             "  PASS\n"
             "  REWORK: <specific replacement instruction>\n\n"

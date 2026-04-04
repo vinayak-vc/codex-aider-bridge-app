@@ -16,6 +16,11 @@ class RepoScanner:
         "logs", ".vs", "obj", "bin", "Library", "Temp", "Packages",
         ".idea", ".vscode", "dist", "build", ".mypy_cache", ".pytest_cache",
         ".tox", "coverage", ".eggs", "*.egg-info",
+        # Bridge internal directories — not relevant for planning
+        "bridge_progress", "taskJsons", ".aider.tags.cache.v4",
+        # Common media/output directories — huge, waste tokens
+        "converted_shorts", "converted_videos", "output", "outputs",
+        "uploads", "downloads", "recordings", "media", "assets",
     })
 
     def __init__(self, repo_root: Path) -> None:
