@@ -422,24 +422,11 @@ class SupervisorAgent:
             )
 
             try:
-                # Write prompt to a temp file and open as stdin handle.
-                # This avoids THREE problems with Claude CLI on Windows:
-                #  1. subprocess.run(input=) deadlocks on large prompts (pipe buffer)
-                #  2. Popen.communicate(input=) also deadlocks for the same reason
-                #  3. stdin piping triggers Claude's prompt injection detection
-                # Using a file handle as stdin bypasses all pipe buffering issues
-                # and Claude CLI reads it as a normal file stream, not as injection.
-                if stdin_prompt:
-                    prompt_file = Path(tmp_dir) / "prompt_input.txt"
-                    prompt_file.write_text(stdin_prompt, encoding="utf-8")
-                    stdin_handle = open(prompt_file, "r", encoding="utf-8")
-                    print(f"[SUPERVISOR] Using file-based stdin ({len(stdin_prompt)} chars)", flush=True)
-                else:
-                    stdin_handle = subprocess.DEVNULL
-
+                # Prompt is always passed as a positional CLI argument (not stdin).
+                # Use Popen with DEVNULL stdin to prevent any interactive waiting.
                 proc = subprocess.Popen(
                     arguments,
-                    stdin=stdin_handle,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=self._repo_root,
@@ -448,10 +435,6 @@ class SupervisorAgent:
                     errors="replace",
                     creationflags=_WIN_NO_WINDOW,
                 )
-                # Close file handle after Popen inherits it
-                if stdin_prompt:
-                    stdin_handle.close()
-
                 try:
                     stdout, stderr = proc.communicate(timeout=self._timeout)
                 except subprocess.TimeoutExpired:
@@ -461,10 +444,6 @@ class SupervisorAgent:
                     except Exception:
                         pass
                     print(f"[SUPERVISOR] TIMED OUT after {self._timeout}s!", flush=True)
-                    self._logger.error(
-                        "Supervisor TIMED OUT after %ds. Command: %s",
-                        self._timeout, arguments,
-                    )
                     raise SupervisorError(
                         f"Supervisor timed out after {self._timeout}s — "
                         "command may be hung or waiting for input."
@@ -474,7 +453,6 @@ class SupervisorAgent:
                 raise
             except OSError as ex:
                 print(f"[SUPERVISOR] Cannot start: {ex}", flush=True)
-                self._logger.error("Cannot start supervisor: %s", ex)
                 raise SupervisorError(
                     f"Cannot start supervisor command '{self._command}': {ex}"
                 ) from ex
@@ -536,23 +514,23 @@ class SupervisorAgent:
 
         arguments, _ = resolve_command_arguments(command_text, self._repo_root)
 
-        # Exec-style commands (Codex): append output file, schema, and prompt as args.
+        # Exec-style commands (Codex): append output file and schema args.
         is_exec_style = "exec" in arguments
         if is_exec_style:
             if "{output_file}" not in self._command and "-o" not in arguments:
                 arguments.extend(["-o", str(output_file)])
             if schema_file is not None and "--output-schema" not in arguments:
                 arguments.extend(["--output-schema", str(schema_file)])
-            # Prompt as final positional argument (Codex exec expects this).
-            arguments.append(prompt)
-            return arguments, None
 
-        # For Claude CLI with -p, we need special handling.
-        # stdin piping triggers Claude's injection detection ("You are a...")
-        # and CLI argument has Windows limits.
-        # Solution: write prompt to a temp file, pass via stdin from file handle.
-        # This is handled in _run() — mark as "file" mode by returning a special tuple.
-        return arguments, prompt
+        # ALWAYS pass prompt as a positional argument, never via stdin.
+        # stdin delivery fails on Windows for multiple reasons:
+        #   - subprocess.run(input=) deadlocks on large prompts (pipe buffer)
+        #   - Popen.communicate(input=) same deadlock
+        #   - File-handle stdin not consumed by some CLIs
+        #   - Claude CLI injection detection flags piped role-assignment prompts
+        # Positional arg works universally. Windows limit is 32,767 chars.
+        arguments.append(prompt)
+        return arguments, None
 
     # ------------------------------------------------------------------
     # JSON schema for plan output
