@@ -413,10 +413,11 @@ class SupervisorAgent:
                     f"Cannot resolve supervisor command '{self._command}': {ex}"
                 ) from ex
 
+            _prompt_len = len(stdin_prompt) if stdin_prompt else 0
+            print(f"[SUPERVISOR] Running: {arguments} (timeout={self._timeout}s, prompt={_prompt_len} chars)", flush=True)
             self._logger.info(
                 "Running supervisor: %s (timeout=%ds, prompt=%d chars, stdin=%s)",
-                arguments, self._timeout,
-                len(stdin_prompt) if stdin_prompt else 0,
+                arguments, self._timeout, _prompt_len,
                 "yes" if stdin_prompt else "no",
             )
 
@@ -435,6 +436,7 @@ class SupervisorAgent:
             except subprocess.TimeoutExpired as ex:
                 if ex.process:
                     ex.process.kill()
+                print(f"[SUPERVISOR] TIMED OUT after {self._timeout}s!", flush=True)
                 self._logger.error(
                     "Supervisor TIMED OUT after %ds. Command: %s",
                     self._timeout, arguments,
@@ -444,11 +446,15 @@ class SupervisorAgent:
                     "command may be hung or waiting for input."
                 ) from ex
             except OSError as ex:
+                print(f"[SUPERVISOR] Cannot start: {ex}", flush=True)
                 self._logger.error("Cannot start supervisor: %s", ex)
                 raise SupervisorError(
                     f"Cannot start supervisor command '{self._command}': {ex}"
                 ) from ex
 
+            print(f"[SUPERVISOR] Finished: exit={result.returncode}, stdout={len(result.stdout)} chars, stderr={len(result.stderr)} chars", flush=True)
+            if result.stderr.strip():
+                print(f"[SUPERVISOR] stderr: {result.stderr.strip()[:300]}", flush=True)
             self._logger.info(
                 "Supervisor finished: exit=%d, stdout=%d chars, stderr=%d chars",
                 result.returncode,

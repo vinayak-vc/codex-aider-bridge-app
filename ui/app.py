@@ -2644,15 +2644,15 @@ def api_run_nl_plan():
 
             logger = logging.getLogger("bridge_app")
             repo_path = Path(repo_root)
+
+            print(f"[PLAN] Scanning repo tree: {repo_path}", flush=True)
             repo_tree = RepoScanner(repo_path).scan()
+            print(f"[PLAN] Repo tree: {len(repo_tree)} chars", flush=True)
 
             # Plan generation timeout: 180s for CLI supervisors.
-            # Claude needs time to process large repo trees (485+ files).
             _plan_timeout = 180
-            logger.info(
-                "Generating plan via supervisor '%s' (timeout=%ds)",
-                supervisor_type, _plan_timeout,
-            )
+            print(f"[PLAN] Generating plan via '{supervisor_cmd}' (timeout={_plan_timeout}s)", flush=True)
+            print(f"[PLAN] Goal: {goal_text[:200]}...", flush=True)
 
             agent = SupervisorAgent(
                 repo_root=repo_path,
@@ -2666,7 +2666,7 @@ def api_run_nl_plan():
                 knowledge_context=knowledge_ctx or None,
                 workflow_profile=settings.get("workflow_profile", "standard"),
             )
-            logger.info("Supervisor returned plan (%d chars)", len(plan_text))
+            print(f"[PLAN] Supervisor returned {len(plan_text)} chars", flush=True)
 
             parser = TaskParser()
             tasks_parsed = parser.parse(plan_text)
