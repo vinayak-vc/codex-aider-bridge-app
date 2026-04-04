@@ -603,13 +603,53 @@ class FirebaseSync:
 
     # ── Data Export & Deletion (GDPR) ─────────────────────────────────────
 
+    def export_all_data(self) -> dict:
+        """Export all user data from Firestore as a dict (GDPR data portability)."""
+        if not self.is_authenticated():
+            return {"error": "Not authenticated"}
+        result = {"uid": self._uid, "email": self._email, "exported_at": datetime.now().isoformat()}
+        try:
+            # Read profile
+            token = self._get_token()
+            profile_url = self._firestore_url(f"users/{self._uid}/profile")
+            req = urllib.request.Request(profile_url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result["profile"] = json.loads(resp.read().decode())
+        except Exception:
+            result["profile"] = None
+        try:
+            # Read settings
+            settings_url = self._firestore_url(f"users/{self._uid}/settings/global")
+            req = urllib.request.Request(settings_url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result["settings"] = json.loads(resp.read().decode())
+        except Exception:
+            result["settings"] = None
+        # Note: full project/run/token export would need collection listing
+        # which Firestore REST API supports but is paginated. For now, return
+        # what we can access directly.
+        result["note"] = "For a complete export, contact the admin or use Firebase Console."
+        return result
+
     def delete_all_data(self) -> None:
         """Delete all user data from Firestore and clear local credentials."""
         if not self.is_authenticated():
             return
-        # Note: Firestore REST API doesn't support recursive delete.
-        # In production, use a Cloud Function for this.
-        # For now, clear local state.
+        # Delete known documents
+        try:
+            token = self._get_token()
+            for path in [f"users/{self._uid}/profile", f"users/{self._uid}/settings/global"]:
+                try:
+                    req = urllib.request.Request(
+                        self._firestore_url(path), method="DELETE",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    urllib.request.urlopen(req, timeout=10)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Clear local state
         self._clear_credentials()
         self._offline_queue = []
         self._save_queue()

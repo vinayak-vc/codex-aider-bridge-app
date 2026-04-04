@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aider Bridge — Admin Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --subtle: #484f58;
+      --accent: #f97316; --success: #22c55e; --danger: #ef4444;
+      --info: #06b6d4; --radius: 8px; --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); padding: 24px; max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 24px; margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .stat-value { font-size: 28px; font-weight: 700; }
+    .stat-value.--success { color: var(--success); }
+    .stat-value.--accent { color: var(--accent); }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+    .card-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+
+    .bar-chart { display: flex; flex-direction: column; gap: 4px; }
+    .bar-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .bar-label { min-width: 80px; color: var(--muted); text-align: right; }
+    .bar-track { flex: 1; height: 20px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
+    .bar-value { min-width: 50px; font-size: 11px; color: var(--muted); }
+
+    .privacy-notice { font-size: 11px; color: var(--subtle); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 24px; }
+
+    #login-section { text-align: center; padding: 60px 20px; }
+    #login-section h2 { margin-bottom: 16px; }
+    #login-btn { padding: 12px 24px; background: var(--accent); color: #000; border: none; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; }
+    #login-btn:hover { opacity: 0.9; }
+
+    #dashboard { display: none; }
+    .loading { color: var(--muted); font-size: 14px; text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+
+<h1>Aider Bridge — Admin</h1>
+<p class="subtitle">Aggregate usage metrics across all users</p>
+
+<!-- Login -->
+<div id="login-section">
+  <h2>Admin Login</h2>
+  <p style="color:var(--muted);margin-bottom:20px">Sign in with the admin Google account</p>
+  <button id="login-btn" onclick="login()">Login with Google</button>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard">
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Users</div><div class="stat-value" id="s-users">-</div></div>
+    <div class="stat"><div class="stat-label">Total Projects</div><div class="stat-value" id="s-projects">-</div></div>
+    <div class="stat"><div class="stat-label">Total Runs</div><div class="stat-value" id="s-runs">-</div></div>
+    <div class="stat"><div class="stat-label">Tasks Completed</div><div class="stat-value --accent" id="s-tasks">-</div></div>
+    <div class="stat"><div class="stat-label">Tokens Saved</div><div class="stat-value --success" id="s-saved">-</div></div>
+    <div class="stat"><div class="stat-label">Supervisor Tokens</div><div class="stat-value" id="s-sup">-</div></div>
+    <div class="stat"><div class="stat-label">Aider Tokens (Free)</div><div class="stat-value" id="s-aider">-</div></div>
+    <div class="stat"><div class="stat-label">Last Updated</div><div class="stat-value" id="s-updated" style="font-size:14px">-</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Daily Activity (last 14 days)</div>
+    <div class="bar-chart" id="daily-chart"><div class="loading">Loading...</div></div>
+  </div>
+
+  <div class="privacy-notice">
+    <strong>Privacy:</strong> This dashboard reads ONLY from <code>admin/aggregates</code>.
+    No user project data, code, goals, files, or settings are accessible from this page.
+    All per-user data is isolated by Firestore security rules.
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+  import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAoIZVXEe3kBNMx3tsqqtyy2qzzHAjT5ms",
+    authDomain: "aiderbridge.firebaseapp.com",
+    projectId: "aiderbridge",
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  function fmt(n) { return n == null ? '-' : Number(n).toLocaleString(); }
+
+  window.login = async function() {
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (e) { alert('Login failed: ' + e.message); }
+  };
+
+  onAuthStateChanged(auth, async user => {
+    if (!user) {
+      document.getElementById('login-section').style.display = '';
+      document.getElementById('dashboard').style.display = 'none';
+      return;
+    }
+    document.getElementById('login-section').style.display = 'none';
+    document.getElementById('dashboard').style.display = '';
+    await loadDashboard();
+  });
+
+  async function loadDashboard() {
+    try {
+      const snap = await getDoc(doc(db, 'admin', 'aggregates'));
+      if (!snap.exists()) {
+        document.getElementById('s-users').textContent = '0';
+        return;
+      }
+      const d = snap.data();
+      document.getElementById('s-users').textContent = fmt(d.total_users);
+      document.getElementById('s-projects').textContent = fmt(d.total_projects);
+      document.getElementById('s-runs').textContent = fmt(d.total_runs);
+      document.getElementById('s-tasks').textContent = fmt(d.total_tasks_completed);
+      document.getElementById('s-saved').textContent = fmt(d.total_tokens_saved);
+      document.getElementById('s-sup').textContent = fmt(d.total_supervisor_tokens);
+      document.getElementById('s-aider').textContent = fmt(d.total_aider_tokens);
+      document.getElementById('s-updated').textContent = d.last_updated?.toDate?.()?.toLocaleString?.() || '-';
+
+      // Load daily stats
+      const dailySnap = await getDocs(
+        query(collection(db, 'admin/aggregates/daily_stats'), orderBy('__name__', 'desc'), limit(14))
+      );
+      const chart = document.getElementById('daily-chart');
+      if (dailySnap.empty) { chart.innerHTML = '<div class="loading">No daily data yet</div>'; return; }
+
+      const days = [];
+      dailySnap.forEach(doc => days.push({ date: doc.id, ...doc.data() }));
+      days.reverse();
+
+      const maxRuns = Math.max(1, ...days.map(d => d.runs || 0));
+      chart.innerHTML = days.map(d => {
+        const pct = Math.round(((d.runs || 0) / maxRuns) * 100);
+        return `<div class="bar-row">
+          <span class="bar-label">${d.date.slice(5)}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <span class="bar-value">${d.runs || 0} runs</span>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      console.error('Dashboard load error:', e);
+      document.getElementById('daily-chart').innerHTML = `<div class="loading">Error: ${e.message}</div>`;
+    }
+  }
+</script>
+</body>
+</html>

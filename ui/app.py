@@ -1806,6 +1806,20 @@ def api_sync_push():
     return jsonify({"ok": True, "flushed": sync.flush_queue()})
 
 
+@app.route("/api/sync/export")
+def api_sync_export():
+    """Export all user's cloud data (GDPR data portability)."""
+    from utils.firebase_sync import get_firebase_sync
+    sync = get_firebase_sync()
+    if not sync or not sync.is_authenticated():
+        return jsonify({"error": "Not authenticated"}), 401
+    try:
+        data = sync.export_all_data()
+        return jsonify(data)
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/sync/delete-account", methods=["POST"])
 def api_sync_delete_account():
     """Delete all cloud data and logout."""
