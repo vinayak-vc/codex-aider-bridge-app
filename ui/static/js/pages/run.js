@@ -80,7 +80,7 @@ async function generatePlan() {
   if (!goal) { toast('Please enter a goal.', 'warning'); return; }
 
   const btn = $('wiz-btn-generate');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing goal...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating plan via supervisor...'; }
 
   try {
     // Save settings first
@@ -88,14 +88,11 @@ async function generatePlan() {
     settings.goal = goal;
     await apiPost('/api/settings', settings);
 
-    // Step 1: Generate brief via Ollama (can take 30-90s for slow models)
-    if (btn) btn.textContent = '⏳ Analyzing goal (this may take a minute)...';
-    toast('Sending goal to LLM for analysis...', 'info');
-    const brief = await apiPost('/api/run/brief', { goal, repo_root: settings.repo_root });
-
-    // Step 2: Generate plan via supervisor
-    if (btn) btn.textContent = '⏳ Generating task plan...';
-    toast('Generating task plan from supervisor...', 'info');
+    // Send goal directly to supervisor (Claude/Codex) for plan generation.
+    // The supervisor is the expensive cloud AI — it does the thinking.
+    // NO Ollama brief step — the local model is only for coding via Aider.
+    toast('Supervisor is generating task plan...', 'info');
+    const brief = { goal };  // Pass goal as-is to the plan endpoint
     const plan = await apiPost('/api/run/nl/plan', { repo_root: settings.repo_root, brief });
     _planTasks = plan.tasks || [];
 
@@ -104,7 +101,7 @@ async function generatePlan() {
       return;
     }
 
-    // Step 3: Confirm plan (save to file)
+    // Save plan to file
     if (btn) btn.textContent = '⏳ Saving plan...';
     const confirmed = await apiPost('/api/run/nl/plan/confirm', {
       repo_root: settings.repo_root,

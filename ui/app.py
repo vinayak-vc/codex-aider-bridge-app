@@ -2572,8 +2572,14 @@ def api_run_nl_plan():
     repo_root = str(data.get("repo_root", "")).strip()
     brief = data.get("brief") or {}
 
+    # Accept both full brief and simple {goal: "..."} format
     if not brief or not brief.get("goal"):
-        return jsonify({"error": "brief with goal is required"}), 400
+        # Fallback: check if goal is at top level
+        goal_direct = str(data.get("goal", "")).strip()
+        if goal_direct:
+            brief = {"goal": goal_direct}
+        else:
+            return jsonify({"error": "brief with goal is required"}), 400
 
     settings = state_store.load_settings()
     if not repo_root:
