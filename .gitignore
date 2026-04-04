@@ -218,3 +218,4 @@ logs/
 
 # AI-generated task plan JSON files (stored per-project, not committed)
 taskJsons/
+firebase_config.json
