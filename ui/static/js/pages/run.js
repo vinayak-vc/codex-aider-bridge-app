@@ -80,7 +80,7 @@ async function generatePlan() {
   if (!goal) { toast('Please enter a goal.', 'warning'); return; }
 
   const btn = $('wiz-btn-generate');
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing goal...'; }
 
   try {
     // Save settings first
@@ -88,9 +88,14 @@ async function generatePlan() {
     settings.goal = goal;
     await apiPost('/api/settings', settings);
 
-    // Generate brief
+    // Step 1: Generate brief via Ollama (can take 30-90s for slow models)
+    if (btn) btn.textContent = '⏳ Analyzing goal (this may take a minute)...';
+    toast('Sending goal to LLM for analysis...', 'info');
     const brief = await apiPost('/api/run/brief', { goal, repo_root: settings.repo_root });
-    // Generate plan
+
+    // Step 2: Generate plan via supervisor
+    if (btn) btn.textContent = '⏳ Generating task plan...';
+    toast('Generating task plan from supervisor...', 'info');
     const plan = await apiPost('/api/run/nl/plan', { repo_root: settings.repo_root, brief });
     _planTasks = plan.tasks || [];
 
@@ -99,7 +104,8 @@ async function generatePlan() {
       return;
     }
 
-    // Confirm plan (save to file)
+    // Step 3: Confirm plan (save to file)
+    if (btn) btn.textContent = '⏳ Saving plan...';
     const confirmed = await apiPost('/api/run/nl/plan/confirm', {
       repo_root: settings.repo_root,
       tasks: _planTasks,
@@ -108,6 +114,7 @@ async function generatePlan() {
     });
     _planFile = confirmed.plan_file || '';
 
+    toast(`Plan generated: ${_planTasks.length} task(s)`, 'success');
     renderPlanReview();
     goToStep(2);
   } catch (err) {
