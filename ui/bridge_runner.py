@@ -385,6 +385,14 @@ class BridgeRun:
                 proc.terminate()
             except Exception:
                 pass
+            # Escalate: wait 5s then force kill if still running
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         with self._lock:
             self.is_running = False
             self.status = "stopped"
@@ -411,3 +419,16 @@ _run = BridgeRun()
 
 def get_run() -> BridgeRun:
     return _run
+
+
+# Kill orphaned subprocess on Flask shutdown
+import atexit
+
+def _cleanup():
+    if _run._process and _run._process.poll() is None:
+        try:
+            _run._process.kill()
+        except Exception:
+            pass
+
+atexit.register(_cleanup)

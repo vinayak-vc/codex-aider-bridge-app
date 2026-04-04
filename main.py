@@ -782,8 +782,19 @@ def execute_task_with_review(
 
     _failure_reasons: list[str] = []  # Accumulate failure reasons for escalation
     _escalation_log: list[dict] = []  # Structured log for diagnostics/telemetry
+    _retry_budget_seconds = 0.0  # Track cumulative time for retry budget
+    _MAX_RETRY_SECONDS = 1800  # 30 minute budget per task
 
     for attempt in range(config.max_task_retries + 1):
+
+        # Retry budget check
+        if attempt > 0 and _retry_budget_seconds > _MAX_RETRY_SECONDS:
+            logger.warning(
+                "Task %s: retry budget exhausted (%.0fs / %ds). Failing early.",
+                task.id, _retry_budget_seconds, _MAX_RETRY_SECONDS,
+            )
+            _escalation_log.append({"attempt": attempt + 1, "stage": "budget_exhausted", "seconds": round(_retry_budget_seconds)})
+            break
 
         # ── Escalating retry strategy ────────────────────────────────────
         # Attempts 1-3:  Original instruction (standard retries)
@@ -1055,6 +1066,8 @@ def execute_task_with_review(
             raise RuntimeError(
                 f"Task {current_task.id}: Aider could not start. {stderr}"
             )
+
+        _retry_budget_seconds += execution_result.duration_seconds
 
         if not execution_result.succeeded:
             _fail_msg = f"Aider exit code {execution_result.exit_code}"
@@ -2200,6 +2213,10 @@ def main() -> int:
         completed_ids = load_checkpoint(repo_root)
         resumed_completed_ids = set(completed_ids)
 
+        # Circuit breaker: stop after N consecutive failures with same error category
+        _consecutive_failures = 0
+        _last_error_category = ""
+
         for task_index, task in enumerate(tasks):
             wait_if_paused(repo_root, logger)
 
@@ -2219,13 +2236,59 @@ def main() -> int:
                 completed_summaries=list(completed_summaries),
             )
 
-            task_diff = execute_task_with_review(
-                task, config, supervisor, manual_supervisor, selector,
-                runner, diff_collector, validator, logger,
-                aider_context=aider_context,
-                diagnostics=diagnostics,
-                token_tracker=token_tracker,
-            )
+            # Record pre-task SHA for rollback on failure
+            _pre_task_sha = None
+            try:
+                _r = _run_git_command(repo_root, ["rev-parse", "HEAD"])
+                if _r.returncode == 0:
+                    _pre_task_sha = _r.stdout.strip()
+            except Exception:
+                pass
+
+            try:
+                task_diff = execute_task_with_review(
+                    task, config, supervisor, manual_supervisor, selector,
+                    runner, diff_collector, validator, logger,
+                    aider_context=aider_context,
+                    diagnostics=diagnostics,
+                    token_tracker=token_tracker,
+                )
+                _consecutive_failures = 0  # Reset circuit breaker on success
+            except RuntimeError as task_ex:
+                # Task-level rollback: revert to pre-task state
+                if _pre_task_sha:
+                    try:
+                        _run_git_command(repo_root, ["reset", "--hard", _pre_task_sha])
+                        logger.info("Task %s: rolled back to %s after failure", task.id, _pre_task_sha[:8])
+                    except Exception:
+                        pass
+
+                # Circuit breaker: classify error and check consecutive count
+                err_str = str(task_ex).lower()
+                if "timed out" in err_str:
+                    _error_cat = "timeout"
+                elif "validation" in err_str or "mechanical" in err_str:
+                    _error_cat = "validation"
+                elif "interactive" in err_str or "prompt" in err_str:
+                    _error_cat = "interactive_prompt"
+                else:
+                    _error_cat = "other"
+
+                if _error_cat == _last_error_category:
+                    _consecutive_failures += 1
+                else:
+                    _consecutive_failures = 1
+                    _last_error_category = _error_cat
+
+                if _consecutive_failures >= 3:
+                    raise RuntimeError(
+                        f"Circuit breaker: {_consecutive_failures} consecutive tasks failed with "
+                        f"'{_error_cat}'. Stopping run. Last error: {task_ex}"
+                    ) from task_ex
+
+                # Re-raise for normal failure handling
+                raise
+
             failed_task_id = None
             commit_sha = None
             if config.auto_commit:

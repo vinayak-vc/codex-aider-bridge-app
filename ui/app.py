@@ -921,6 +921,91 @@ _active_proxy_threads: dict[str, "SupervisorProxyThread"] = {}
 _proxy_lock = threading.Lock()
 
 
+class HealthWatchdog(threading.Thread):
+    """Monitors Ollama and GPU health during runs. Restarts Ollama if unresponsive."""
+
+    def __init__(self, interval: int = 15):
+        super().__init__(daemon=True, name="health-watchdog")
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._ollama_fail_count = 0
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            self._check_ollama()
+            self._check_gpu()
+            self._stop_event.wait(self._interval)
+
+    def _check_ollama(self):
+        try:
+            r = subprocess.run(
+                ["ollama", "ps"], capture_output=True, text=True, timeout=5,
+                creationflags=_WIN_CREATE_FLAGS,
+            )
+            if r.returncode != 0:
+                self._ollama_fail_count += 1
+            else:
+                self._ollama_fail_count = 0
+        except Exception:
+            self._ollama_fail_count += 1
+
+        if self._ollama_fail_count >= 2:
+            _broadcast("health_warning", {
+                "component": "ollama",
+                "message": "Ollama is unresponsive. Attempting restart...",
+            })
+            _broadcast("log", {"line": "[watchdog] Ollama unresponsive — attempting restart"})
+            self._restart_ollama()
+
+    def _restart_ollama(self):
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"],
+                               capture_output=True, timeout=5, creationflags=_WIN_CREATE_FLAGS)
+                subprocess.Popen(["ollama", "serve"], creationflags=_WIN_CREATE_FLAGS)
+            else:
+                subprocess.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
+                subprocess.Popen(["ollama", "serve"])
+            self._stop_event.wait(5)
+            # Re-check
+            try:
+                r = subprocess.run(["ollama", "ps"], capture_output=True, timeout=5,
+                                   creationflags=_WIN_CREATE_FLAGS)
+                if r.returncode == 0:
+                    _broadcast("log", {"line": "[watchdog] Ollama restarted successfully"})
+                    self._ollama_fail_count = 0
+                else:
+                    _broadcast("log", {"line": "[watchdog] Ollama restart may have failed"})
+            except Exception:
+                pass
+        except Exception as ex:
+            _broadcast("log", {"line": f"[watchdog] Ollama restart failed: {ex}"})
+
+    def _check_gpu(self):
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5, creationflags=_WIN_CREATE_FLAGS,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                parts = r.stdout.strip().split(",")
+                used = float(parts[0].strip())
+                total = float(parts[1].strip())
+                if total > 0 and used / total > 0.95:
+                    _broadcast("health_warning", {
+                        "component": "gpu",
+                        "message": f"GPU VRAM critically low: {int(used)}MB / {int(total)}MB",
+                    })
+        except Exception:
+            pass
+
+
+_health_watchdog: Optional[HealthWatchdog] = None
+
+
 class SupervisorProxyThread(threading.Thread):
     """Polls manual_supervisor/requests/ and dispatches review to the correct
     supervisor backend based on the current setting.  Enables mid-run switching."""
@@ -1245,6 +1330,9 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
                         t.save(Path(rr))
                 except Exception:
                     pass
+            # Stop health watchdog
+            if _health_watchdog:
+                _health_watchdog.stop()
             # Stop the supervisor proxy thread
             with _proxy_lock:
                 proxy = _active_proxy_threads.pop(run_id, None)
@@ -1263,6 +1351,26 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
                         _broadcast("log", {"line": f"[queue] Failed to start next run: {qex}"})
 
     run.add_listener(on_event)
+
+    # Pre-warm: load model into VRAM before Aider's first task
+    _model = settings.get("aider_model", "").replace("ollama/", "")
+    if _model:
+        try:
+            import urllib.request as _ur
+            _body = json.dumps({"model": _model, "prompt": "hi", "keep_alive": "5m"}).encode()
+            _req = _ur.Request("http://localhost:11434/api/generate", data=_body,
+                               headers={"Content-Type": "application/json"}, method="POST")
+            with _ur.urlopen(_req, timeout=60) as _resp:
+                _resp.read()
+        except Exception:
+            pass  # Non-blocking — if Ollama isn't ready, Aider will handle it
+
+    # Start health watchdog
+    global _health_watchdog
+    if _health_watchdog:
+        _health_watchdog.stop()
+    _health_watchdog = HealthWatchdog()
+    _health_watchdog.start()
 
     # Start supervisor proxy thread
     supervisor = settings.get("supervisor", "codex")

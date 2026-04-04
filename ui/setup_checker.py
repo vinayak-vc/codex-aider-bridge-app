@@ -398,16 +398,69 @@ def check_preflight(settings: dict) -> dict:
 
     can_launch = all(c["status"] != "fail" for c in checks if c.get("critical"))
 
-    # Cost estimate
+    # 7. Plan file validation (warning)
     task_count = 0
     plan_file = settings.get("plan_file", "").strip()
+    _valid_types = {"create", "modify", "delete", "validate", "read", "investigate"}
     if plan_file:
         try:
             import json as _json
             pd = _json.loads(Path(plan_file).read_text(encoding="utf-8"))
-            task_count = len(pd.get("tasks", []))
+            plan_tasks = pd.get("tasks", [])
+            task_count = len(plan_tasks)
+
+            # Validate each task
+            missing_files = []
+            bad_types = []
+            dup_ids = []
+            seen_ids = set()
+            for pt in plan_tasks:
+                tid = pt.get("id", "?")
+                if tid in seen_ids:
+                    dup_ids.append(tid)
+                seen_ids.add(tid)
+
+                ttype = pt.get("type", "")
+                if ttype and ttype not in _valid_types:
+                    bad_types.append(f"task {tid}: {ttype}")
+
+                if ttype not in ("create",) and repo_root:
+                    for fp in pt.get("files", []):
+                        if not (Path(repo_root) / fp).exists():
+                            missing_files.append(fp)
+
+            if missing_files:
+                checks.append({
+                    "name": "Plan files exist",
+                    "status": "warn",
+                    "critical": False,
+                    "message": f"{len(missing_files)} file(s) not found: {', '.join(missing_files[:3])}",
+                })
+            if bad_types:
+                checks.append({
+                    "name": "Plan task types",
+                    "status": "warn",
+                    "critical": False,
+                    "message": f"Invalid types: {', '.join(bad_types[:3])}",
+                })
+            if dup_ids:
+                checks.append({
+                    "name": "Plan task IDs",
+                    "status": "warn",
+                    "critical": False,
+                    "message": f"Duplicate IDs: {dup_ids}",
+                })
+            if task_count > 0 and not missing_files and not bad_types:
+                checks.append({
+                    "name": "Plan validated",
+                    "status": "pass",
+                    "critical": False,
+                    "message": f"{task_count} tasks, all files exist",
+                })
         except Exception:
             pass
+
+    # Cost estimate
 
     speed_tier_seconds = {"fast": 90, "medium": 150, "slow": 300}
     model_speed = "medium"
@@ -435,6 +488,39 @@ def check_preflight(settings: dict) -> dict:
     }
 
     return {"checks": checks, "can_launch": can_launch, "estimate": estimate}
+
+
+def validate_config(settings: dict) -> list[dict]:
+    """Validate all settings and return issues."""
+    issues = []
+
+    repo = settings.get("repo_root", "").strip()
+    if not repo:
+        issues.append({"field": "repo_root", "level": "error", "message": "Project folder not set"})
+    elif not Path(repo).is_dir():
+        issues.append({"field": "repo_root", "level": "error", "message": f"Directory not found: {repo}"})
+    elif not (Path(repo) / ".git").exists():
+        issues.append({"field": "repo_root", "level": "warn", "message": "Not a git repository — bridge requires git"})
+
+    model = settings.get("aider_model", "").strip()
+    if not model:
+        issues.append({"field": "aider_model", "level": "warn", "message": "No model set — using default"})
+    elif model.startswith("ollama/"):
+        ollama = check_ollama()
+        if ollama.get("models"):
+            bare = model[7:]
+            found = any(bare in m for m in ollama["models"])
+            if not found:
+                issues.append({"field": "aider_model", "level": "warn", "message": f"Model {bare} not pulled in Ollama"})
+
+    timeout = settings.get("task_timeout", 600)
+    if isinstance(timeout, (int, float)):
+        if timeout < 60:
+            issues.append({"field": "task_timeout", "level": "warn", "message": "Timeout under 60s — tasks may fail prematurely"})
+        elif timeout > 3600:
+            issues.append({"field": "task_timeout", "level": "warn", "message": "Timeout over 1 hour — consider reducing"})
+
+    return issues
 
 
 def check_codex() -> dict:
