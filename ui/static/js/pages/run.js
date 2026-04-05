@@ -526,6 +526,126 @@ async function init() {
 
   // Request notification permission
   if ('Notification' in window) Notification.requestPermission().catch(() => {});
+
+  // Load plan library
+  await loadPlanLibrary();
+}
+
+// ── Plan Library ────────────────────────────────────────────────────────────
+
+async function loadPlanLibrary() {
+  try {
+    const data = await fetch('/api/plans/list').then(r => r.json());
+    const plans = data.generated || [];
+    const container = $('plan-library');
+    const list = $('plan-library-list');
+    const countEl = $('plan-library-count');
+    const emptyEl = $('plan-library-empty');
+
+    if (!container || !list) return;
+
+    if (plans.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+
+    container.style.display = '';
+    if (countEl) countEl.textContent = plans.length;
+
+    // Clear old entries (keep empty message)
+    list.querySelectorAll('.plan-card').forEach(el => el.remove());
+    if (emptyEl) emptyEl.style.display = plans.length ? 'none' : '';
+
+    const statusColors = {
+      generated: 'var(--color-text-muted)',
+      running: 'var(--color-accent)',
+      completed: 'var(--color-success)',
+      failed: 'var(--color-danger)',
+      stopped: 'var(--color-warning)',
+    };
+
+    for (const plan of plans) {
+      const card = document.createElement('div');
+      card.className = 'plan-card';
+      card.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--color-border);cursor:pointer;transition:background 0.15s';
+      card.onmouseenter = () => card.style.background = 'var(--color-bg-hover, rgba(255,255,255,0.03))';
+      card.onmouseleave = () => card.style.background = '';
+
+      const goalText = _esc(plan.goal || plan.plan_summary || 'Untitled').slice(0, 80);
+      const statusColor = statusColors[plan.status] || 'var(--color-text-muted)';
+      const statusLabel = (plan.status || 'generated').replace('_', ' ');
+      const timeAgo = _timeAgo(plan.generated_at);
+      const taskInfo = `${plan.completed_tasks || 0}/${plan.task_count || 0}`;
+
+      card.innerHTML = `
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${goalText}</div>
+          <div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">
+            <span style="color:${statusColor};font-weight:600">${statusLabel}</span>
+            · ${taskInfo} tasks · ${timeAgo}
+          </div>
+        </div>
+        <button class="btn btn--primary btn--sm plan-play-btn" data-plan-id="${plan.id}" style="padding:4px 10px;font-size:11px" title="Load and run this plan">
+          ▶
+        </button>
+        <button class="btn btn--secondary btn--sm plan-delete-btn" data-plan-id="${plan.id}" style="padding:4px 8px;font-size:11px;opacity:0.5" title="Delete">
+          ✕
+        </button>
+      `;
+      list.appendChild(card);
+    }
+
+    // Wire play buttons
+    list.querySelectorAll('.plan-play-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const planId = btn.dataset.planId;
+        try {
+          const res = await apiPost(`/api/plans/generated/${planId}/load`, {});
+          if (res.error) { toast(res.error, 'error'); return; }
+          _planTasks = res.tasks || [];
+          _planFile = res.plan_file || '';
+          if ($('wiz-goal') && res.goal) $('wiz-goal').value = res.goal;
+          renderPlanReview();
+          goToStep(2);
+          toast(`Loaded plan: ${_planTasks.length} tasks`, 'success');
+        } catch (err) { toast(err.message || 'Failed to load plan', 'error'); }
+      });
+    });
+
+    // Wire delete buttons
+    list.querySelectorAll('.plan-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const planId = btn.dataset.planId;
+        try {
+          await fetch(`/api/plans/generated/${planId}`, { method: 'DELETE' });
+          btn.closest('.plan-card').remove();
+          const remaining = list.querySelectorAll('.plan-card').length;
+          if (countEl) countEl.textContent = remaining;
+          if (remaining === 0) { container.style.display = 'none'; }
+        } catch (_) {}
+      });
+    });
+
+    // Toggle expand/collapse
+    $('plan-library-toggle')?.addEventListener('click', () => {
+      const isOpen = list.style.display !== 'none';
+      list.style.display = isOpen ? 'none' : '';
+      const chevron = $('plan-library-chevron');
+      if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+    });
+
+  } catch (_) {}
+}
+
+function _timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
 }
 
 init();

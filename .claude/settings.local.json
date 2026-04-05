@@ -50,7 +50,9 @@
       "Bash(python -m pytest tests/test_bridge_resilience.py -v)",
       "Bash(python -m unittest tests.test_bridge_resilience -v)",
       "WebFetch(domain:127.0.0.1)",
-      "WebFetch(domain:localhost)"
+      "WebFetch(domain:localhost)",
+      "Bash(curl -s http://127.0.0.1:7823/api/version)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''utils/checkpoint.py'', doraise=True\\); py_compile.compile\\(''main.py'', doraise=True\\); print\\(''OK''\\)\")"
     ]
   }
 }

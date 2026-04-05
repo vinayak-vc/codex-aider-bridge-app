@@ -4,7 +4,7 @@
     {
       "name": "bridge-ui",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["ui/launch_ui.py"],
+      "runtimeArgs": ["launch_ui.py"],
       "port": 7823
     }
   ]

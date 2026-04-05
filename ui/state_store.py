@@ -31,7 +31,9 @@ RELAY_UI_STATE_FILE = DATA_DIR / "relay_ui_state.json"
 CHAT_SESSIONS_FILE   = DATA_DIR / "chat_sessions.json"
 RUN_NL_STATES_FILE   = DATA_DIR / "run_nl_states.json"
 PLAN_FAVORITES_FILE  = DATA_DIR / "plan_favorites.json"
+GENERATED_PLANS_FILE = DATA_DIR / "generated_plans.json"
 MAX_HISTORY = 50
+MAX_GENERATED_PLANS = 50
 MAX_LOG_LINES = 500
 
 DEFAULT_SETTINGS: dict = {
@@ -384,6 +386,64 @@ def delete_plan_favorite(fav_id: str) -> None:
     favs = load_plan_favorites()
     favs = [f for f in favs if f.get("id") != fav_id]
     PLAN_FAVORITES_FILE.write_text(json.dumps(favs, indent=2), encoding="utf-8")
+
+
+# ── Generated Plans Library ──────────────────────────────────────────────────
+
+def load_generated_plans() -> list[dict]:
+    _ensure()
+    if GENERATED_PLANS_FILE.exists():
+        try:
+            return json.loads(GENERATED_PLANS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_generated_plans(plans: list[dict]) -> None:
+    _ensure()
+    GENERATED_PLANS_FILE.write_text(json.dumps(plans, indent=2), encoding="utf-8")
+
+
+def save_generated_plan(plan: dict) -> str:
+    """Save a newly generated plan to the library. Returns the plan ID."""
+    import time as _time
+    plans = load_generated_plans()
+    plan_id = str(uuid.uuid4())[:8]
+    plan["id"] = plan_id
+    plan.setdefault("status", "generated")
+    plan.setdefault("generated_at", _time.strftime("%Y-%m-%d %H:%M:%S"))
+    plan.setdefault("last_run_at", None)
+    plan.setdefault("completed_tasks", 0)
+    plan.setdefault("failed_task_id", None)
+    plans.insert(0, plan)
+    if len(plans) > MAX_GENERATED_PLANS:
+        plans = plans[:MAX_GENERATED_PLANS]
+    _save_generated_plans(plans)
+    return plan_id
+
+
+def update_generated_plan(plan_id: str, updates: dict) -> None:
+    """Update fields on an existing generated plan (status, last_run_at, etc.)."""
+    plans = load_generated_plans()
+    for plan in plans:
+        if plan.get("id") == plan_id:
+            plan.update(updates)
+            break
+    _save_generated_plans(plans)
+
+
+def delete_generated_plan(plan_id: str) -> None:
+    plans = load_generated_plans()
+    plans = [p for p in plans if p.get("id") != plan_id]
+    _save_generated_plans(plans)
+
+
+def get_generated_plan(plan_id: str) -> dict | None:
+    for plan in load_generated_plans():
+        if plan.get("id") == plan_id:
+            return plan
+    return None
 
 
 # ── Run Queue ─────────────────────────────────────────────────────────────────

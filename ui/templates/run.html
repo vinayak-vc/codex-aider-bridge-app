@@ -107,6 +107,22 @@
           or load an existing plan file (.json)
         </button>
       </div>
+
+      <!-- Recent Plans Library -->
+      <div id="plan-library" style="margin-top:24px;display:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer" id="plan-library-toggle">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14" id="plan-library-chevron" style="transition:transform 0.2s">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+          </svg>
+          <span class="field-label" style="margin:0;font-size:12px">Recent Plans</span>
+          <span class="badge badge--muted" id="plan-library-count" style="font-size:10px">0</span>
+        </div>
+        <div id="plan-library-list" style="display:none;max-height:300px;overflow-y:auto;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg-secondary)">
+          <div id="plan-library-empty" style="padding:16px;text-align:center;color:var(--color-text-muted);font-size:12px">
+            No plans generated yet
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

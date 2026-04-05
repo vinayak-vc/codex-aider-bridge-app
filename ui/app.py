@@ -685,13 +685,25 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
             })
         if event_type in ("complete", "error", "stopped"):
             final = data.get("final") or {}
+            run_status = data.get("status", "failure") if event_type == "complete" else event_type
             state_store.update_history_entry(run_id, {
-                "status": data.get("status", "failure") if event_type == "complete" else event_type,
+                "status": run_status,
                 "tasks": final.get("tasks", len(run.tasks)),
                 "elapsed": data.get("elapsed", 0),
                 "log": run.log_lines[-state_store.MAX_LOG_LINES:],
                 "tasks_detail": list(run.tasks.values()),
             })
+            # Update generated plan status
+            import time as _t
+            _active_plan_id = settings.get("_active_plan_id", "")
+            if _active_plan_id:
+                _plan_status = "completed" if run_status == "success" else run_status
+                state_store.update_generated_plan(_active_plan_id, {
+                    "status": _plan_status,
+                    "last_run_at": _t.strftime("%Y-%m-%d %H:%M:%S"),
+                    "completed_tasks": run.completed_tasks,
+                    "failed_task_id": data.get("failed_task_id"),
+                })
             run.remove_listener(on_event)
             # Telemetry: record run outcome
             if _get_telemetry:
@@ -1206,7 +1218,10 @@ def api_undo_task():
 
 @app.route("/api/plans/list")
 def api_plans_list():
-    return jsonify({"plans": state_store.load_plan_favorites()})
+    return jsonify({
+        "plans": state_store.load_plan_favorites(),
+        "generated": state_store.load_generated_plans(),
+    })
 
 
 @app.route("/api/plans/save", methods=["POST"])
@@ -1232,6 +1247,39 @@ def api_plans_save():
 @app.route("/api/plans/<plan_id>", methods=["DELETE"])
 def api_plans_delete(plan_id):
     state_store.delete_plan_favorite(plan_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/plans/generated/<plan_id>/load", methods=["POST"])
+def api_plans_generated_load(plan_id):
+    """Load a generated plan for execution — returns tasks with checkpoint overlay."""
+    plan = state_store.get_generated_plan(plan_id)
+    if not plan:
+        return jsonify({"error": "Plan not found"}), 404
+
+    tasks = plan.get("tasks", [])
+    plan_file = plan.get("plan_file", "")
+    repo_root = plan.get("repo_root", "")
+
+    # Overlay checkpoint status if available
+    if repo_root:
+        from utils.checkpoint import load_checkpoint
+        completed = load_checkpoint(Path(repo_root))
+        for t in tasks:
+            t["status"] = "done" if t.get("id") in completed else "pending"
+
+    return jsonify({
+        "ok": True,
+        "plan_id": plan_id,
+        "plan_file": plan_file,
+        "tasks": tasks,
+        "goal": plan.get("goal", ""),
+    })
+
+
+@app.route("/api/plans/generated/<plan_id>", methods=["DELETE"])
+def api_plans_generated_delete(plan_id):
+    state_store.delete_generated_plan(plan_id)
     return jsonify({"ok": True})
 
 
@@ -1878,7 +1926,18 @@ def api_run_nl_plan_confirm():
             "status":       "plan_confirmed",
         })
 
-    return jsonify({"ok": True, "plan_file": plan_file})
+    # Save to generated plans library (persists across restarts)
+    goal = str(brief.get("goal", "")).strip() if isinstance(brief, dict) else ""
+    plan_id = state_store.save_generated_plan({
+        "goal": goal or plan_summary,
+        "plan_summary": plan_summary,
+        "plan_file": plan_file,
+        "repo_root": repo_root,
+        "task_count": len(tasks),
+        "tasks": tasks,
+    })
+
+    return jsonify({"ok": True, "plan_file": plan_file, "plan_id": plan_id})
 
 
 @app.route("/api/run/nl/state", methods=["GET"])
