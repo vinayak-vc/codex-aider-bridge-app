@@ -137,17 +137,26 @@ class TokenTracker:
         instruction: str,
         input_file_chars: int,
         diff_chars: int,
+        performer: str = "ollama",
     ) -> None:
         """Estimate Aider/Ollama token usage for one task.
 
         Aider calls Ollama internally so we cannot intercept the API response.
         We estimate from: instruction length + input file sizes + output diff.
+
+        performer: who executed this task:
+          "ollama"   — local LLM via Aider (default)
+          "claude"   — Claude edited directly (tiny task)
+          "direct"   — bridge wrote file from instruction (no LLM)
         """
         estimated = _estimate(instruction) + max(1, input_file_chars // 4) + max(1, diff_chars // 4)
+        if performer != "ollama":
+            estimated = 0  # no local LLM tokens used
         self._aider_total += estimated
         self._aider_per_task.append({
             "task_id": task_id,
             "estimated_tokens": estimated,
+            "performer": performer,
         })
 
     # ── Live snapshot ─────────────────────────────────────────────────────────

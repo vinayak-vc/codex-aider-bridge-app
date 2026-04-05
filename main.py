@@ -934,6 +934,15 @@ def execute_task_with_review(
                     duration_seconds=0.0,
                 )
                 _direct_executed = True
+                # Record as direct execution (0 LLM tokens)
+                if token_tracker:
+                    token_tracker.record_aider_task(
+                        task_id=current_task.id,
+                        instruction=current_instruction,
+                        input_file_chars=len(code_match.group(1)),
+                        diff_chars=len(code_match.group(1)),
+                        performer="direct",
+                    )
 
         # ── Step 1: Execute via Aider ────────────────────────────────────────
         if not _direct_executed:
