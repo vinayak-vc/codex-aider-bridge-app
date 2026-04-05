@@ -161,8 +161,11 @@ def scan_project_signatures(
     return result
 
 
-def signatures_to_context(signatures: dict[str, dict]) -> str:
-    """Convert scanned signatures to a compact text block for prompt injection."""
+def signatures_to_context(signatures: dict[str, dict], max_chars: int = 6000) -> str:
+    """Convert scanned signatures to a compact text block for prompt injection.
+
+    Caps output at max_chars to prevent prompt overflow on large projects.
+    """
     lines: list[str] = ["CODE STRUCTURE (function signatures and data shapes):"]
 
     for file_path, info in sorted(signatures.items()):
@@ -187,5 +190,10 @@ def signatures_to_context(signatures: dict[str, dict]) -> str:
         if file_lines:
             lines.append(f"  {file_path} ({info.get('line_count', 0)} lines):")
             lines.extend(file_lines)
+
+        # Early exit if already over budget
+        result = "\n".join(lines)
+        if len(result) >= max_chars:
+            return result[:max_chars] + "\n  ... (truncated — large project)"
 
     return "\n".join(lines)

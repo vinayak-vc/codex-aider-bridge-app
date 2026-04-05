@@ -28,9 +28,20 @@ def build_plan_prompt(
         trimmed = idea_text[:_IDEA_MAX_CHARS]
         idea_block = f"\nProject brief:\n{trimmed}\n"
 
+    # Cap all injected blocks to prevent prompt overflow on large projects.
+    # Total budget: ~12K tokens for context blocks (knowledge + code structure + features)
+    _KNOWLEDGE_MAX = 8000  # chars (~2K tokens)
+    _CODE_STRUCTURE_MAX = 6000  # chars (~1.5K tokens)
+
     knowledge_block = ""
     if knowledge_context:
-        knowledge_block = f"\nProject knowledge (file roles and history):\n{knowledge_context}\n"
+        _kc = knowledge_context[:_KNOWLEDGE_MAX]
+        if len(knowledge_context) > _KNOWLEDGE_MAX:
+            _kc += "\n... (truncated — showing top files only)"
+        knowledge_block = f"\nProject knowledge (file roles and history):\n{_kc}\n"
+
+    if code_structure and len(code_structure) > _CODE_STRUCTURE_MAX:
+        code_structure = code_structure[:_CODE_STRUCTURE_MAX] + "\n... (truncated)"
 
     feedback_block = ""
     if feedback:
