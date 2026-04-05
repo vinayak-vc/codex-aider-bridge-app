@@ -1686,6 +1686,13 @@ def api_run_nl_plan():
         except Exception as exc:
             logger.error("Supervisor plan generation failed: %s", exc)
             error_msg = str(exc)
+            if "not logged in" in error_msg.lower() or "/login" in error_msg.lower():
+                error_msg = (
+                    "Claude CLI is not logged in. Open a terminal and run:\n"
+                    "  claude /login\n"
+                    "Then try again."
+                )
+                return jsonify({"error": error_msg}), 401
             if "timed out" in error_msg.lower():
                 error_msg = (
                     f"Supervisor timed out after {_plan_timeout}s. "
