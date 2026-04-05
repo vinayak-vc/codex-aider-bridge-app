@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = "run" %}
 
-{% block title %}Run{% endblock %}
+{% block title %}AI Relay{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pages/run.css') }}">
@@ -9,284 +9,51 @@
 
 {% block content %}
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
-<!-- WIZARD CONTAINER — each step is a full-screen panel                      -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
-<div class="wizard" id="wizard">
-
-  <!-- ── Step 0: Resume or New ── -->
-  <div class="wizard-step --active" id="wiz-step-0" data-step="0">
-    <div class="wizard-center">
-      <!-- Pending work card (shown if unfinished tasks found) -->
-      <div id="wiz-resume-card" style="display:none">
-        <div class="resume-card">
-          <div class="resume-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="48" height="48">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.678 48.678 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3-3 3"/>
-            </svg>
-          </div>
-          <h2 class="resume-title">Unfinished work found</h2>
-          <div class="resume-project" id="wiz-resume-project"></div>
-          <div class="resume-progress-wrap">
-            <div class="resume-progress-bar" id="wiz-resume-bar" style="width:0%"></div>
-          </div>
-          <div class="resume-stats" id="wiz-resume-stats"></div>
-          <div class="resume-actions">
-            <button class="btn btn--primary btn--lg" id="wiz-btn-resume">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="18" height="18">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/>
-              </svg>
-              Resume
-            </button>
-            <button class="btn btn--secondary" id="wiz-btn-start-new">+ Start New</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- No pending work — go straight to goal -->
-      <div id="wiz-no-pending" style="display:none">
-        <div class="resume-card">
-          <div class="resume-icon" style="color:var(--color-accent)">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="48" height="48">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-            </svg>
-          </div>
-          <h2 class="resume-title">Ready to build</h2>
-          <p class="resume-sub">Describe what you want and the AI will plan and execute it.</p>
-          <button class="btn btn--primary btn--lg" id="wiz-btn-new-run" style="margin-top:20px">
-            Start New Run
-          </button>
-        </div>
-      </div>
+<div class="relay-shell">
+  <!-- Header -->
+  <div class="relay-header">
+    <h2 class="relay-title">AI Relay</h2>
+    <div class="relay-header-actions">
+      <span class="relay-status" id="relay-status">Idle</span>
+      <button class="btn btn--secondary btn--sm" id="btn-settings" title="Settings">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+        </svg>
+      </button>
+      <button class="btn btn--secondary btn--sm" id="btn-stop-run" style="display:none" title="Stop run">Stop</button>
     </div>
   </div>
 
-  <!-- ── Step 1: Goal ── -->
-  <div class="wizard-step" id="wiz-step-1" data-step="1">
-    <div class="wizard-panel">
-      <div class="wizard-header">
-        <h2>What do you want to build?</h2>
-        <button class="btn btn--secondary btn--sm" id="wiz-btn-settings" title="Settings">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/>
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
-          </svg>
-          Settings
-        </button>
+  <!-- Chat messages area -->
+  <div class="relay-messages" id="relay-messages">
+    <div class="relay-welcome" id="relay-welcome">
+      <div class="relay-welcome-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="40" height="40">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z"/>
+        </svg>
       </div>
-
-      <!-- Template chips -->
-      <div class="goal-template-bar" id="goal-template-bar"></div>
-
-      <textarea id="wiz-goal" class="input wiz-goal-input" rows="5"
-                placeholder="Example: Add user authentication with JWT tokens and password hashing"
-                autofocus></textarea>
-
-      <div class="wizard-footer">
-        <button class="btn btn--secondary" id="wiz-btn-back-0">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/>
-          </svg>
-          Back
-        </button>
-        <div style="flex:1"></div>
-        <button class="btn btn--secondary" id="wiz-btn-copy-prompt" title="Copy the planning prompt to clipboard — paste into Claude manually if auto-generation fails">
-          Copy Prompt
-        </button>
-        <button class="btn btn--primary" id="wiz-btn-generate">
-          Generate Plan
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Load existing plan -->
-      <div style="text-align:center;margin-top:12px">
-        <button class="btn btn--secondary btn--sm" id="wiz-btn-load-plan" style="font-size:11px">
-          or load an existing plan file (.json)
-        </button>
-      </div>
-
-      <!-- Recent Plans Library -->
-      <div id="plan-library" style="margin-top:24px;display:none">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer" id="plan-library-toggle">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14" id="plan-library-chevron" style="transition:transform 0.2s">
-            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
-          </svg>
-          <span class="field-label" style="margin:0;font-size:12px">Recent Plans</span>
-          <span class="badge badge--muted" id="plan-library-count" style="font-size:10px">0</span>
-        </div>
-        <div id="plan-library-list" style="display:none;max-height:300px;overflow-y:auto;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg-secondary)">
-          <div id="plan-library-empty" style="padding:16px;text-align:center;color:var(--color-text-muted);font-size:12px">
-            No plans generated yet
-          </div>
-        </div>
-      </div>
+      <h3>What do you want to build?</h3>
+      <p style="color:var(--color-text-muted);font-size:13px">
+        Describe your goal below. I'll generate a prompt for you to paste into Claude, ChatGPT, or any AI.
+      </p>
     </div>
   </div>
 
-  <!-- ── Step 2: Review Plan ── -->
-  <div class="wizard-step" id="wiz-step-2" data-step="2">
-    <div class="wizard-panel" style="max-width:900px">
-      <div class="wizard-header">
-        <h2>Review Plan</h2>
-        <span class="badge badge--muted" id="wiz-plan-count">0 tasks</span>
-      </div>
-
-      <div id="wiz-plan-summary" class="wiz-plan-summary"></div>
-
-      <!-- Preflight checklist -->
-      <div id="wiz-preflight" style="display:none;margin-bottom:16px">
-        <div class="preflight-list" id="wiz-preflight-list"></div>
-      </div>
-
-      <!-- Task list -->
-      <div class="wiz-task-list" id="wiz-task-list"></div>
-
-      <div class="wizard-footer">
-        <button class="btn btn--secondary" id="wiz-btn-back-1">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/>
-          </svg>
-          Change Goal
-        </button>
-        <div style="flex:1"></div>
-        <button class="btn btn--secondary" id="wiz-btn-regenerate">Regenerate</button>
-        <button class="btn btn--secondary" id="wiz-btn-force-rerun" title="Clear checkpoint and run all tasks fresh, even if previously completed">
-          Force Re-run
-        </button>
-        <button class="btn btn--primary btn--lg" id="wiz-btn-launch">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/>
-          </svg>
-          Launch Run
-        </button>
-      </div>
-    </div>
+  <!-- Input bar -->
+  <div class="relay-input-bar">
+    <textarea id="relay-input" class="relay-input" rows="1"
+              placeholder="Describe what you want to build, or paste an AI response..."
+              autofocus></textarea>
+    <button class="btn btn--primary relay-send-btn" id="btn-send">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="18" height="18">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"/>
+      </svg>
+    </button>
   </div>
-
-  <!-- ── Step 3: Running ── -->
-  <div class="wizard-step" id="wiz-step-3" data-step="3">
-    <div class="wiz-running-layout">
-      <!-- Left: Log -->
-      <div class="wiz-log-col">
-        <div class="log-toolbar">
-          <div class="log-status-row">
-            <div class="log-view-toggle">
-              <button class="btn btn--secondary btn--sm log-view-btn --active" id="btn-log-parsed">Parsed</button>
-              <button class="btn btn--secondary btn--sm log-view-btn" id="btn-log-raw">Raw</button>
-            </div>
-            <span class="badge badge--muted" id="log-line-count">0 lines</span>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <label class="autoscroll-toggle">
-              <input type="checkbox" id="log-autoscroll" checked>
-              Auto-scroll
-            </label>
-            <button class="btn btn--danger btn--sm" id="wiz-btn-stop">Stop</button>
-            <button class="btn btn--secondary btn--sm" id="wiz-btn-back-from-log" title="Back to goal">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="13" height="13">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/>
-              </svg>
-              Back
-            </button>
-          </div>
-        </div>
-
-        <!-- Tag filter bar -->
-        <div class="log-tag-bar" id="log-tag-bar">
-          <button class="log-tag --active" data-tag="task">Task <span class="log-tag-count" id="tag-count-task">0</span></button>
-          <button class="log-tag --active" data-tag="review">Review <span class="log-tag-count" id="tag-count-review">0</span></button>
-          <button class="log-tag --active" data-tag="error">Error <span class="log-tag-count" id="tag-count-error">0</span></button>
-          <button class="log-tag --active" data-tag="warning">Warning <span class="log-tag-count" id="tag-count-warning">0</span></button>
-          <button class="log-tag --active" data-tag="bridge">Bridge <span class="log-tag-count" id="tag-count-bridge">0</span></button>
-          <button class="log-tag --active" data-tag="proxy">Proxy <span class="log-tag-count" id="tag-count-proxy">0</span></button>
-          <button class="log-tag --active" data-tag="aider">Aider <span class="log-tag-count" id="tag-count-aider">0</span></button>
-          <button class="log-tag --active" data-tag="info">Info <span class="log-tag-count" id="tag-count-info">0</span></button>
-        </div>
-
-        <!-- Parsed log -->
-        <div class="log-parsed" id="log-parsed">
-          <div class="log-empty" id="log-parsed-empty">
-            <span>Waiting for run to start...</span>
-          </div>
-        </div>
-
-        <!-- Raw log -->
-        <div class="log-terminal" id="log-terminal" style="display:none"></div>
-
-        <!-- Stdin -->
-        <div class="log-input-row">
-          <input id="log-stdin-input" class="input log-stdin-input" type="text"
-                 placeholder="Type a reply..." autocomplete="off">
-          <button class="btn btn--secondary btn--sm" id="btn-log-send">Send</button>
-        </div>
-      </div>
-
-      <!-- Right: Task progress -->
-      <div class="wiz-progress-col">
-        <div class="task-progress-header">
-          <span class="section-title">Tasks</span>
-        </div>
-        <div class="task-progress-bar-wrap">
-          <div class="task-progress-bar" id="task-progress-bar" style="width:0%"></div>
-        </div>
-        <div class="task-progress-label" id="task-progress-label">0 / 0</div>
-        <div class="task-progress-list" id="task-progress-list"></div>
-        <div class="task-detail-pane" id="task-detail-pane" style="display:none">
-          <div class="task-detail-title" id="task-detail-title"></div>
-          <div class="task-detail-body" id="task-detail-body"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Done overlay -->
-    <div class="wiz-done-overlay" id="wiz-done-overlay" style="display:none">
-      <div class="wiz-done-card">
-        <div class="wiz-done-icon" id="wiz-done-icon"></div>
-        <h2 id="wiz-done-title">Run Complete</h2>
-        <p id="wiz-done-sub"></p>
-        <div style="display:flex;gap:10px;margin-top:20px">
-          <button class="btn btn--primary" id="wiz-btn-new-after-done">New Run</button>
-          <button class="btn btn--secondary" id="wiz-btn-view-log">View Log</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
-<!-- FULLSCREEN LOADING OVERLAY                                               -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
-<div id="plan-loading-overlay" style="
-  display:none;
-  position:fixed; inset:0; z-index:9999;
-  background:rgba(0,0,0,0.85);
-  display:none;
-  align-items:center; justify-content:center;
-  flex-direction:column; gap:24px;
-">
-  <div style="
-    width:48px; height:48px;
-    border:4px solid rgba(255,255,255,0.15);
-    border-top-color:var(--color-accent, #e74c3c);
-    border-radius:50%;
-    animation:spin 0.8s linear infinite;
-  "></div>
-  <div id="plan-loading-title" style="color:#fff;font-size:18px;font-weight:600;">
-    Generating plan via supervisor...
-  </div>
-  <div id="plan-loading-sub" style="color:rgba(255,255,255,0.5);font-size:13px;">
-    This may take 10–30 seconds. Do not close this window.
-  </div>
-</div>
-<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
-
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
-<!-- SETTINGS SLIDE-OUT PANEL                                                 -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- Settings overlay (kept from old run page) -->
 <div class="settings-overlay" id="settings-overlay" style="display:none">
   <div class="settings-panel" id="settings-panel">
     <div class="settings-header">
@@ -296,31 +63,14 @@
     <div class="settings-body">
       <div class="field">
         <label class="field-label" for="f-repo-root">Project folder</label>
-        <div class="field-row">
+        <div style="display:flex;gap:6px">
           <input id="f-repo-root" class="input" type="text" placeholder="/path/to/project">
-          <button class="btn btn--secondary btn--sm" id="btn-browse-folder">Browse</button>
+          <button class="btn btn--secondary btn--sm" id="btn-browse-folder" title="Browse">📁</button>
         </div>
       </div>
       <div class="field">
         <label class="field-label" for="f-aider-model">Aider model</label>
-        <input id="f-aider-model" class="input" type="text" placeholder="ollama/qwen2.5-coder:14b">
-      </div>
-      <div class="field">
-        <span class="field-label">Supervisor</span>
-        <div class="supervisor-grid">
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-codex" value="codex"><label for="sup-codex">Codex</label></div>
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-claude" value="claude"><label for="sup-claude">Claude</label></div>
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-cursor" value="cursor"><label for="sup-cursor">Cursor</label></div>
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-windsurf" value="windsurf"><label for="sup-windsurf">Windsurf</label></div>
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-chatbot" value="chatbot"><label for="sup-chatbot">Chatbot</label></div>
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-manual" value="manual"><label for="sup-manual">Manual</label></div>
-          <div class="supervisor-option"><input type="radio" name="supervisor" id="sup-custom" value="custom"><label for="sup-custom">Custom</label></div>
-        </div>
-        <input id="f-supervisor-command" class="input" type="text" placeholder="custom command" style="display:none;margin-top:6px">
-      </div>
-      <div class="field">
-        <label class="field-label" for="f-validation-cmd">Validation command</label>
-        <input id="f-validation-cmd" class="input" type="text" placeholder="python -m pytest">
+        <input id="f-aider-model" class="input" type="text" value="ollama/qwen2.5-coder:7b">
       </div>
       <div class="field">
         <label class="field-label" for="f-task-timeout">Task timeout (seconds)</label>
@@ -329,66 +79,6 @@
       <div class="field">
         <label class="field-label" for="f-max-retries">Max task retries</label>
         <input id="f-max-retries" class="input" type="number" min="1" max="20" value="10">
-      </div>
-      <div class="toggle-row">
-        <div><div class="toggle-label">Dry run</div></div>
-        <label class="toggle"><input type="checkbox" id="f-dry-run"><span class="toggle-track"></span></label>
-      </div>
-      <div class="toggle-row">
-        <div><div class="toggle-label">Lock model</div><div class="field-hint">Skip smart routing — use selected model for all tasks</div></div>
-        <label class="toggle"><input type="checkbox" id="f-model-lock"><span class="toggle-track"></span></label>
-      </div>
-
-      <!-- Per-User Cloud Sync -->
-      <div style="border-top:1px solid var(--color-border);padding-top:16px;margin-top:8px">
-        <div class="field-label" style="margin-bottom:8px">Cloud Sync (Personal Firebase)</div>
-
-        <div id="firebase-not-setup">
-          <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px">
-            Set up your own Firebase project to sync data to the cloud. Your data stays in your Google account.
-          </p>
-          <button class="btn btn--secondary btn--sm" id="btn-firebase-wizard" style="width:100%">Setup Cloud Sync</button>
-        </div>
-
-        <!-- Setup wizard (hidden until clicked) -->
-        <div id="firebase-wizard" style="display:none">
-          <div style="font-size:11px;color:var(--color-text-muted);line-height:1.6;margin-bottom:12px">
-            <strong>Step 1:</strong> Go to <a href="https://console.firebase.google.com" target="_blank" style="color:var(--color-accent)">Firebase Console</a> → Create Project<br>
-            <strong>Step 2:</strong> Enable Authentication → Google Sign-In<br>
-            <strong>Step 3:</strong> Create Firestore Database (Production mode)<br>
-            <strong>Step 4:</strong> Project Settings → Web App → Copy config<br>
-            <strong>Step 5:</strong> <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--color-accent)">Google Cloud Console</a> → Create OAuth Client ID (Web) → Copy Client ID + Secret
-          </div>
-          <div class="field">
-            <label class="field-label">Paste Firebase config JSON</label>
-            <textarea id="f-firebase-config" class="input" rows="6" placeholder='{"apiKey":"...","projectId":"...","client_id":"...","client_secret":"..."}'
-                      style="font-family:var(--font-mono);font-size:11px"></textarea>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:8px">
-            <button class="btn btn--primary btn--sm" id="btn-firebase-save" style="flex:1">Validate & Connect</button>
-            <button class="btn btn--secondary btn--sm" id="btn-firebase-cancel">Cancel</button>
-          </div>
-          <div id="firebase-setup-status" style="display:none;margin-top:8px;font-size:11px;padding:6px 10px;border-radius:var(--radius-sm)"></div>
-        </div>
-
-        <!-- Connected state -->
-        <div id="firebase-connected" style="display:none">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-            <span style="width:8px;height:8px;border-radius:50%;background:var(--color-success)"></span>
-            <span id="firebase-email" style="font-size:12px;color:var(--color-text-muted)"></span>
-          </div>
-          <div style="font-size:11px;color:var(--color-text-subtle);margin-bottom:8px">
-            Project: <code id="firebase-project-id"></code>
-          </div>
-          <a href="/dashboard/cloud" target="_blank" class="btn btn--accent btn--sm" style="width:100%;text-align:center;margin-bottom:8px;text-decoration:none;display:block">
-            Open Cloud Dashboard
-          </a>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn--secondary btn--sm" id="btn-firebase-export-dashboard">Export Dashboard HTML</button>
-            <button class="btn btn--secondary btn--sm" id="btn-firebase-logout">Logout</button>
-            <button class="btn btn--secondary btn--sm" id="btn-firebase-remove" style="color:var(--color-danger)">Remove</button>
-          </div>
-        </div>
       </div>
     </div>
   </div>
