@@ -4,6 +4,8 @@ import { SSEClient } from '/static/js/core/sse.js';
 import { apiPost }   from '/static/js/core/api.js';
 import { toast }     from '/static/js/core/toast.js';
 import { play }      from '/static/js/core/sounds.js';
+import { appendLog, clearLog, switchLogView, toggleTag, setAutoScroll, getAutoScroll } from '/static/js/pages/run-log.js';
+import { openSettings, closeSettings, collectSettings, populateSettings, saveSettings, refreshFirebaseUI, showSetupStatus } from '/static/js/pages/run-settings.js';
 
 const $ = id => document.getElementById(id);
 const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -28,11 +30,7 @@ let _currentStep = 0;
 let _planTasks = [];
 let _planFile = '';
 let _progressTasks = [];
-let _lineCount = 0;
-let _autoScroll = true;
-let _logView = 'parsed';
-let _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, aider: 0, info: 0 };
-let _hiddenTags = new Set();
+// Log state + settings now in run-log.js and run-settings.js
 
 // ── Wizard Navigation ────────────────────────────────────────────────────────
 
@@ -99,7 +97,7 @@ async function generatePlan() {
 
   try {
     // Save settings first
-    const settings = collectSettings();
+    const settings = collectSettings(_planFile);
     settings.goal = goal;
     await apiPost('/api/settings', settings);
 
@@ -167,7 +165,7 @@ async function runPreflight() {
   if (!wrap || !list) return;
 
   try {
-    const settings = collectSettings();
+    const settings = collectSettings(_planFile);
     settings.plan_file = _planFile;
     const data = await apiPost('/api/run/preflight', settings);
     const checks = data.checks || [];
@@ -192,7 +190,7 @@ async function runPreflight() {
 // ── Step 3: Launch Run ───────────────────────────────────────────────────────
 
 async function launchRun() {
-  const settings = collectSettings();
+  const settings = collectSettings(_planFile);
   settings.plan_file = _planFile;
   if (!settings.repo_root) { toast('Set project folder in Settings.', 'warning'); return; }
   if (!_planFile) { toast('No plan file. Generate a plan first.', 'warning'); return; }
@@ -218,7 +216,7 @@ async function launchRun() {
 }
 
 async function resumeRun() {
-  const settings = collectSettings();
+  const settings = collectSettings(_planFile);
   settings.plan_file = _planFile;
   if (!_planFile) {
     try {
@@ -295,109 +293,7 @@ function showDone(success, detail) {
   overlay.style.display = '';
 }
 
-// ── Log ──────────────────────────────────────────────────────────────────────
-
-function appendLog(rawLine) {
-  const terminal = $('log-terminal');
-  if (terminal) {
-    const span = document.createElement('span');
-    let cls = '';
-    if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(rawLine)) cls = 'log-error';
-    else if (/\|\s*WARNING\s*\|/.test(rawLine)) cls = 'log-warn';
-    else if (/supervisor approved/.test(rawLine)) cls = 'log-ok';
-    else if (/Bridge start|plan_ready/.test(rawLine)) cls = 'log-info';
-    if (cls) span.className = cls;
-    span.textContent = rawLine + '\n';
-    terminal.appendChild(span);
-    if (_logView === 'raw' && _autoScroll) terminal.scrollTop = terminal.scrollHeight;
-  }
-
-  _lineCount++;
-  const countEl = $('log-line-count');
-  if (countEl) countEl.textContent = `${_lineCount} lines`;
-
-  const parsed = _parseLine(rawLine);
-  if (parsed) _appendParsedEvent(parsed);
-}
-
-function clearLog() {
-  _lineCount = 0;
-  const countEl = $('log-line-count');
-  if (countEl) countEl.textContent = '0 lines';
-  const terminal = $('log-terminal');
-  if (terminal) terminal.innerHTML = '';
-  const parsed = $('log-parsed');
-  if (parsed) { parsed.querySelectorAll('.parsed-event').forEach(e => e.remove()); const pe = $('log-parsed-empty'); if (pe) pe.style.display = ''; }
-  _tagCounts = { task: 0, review: 0, error: 0, warning: 0, bridge: 0, proxy: 0, aider: 0, info: 0 };
-  Object.keys(_tagCounts).forEach(tag => { const el = $(`tag-count-${tag}`); if (el) el.textContent = '0'; });
-}
-
-function _switchLogView(view) {
-  _logView = view;
-  $('btn-log-parsed')?.classList.toggle('--active', view === 'parsed');
-  $('btn-log-raw')?.classList.toggle('--active', view === 'raw');
-  const p = $('log-parsed'); if (p) p.style.display = view === 'parsed' ? '' : 'none';
-  const r = $('log-terminal'); if (r) r.style.display = view === 'raw' ? '' : 'none';
-  const t = $('log-tag-bar'); if (t) t.style.display = view === 'parsed' ? '' : 'none';
-}
-
-function _toggleTag(tag) {
-  if (_hiddenTags.has(tag)) _hiddenTags.delete(tag); else _hiddenTags.add(tag);
-  document.querySelectorAll('.log-tag').forEach(btn => btn.classList.toggle('--active', !_hiddenTags.has(btn.dataset.tag)));
-  $('log-parsed')?.querySelectorAll('.parsed-event').forEach(ev => { ev.dataset.hidden = _hiddenTags.has(ev.dataset.tag) ? 'true' : 'false'; });
-}
-
-// ── Parsed Log ───────────────────────────────────────────────────────────────
-
-function _parseLine(rawLine) {
-  const tsMatch = rawLine.match(/(\d{2}:\d{2}:\d{2})/);
-  const time = tsMatch ? tsMatch[1] : '';
-  const line = rawLine;
-  if (line.trim().startsWith('{"_bridge_event"')) return null;
-
-  const I = (c) => `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="${c}" width="12" height="12">`;
-  const icons = {
-    play: `${I('var(--color-accent)')}<path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>`,
-    check: `${I('var(--color-success)')}<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>`,
-    warn: `${I('var(--color-warning)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
-    error: `${I('var(--color-danger)')}<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>`,
-    info: `${I('var(--color-info)')}<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>`,
-  };
-
-  let m;
-  m = line.match(/Task\s+(\d+)\s*[—-]\s*attempt\s+(\d+)\/(\d+)\s*[—-]\s*files:\s*(.+)/);
-  if (m) return { time, tag: 'task', cls: '--task', label: `Task ${m[1]}`, text: `Attempt ${m[2]}/${m[3]} — ${m[4].trim()}`, icon: icons.play };
-
-  if (/supervisor approved|auto-approved/.test(line)) { m = line.match(/Task\s+(\d+)/); return { time, tag: 'review', cls: '--review', label: m ? `Task ${m[1]} Approved` : 'Approved', text: '', icon: icons.check }; }
-
-  m = line.match(/supervisor requested rework[^:]*:\s*(.+)/);
-  if (m) return { time, tag: 'review', cls: '--warning', label: 'Rework', text: m[1], icon: icons.warn };
-
-  if (/\|\s*(ERROR|CRITICAL)\s*\|/.test(line)) return { time, tag: 'error', cls: '--error', label: 'Error', text: line.replace(/.*\|\s*(ERROR|CRITICAL)\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.error };
-  if (/\|\s*WARNING\s*\|/.test(line)) return { time, tag: 'warning', cls: '--warning', label: 'Warning', text: line.replace(/.*\|\s*WARNING\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.warn };
-  if (/Bridge start|Plan ready|Pre-flight|Loaded.*task|Project knowledge/.test(line)) return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), icon: icons.info };
-  if (/\[proxy\]/.test(line)) return { time, tag: 'proxy', cls: '--proxy', label: 'Proxy', text: line.replace(/.*\[proxy\]\s*/, ''), icon: icons.info };
-  if (/\[bridge\]/.test(line)) return { time, tag: 'bridge', cls: '--info', label: 'Bridge', text: line.replace(/.*\[bridge\]\s*/, ''), icon: icons.info };
-  if (/\[aider\]/.test(line)) return { time, tag: 'aider', cls: '--task', label: 'Aider', text: line.replace(/.*\[aider\]:\s*/, ''), icon: icons.play };
-  if (/Git readiness|gitignore|Rollback point|undo all changes/.test(line)) return null;
-  if (/\|\s*INFO\s*\|/.test(line)) return { time, tag: 'info', cls: '--info', label: '', text: line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), icon: '' };
-  return null;
-}
-
-function _appendParsedEvent(p) {
-  const container = $('log-parsed');
-  if (!container) return;
-  const emptyEl = $('log-parsed-empty');
-  if (emptyEl) emptyEl.style.display = 'none';
-  if (p.tag) { _tagCounts[p.tag] = (_tagCounts[p.tag] || 0) + 1; const el = $(`tag-count-${p.tag}`); if (el) el.textContent = _tagCounts[p.tag]; }
-  const div = document.createElement('div');
-  div.className = `parsed-event ${p.cls}`;
-  div.dataset.tag = p.tag || '';
-  if (_hiddenTags.has(p.tag)) div.dataset.hidden = 'true';
-  div.innerHTML = `<span class="parsed-time">${_esc(p.time)}</span><span class="parsed-icon">${p.icon}</span><span class="parsed-content">${p.label ? `<span class="parsed-label">${_esc(p.label)}</span>` : ''}${_esc(p.text)}</span><span class="parsed-tag">${_esc(p.tag)}</span>`;
-  container.appendChild(div);
-  if (_autoScroll) container.scrollTop = container.scrollHeight;
-}
+// Log functions imported from run-log.js: appendLog, clearLog, switchLogView, toggleTag
 
 // ── Task Progress ────────────────────────────────────────────────────────────
 
@@ -461,81 +357,7 @@ function _sendNotification(title, body) {
   }
 }
 
-// ── Settings ─────────────────────────────────────────────────────────────────
-
-function openSettings() { $('settings-overlay').style.display = ''; refreshFirebaseUI(); }
-function closeSettings() { $('settings-overlay').style.display = 'none'; saveSettings(); }
-
-async function refreshFirebaseUI() {
-  try {
-    const status = await fetch('/api/firebase/status').then(r => r.json());
-    const notSetup = $('firebase-not-setup');
-    const wizard = $('firebase-wizard');
-    const connected = $('firebase-connected');
-    if (status.configured && status.authenticated) {
-      if (notSetup) notSetup.style.display = 'none';
-      if (wizard) wizard.style.display = 'none';
-      if (connected) {
-        connected.style.display = '';
-        $('firebase-email').textContent = status.email || '';
-        $('firebase-project-id').textContent = status.project_id || '';
-      }
-    } else if (status.configured) {
-      if (notSetup) notSetup.style.display = 'none';
-      if (wizard) wizard.style.display = '';
-      if (connected) connected.style.display = 'none';
-    } else {
-      if (notSetup) notSetup.style.display = '';
-      if (wizard) wizard.style.display = 'none';
-      if (connected) connected.style.display = 'none';
-    }
-  } catch (_) {}
-}
-
-function _showSetupStatus(el, msg, success) {
-  if (!el) return;
-  el.style.display = '';
-  el.style.background = success ? 'color-mix(in srgb, var(--color-success) 10%, transparent)' : 'color-mix(in srgb, var(--color-danger) 10%, transparent)';
-  el.style.color = success ? 'var(--color-success)' : 'var(--color-danger)';
-  el.textContent = msg;
-}
-
-function collectSettings() {
-  const sup = document.querySelector('input[name="supervisor"]:checked')?.value || 'claude';
-  return {
-    repo_root: $('f-repo-root')?.value?.trim() || '',
-    aider_model: $('f-aider-model')?.value?.trim() || '',
-    supervisor: sup,
-    manual_supervisor: true,
-    supervisor_command: sup === 'custom' ? $('f-supervisor-command')?.value?.trim() || '' : '',
-    validation_command: $('f-validation-cmd')?.value?.trim() || '',
-    task_timeout: parseInt($('f-task-timeout')?.value || '600', 10),
-    max_task_retries: parseInt($('f-max-retries')?.value || '10', 10),
-    dry_run: $('f-dry-run')?.checked || false,
-    model_lock: $('f-model-lock')?.checked || false,
-    auto_commit: ($('sb-auto-commit')?.checked !== false),
-    goal: $('wiz-goal')?.value?.trim() || '',
-    plan_file: _planFile,
-  };
-}
-
-function populateSettings(s) {
-  if ($('f-repo-root')) $('f-repo-root').value = s.repo_root || '';
-  if ($('f-aider-model')) $('f-aider-model').value = s.aider_model || '';
-  const sup = s.supervisor || 'claude';
-  const radio = document.querySelector(`input[name="supervisor"][value="${sup}"]`);
-  if (radio) radio.checked = true;
-  if ($('f-supervisor-command')) { $('f-supervisor-command').value = s.supervisor_command || ''; $('f-supervisor-command').style.display = sup === 'custom' ? '' : 'none'; }
-  if ($('f-validation-cmd')) $('f-validation-cmd').value = s.validation_command || '';
-  if ($('f-task-timeout')) $('f-task-timeout').value = s.task_timeout || 600;
-  if ($('f-max-retries')) $('f-max-retries').value = s.max_task_retries || 10;
-  if ($('f-dry-run')) $('f-dry-run').checked = !!s.dry_run;
-  if ($('f-model-lock')) $('f-model-lock').checked = !!s.model_lock;
-}
-
-async function saveSettings() {
-  try { await apiPost('/api/settings', collectSettings()); } catch (_) {}
-}
+// Settings functions imported from run-settings.js: openSettings, closeSettings, collectSettings, etc.
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -552,7 +374,7 @@ function bindControls() {
   $('wiz-btn-copy-prompt')?.addEventListener('click', async () => {
     const goal = ($('wiz-goal')?.value || '').trim();
     if (!goal) { toast('Enter a goal first.', 'warning'); return; }
-    const settings = collectSettings();
+    const settings = collectSettings(_planFile);
     try {
       const res = await apiPost('/api/run/nl/plan/prompt', {
         goal, repo_root: settings.repo_root, brief: { goal },
@@ -605,10 +427,10 @@ function bindControls() {
     }
     goToStep(1);
   });
-  $('btn-log-parsed')?.addEventListener('click', () => _switchLogView('parsed'));
-  $('btn-log-raw')?.addEventListener('click', () => _switchLogView('raw'));
-  document.querySelectorAll('.log-tag').forEach(btn => btn.addEventListener('click', () => _toggleTag(btn.dataset.tag)));
-  $('log-autoscroll')?.addEventListener('change', e => { _autoScroll = e.target.checked; });
+  $('btn-log-parsed')?.addEventListener('click', () => switchLogView('parsed'));
+  $('btn-log-raw')?.addEventListener('click', () => switchLogView('raw'));
+  document.querySelectorAll('.log-tag').forEach(btn => btn.addEventListener('click', () => toggleTag(btn.dataset.tag)));
+  $('log-autoscroll')?.addEventListener('change', e => { setAutoScroll(e.target.checked); });
   $('btn-log-send')?.addEventListener('click', async () => {
     const input = $('log-stdin-input'); if (!input?.value?.trim()) return;
     try { await apiPost('/api/run/input', { text: input.value.trim() }); input.value = ''; } catch (_) {}
@@ -620,7 +442,7 @@ function bindControls() {
   $('wiz-btn-view-log')?.addEventListener('click', () => { $('wiz-done-overlay').style.display = 'none'; });
 
   // Settings panel
-  $('wiz-btn-close-settings')?.addEventListener('click', closeSettings);
+  $('wiz-btn-close-settings')?.addEventListener('click', () => closeSettings(() => _planFile));
 
   // Per-user Firebase setup
   $('btn-firebase-wizard')?.addEventListener('click', () => {
@@ -639,18 +461,18 @@ function bindControls() {
       const config = JSON.parse(raw);
       // Save config
       const saveRes = await apiPost('/api/firebase/setup', config);
-      if (saveRes.error) { _showSetupStatus(statusEl, saveRes.error, false); return; }
+      if (saveRes.error) { showSetupStatus(statusEl, saveRes.error, false); return; }
       // Test connection
       const testRes = await apiPost('/api/firebase/test', {});
-      if (!testRes.ok) { _showSetupStatus(statusEl, testRes.error || 'Connection failed', false); return; }
+      if (!testRes.ok) { showSetupStatus(statusEl, testRes.error || 'Connection failed', false); return; }
       // Login
-      _showSetupStatus(statusEl, 'Connecting... (browser will open for Google login)', true);
+      showSetupStatus(statusEl, 'Connecting... (browser will open for Google login)', true);
       const loginRes = await apiPost('/api/firebase/login', {});
-      if (loginRes.error) { _showSetupStatus(statusEl, loginRes.error, false); return; }
-      _showSetupStatus(statusEl, 'Connected! Email: ' + loginRes.email, true);
+      if (loginRes.error) { showSetupStatus(statusEl, loginRes.error, false); return; }
+      showSetupStatus(statusEl, 'Connected! Email: ' + loginRes.email, true);
       setTimeout(refreshFirebaseUI, 1000);
     } catch (ex) {
-      _showSetupStatus(statusEl, 'Invalid JSON: ' + ex.message, false);
+      showSetupStatus(statusEl, 'Invalid JSON: ' + ex.message, false);
     }
   });
   $('btn-firebase-logout')?.addEventListener('click', async () => {
@@ -665,7 +487,7 @@ function bindControls() {
     await fetch('/api/firebase/clear', { method: 'POST' });
     refreshFirebaseUI();
   });
-  $('settings-overlay')?.addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
+  $('settings-overlay')?.addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(() => _planFile); });
   $('btn-browse-folder')?.addEventListener('click', async () => {
     try { const d = await fetch('/api/browse/folder').then(r => r.json()); if (d.path) $('f-repo-root').value = d.path; } catch (_) {}
   });
