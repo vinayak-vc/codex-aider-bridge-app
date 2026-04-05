@@ -251,7 +251,7 @@ class AiderRunner:
     # Threshold: files under this many lines use 'whole' format (model rewrites
     # entire file — no SEARCH/REPLACE matching needed).  Above this, use 'diff'
     # which requires exact line matching but is much faster for large files.
-    _WHOLE_FORMAT_LINE_THRESHOLD = 200
+    _WHOLE_FORMAT_LINE_THRESHOLD = 2000
 
     def _pick_edit_format(self, file_paths: list[Path]) -> str:
         """Choose edit format based on total target file size.
