@@ -19,11 +19,10 @@ from context.project_understanding import ensure_project_understanding, understa
 from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
-from models.task import AiderContext, BridgeConfig, ExecutionResult, Task, TaskReport
+from models.task import AiderContext, BridgeConfig, ExecutionResult, SubTask, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
-from models.task import SubTask
 from utils.manual_supervisor import ManualSupervisorError, ManualSupervisorSession
 from utils.token_tracker import TokenTracker, save_session_to_log
 from utils.report_generator import generate_run_report
@@ -438,75 +437,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_plan_from_file(plan_file: Path, parser: TaskParser) -> list[Task]:
-    raw = plan_file.read_text(encoding="utf-8")
-    return parser.parse(raw)
+# ── Planning — delegated to planning/plan_manager.py ─────────────────────────
+from planning.plan_manager import (
+    load_plan_from_file,
+    auto_split_tasks,
+    get_installed_models_for_routing as _get_installed_models_for_routing,
+    build_model_roster_text as _build_model_roster_text,
+    build_feature_manifest as _build_feature_manifest,
+    obtain_plan,
+    show_plan_preview,
+    enforce_workflow_profile as _enforce_workflow_profile,
+)
 
 
-def auto_split_tasks(
-    tasks: list[Task],
-    threshold: int,
-    logger: logging.Logger,
-) -> list[Task]:
-    """Split tasks that target >= threshold files into individual single-file sub-tasks.
-
-    Each sub-task keeps the full original instruction (so Aider retains cross-file
-    context) plus a one-line focus directive at the top:
-
-        Focus ONLY on Assets/Scripts/Core/PlayerController.cs.
-        Do NOT create or modify any other file.
-
-        [original instruction follows]
-
-    This prevents small models (7B/13B) from editing the wrong file or producing
-    partial implementations across multiple files in a single Aider run.
-
-    Sub-task ID scheme: original_id * 1000 + 1-based index.
-    Example: task 5 with 3 files → sub-tasks 5001, 5002, 5003.
-
-    Tasks with fewer than threshold files are passed through unchanged.
-    context_files are preserved on every sub-task so read-only references
-    remain available.
-    """
-    if threshold <= 0:
-        return tasks
-
-    result: list[Task] = []
-    for task in tasks:
-        if len(task.files) < threshold:
-            result.append(task)
-            continue
-
-        logger.info(
-            "Auto-split: task %s has %d file(s) (threshold=%d) → %d single-file sub-tasks",
-            task.id,
-            len(task.files),
-            threshold,
-            len(task.files),
-        )
-        for index, file_path in enumerate(task.files, start=1):
-            focus_prefix = (
-                f"Focus ONLY on {file_path}.\n"
-                f"Do NOT create or modify any other file.\n\n"
-            )
-            result.append(
-                Task(
-                    id=task.id * 1000 + index,
-                    files=[file_path],
-                    instruction=focus_prefix + task.instruction,
-                    type=task.type,
-                    context_files=task.context_files,
-                    must_exist=task.must_exist,
-                    must_not_exist=task.must_not_exist,
-                )
-            )
-
-    return result
 
 
-# ── Smart model routing ──────────────────────────────────────────────────────
+# NOTE: The functions below are legacy copies — the active versions are
+# imported from planning/plan_manager.py above.  These will be removed
+# in a future cleanup pass.
 
-def _get_installed_models_for_routing(
+
+def _get_installed_models_for_routing_LEGACY(
     logger: logging.Logger,
 ) -> list[dict]:
     """Get installed Ollama models with quality/speed metadata.
@@ -1829,228 +1780,23 @@ def estimate_session_tokens(
 _WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
-def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git"] + args,
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        timeout=30,
-        creationflags=_WIN_NO_WINDOW,
-    )
+# ── Git operations — delegated to utils/git_manager.py ───────────────────────
+from utils.git_manager import (
+    run_git_command as _run_git_command,
+    is_git_repository as _is_git_repository,
+    has_git_head as _has_git_head,
+    get_git_branch_name as _get_git_branch_name,
+    collect_git_readiness as _collect_git_readiness,
+    log_git_readiness_preview as _log_git_readiness_preview,
+    prompt_for_git_repo_creation as _prompt_for_git_repo_creation,
+    ensure_git_repository_exists as _ensure_git_repository_exists,
+    ensure_git_baseline_commit as _ensure_git_baseline_commit,
+    auto_commit_task_changes as _auto_commit_task_changes,
+)
 
 
-def _is_git_repository(repo_root: Path) -> bool:
-    result = _run_git_command(repo_root, ["rev-parse", "--is-inside-work-tree"])
-    return result.returncode == 0 and result.stdout.strip().lower() == "true"
 
 
-def _has_git_head(repo_root: Path) -> bool:
-    result = _run_git_command(repo_root, ["rev-parse", "--verify", "HEAD"])
-    return result.returncode == 0
-
-
-def _get_git_branch_name(repo_root: Path) -> Optional[str]:
-    result = _run_git_command(repo_root, ["branch", "--show-current"])
-    if result.returncode != 0:
-        return None
-    branch = result.stdout.strip()
-    return branch or None
-
-
-def _collect_git_readiness(repo_root: Path) -> dict[str, object]:
-    is_git = _is_git_repository(repo_root)
-    has_head = _has_git_head(repo_root) if is_git else False
-    branch = _get_git_branch_name(repo_root) if is_git else None
-
-    staged_count = 0
-    unstaged_count = 0
-    untracked_count = 0
-    clean = False
-
-    if is_git:
-        status_result = _run_git_command(repo_root, ["status", "--porcelain"])
-        if status_result.returncode == 0:
-            lines = [line for line in status_result.stdout.splitlines() if line.strip()]
-            for line in lines:
-                if line.startswith("??"):
-                    untracked_count += 1
-                    continue
-                if len(line) >= 2:
-                    if line[0] != " ":
-                        staged_count += 1
-                    if line[1] != " ":
-                        unstaged_count += 1
-            clean = len(lines) == 0
-
-    next_action = "continue"
-    if not is_git:
-        next_action = "prompt_to_create_or_stop"
-    elif not has_head:
-        next_action = "create_baseline_commit"
-
-    return {
-        "is_git_repository": is_git,
-        "has_head": has_head,
-        "branch": branch,
-        "clean_worktree": clean,
-        "staged_changes": staged_count,
-        "unstaged_changes": unstaged_count,
-        "untracked_files": untracked_count,
-        "next_action": next_action,
-    }
-
-
-def _log_git_readiness_preview(repo_root: Path, logger: logging.Logger) -> dict[str, object]:
-    readiness = _collect_git_readiness(repo_root)
-    branch = readiness.get("branch") or "(none)"
-    logger.info(
-        "Git readiness — repo=%s, head=%s, branch=%s, clean=%s, staged=%s, unstaged=%s, untracked=%s, next=%s",
-        "yes" if readiness["is_git_repository"] else "no",
-        "yes" if readiness["has_head"] else "no",
-        branch,
-        "yes" if readiness["clean_worktree"] else "no",
-        readiness["staged_changes"],
-        readiness["unstaged_changes"],
-        readiness["untracked_files"],
-        readiness["next_action"],
-    )
-    return readiness
-
-
-def _prompt_for_git_repo_creation(repo_root: Path) -> bool:
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            f"Repo root is not a git repository: {repo_root}. "
-            "The bridge requires a git repository with at least one commit before it can run. "
-            "Create the repository yourself, or rerun interactively and let the bridge do it for you."
-        )
-
-    print()
-    print(f"Target project is not a git repository: {repo_root}")
-    print("The bridge will not run without git because diff-based review depends on it.")
-    print("Choose one:")
-    print("  [1] I will create the git repository myself and rerun the bridge")
-    print("  [2] Create a local git repository and baseline commit for me now")
-
-    while True:
-        try:
-            answer = input("Select 1 or 2: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            raise RuntimeError(
-                "Bridge cancelled. The target project must be a git repository before the run can continue."
-            )
-
-        if answer in {"1", "self", "manual"}:
-            raise RuntimeError(
-                "Bridge stopped. Create the git repository yourself and rerun when it is ready."
-            )
-        if answer in {"2", "bridge", "auto"}:
-            return True
-
-        print("Please enter 1 or 2.")
-
-
-def _ensure_git_repository_exists(repo_root: Path, logger: logging.Logger) -> None:
-    if _is_git_repository(repo_root):
-        return
-
-    logger.warning("Pre-flight: %s is not a git repository.", repo_root)
-    should_create = _prompt_for_git_repo_creation(repo_root)
-    if not should_create:
-        raise RuntimeError(
-            "Bridge stopped. The target project must be a git repository before the run can continue."
-        )
-
-    logger.info("Initialising local git repository at %s", repo_root)
-    init_result = _run_git_command(repo_root, ["init"])
-    if init_result.returncode != 0:
-        raise RuntimeError(
-            "Failed to initialise git repository at "
-            f"{repo_root}: {init_result.stderr.strip() or init_result.stdout.strip()}"
-        )
-
-    logger.info("Local git repository created at %s", repo_root)
-
-
-def _ensure_git_baseline_commit(repo_root: Path, logger: logging.Logger) -> None:
-    if _has_git_head(repo_root):
-        return
-
-    logger.info("Pre-flight: repository at %s has no commits yet. Creating baseline commit.", repo_root)
-
-    add_result = _run_git_command(repo_root, ["add", "-A"])
-    if add_result.returncode != 0:
-        raise RuntimeError(
-            "Failed to stage files for the initial git commit: "
-            f"{add_result.stderr.strip() or add_result.stdout.strip()}"
-        )
-
-    commit_result = _run_git_command(
-        repo_root,
-        ["commit", "--allow-empty", "-m", "Initial bridge baseline"],
-    )
-    if commit_result.returncode != 0:
-        output = commit_result.stderr.strip() or commit_result.stdout.strip()
-        raise RuntimeError(
-            "Failed to create the initial git commit required by the bridge: "
-            f"{output}"
-        )
-
-    logger.info("Created initial git baseline commit for %s", repo_root)
-
-
-def _auto_commit_task_changes(repo_root: Path, task: Task, logger: logging.Logger) -> Optional[str]:
-    file_args = list(task.files)
-    add_result = _run_git_command(repo_root, ["add", "-A", "--"] + file_args)
-    if add_result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to stage task {task.id} changes for auto-commit: "
-            f"{add_result.stderr.strip() or add_result.stdout.strip()}"
-        )
-
-    diff_result = _run_git_command(repo_root, ["diff", "--cached", "--name-only", "--"] + file_args)
-    if diff_result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to inspect staged changes for task {task.id}: "
-            f"{diff_result.stderr.strip() or diff_result.stdout.strip()}"
-        )
-
-    staged_files = [line.strip() for line in diff_result.stdout.splitlines() if line.strip()]
-    if not staged_files:
-        logger.info("Task %s: no staged file changes to auto-commit.", task.id)
-        return None
-
-    commit_message = f"bridge: task {task.id} {task.type} " + ", ".join(task.files[:2])
-    if len(task.files) > 2:
-        commit_message += " ..."
-
-    commit_result = _run_git_command(repo_root, ["commit", "-m", commit_message])
-    if commit_result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to auto-commit task {task.id}: "
-            f"{commit_result.stderr.strip() or commit_result.stdout.strip()}"
-        )
-
-    head_result = _run_git_command(repo_root, ["rev-parse", "--short", "HEAD"])
-    if head_result.returncode != 0:
-        raise RuntimeError(
-            f"Task {task.id} committed, but the new HEAD could not be resolved: "
-            f"{head_result.stderr.strip() or head_result.stdout.strip()}"
-        )
-
-    commit_sha = head_result.stdout.strip()
-    logger.info(
-        "Task %s: auto-committed %d file(s) at %s",
-        task.id,
-        len(staged_files),
-        commit_sha,
-    )
-    return commit_sha
 
 
 def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
