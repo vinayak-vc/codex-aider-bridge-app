@@ -499,12 +499,16 @@ class SupervisorAgent:
             )
 
             if returncode != 0:
+                print(f"[SUPERVISOR] stdout: {stdout.strip()[:500]}", flush=True)
+                print(f"[SUPERVISOR] stderr: {stderr.strip()[:500]}", flush=True)
                 self._logger.error(
-                    "Supervisor stderr: %s", stderr.strip()[:500],
+                    "Supervisor exited %d. stdout: %s | stderr: %s",
+                    returncode, stdout.strip()[:300], stderr.strip()[:300],
                 )
                 raise SupervisorError(
                     f"Supervisor exited with code {returncode}. "
-                    f"Stderr: {stderr.strip()[:500]}"
+                    f"stdout: {stdout.strip()[:200]} | "
+                    f"Stderr: {stderr.strip()[:200]}"
                 )
 
             if output_file.exists():

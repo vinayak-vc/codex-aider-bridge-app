@@ -1443,7 +1443,7 @@ def _classify_goal(goal: str) -> str:
     ]
     if any(kw in lower for kw in read_keywords):
         # But some "find" goals actually want fixes
-        fix_signals = ["fix", "repair", "resolve", "patch", "update", "change", "add", "create", "implement"]
+        fix_signals = ["fix", "repair", "resolve", "patch", "update", "change", "add", "create", "implement", "implemen", "build", "refactor", "develop", "write"]
         if not any(fs in lower for fs in fix_signals):
             return "read"
 
