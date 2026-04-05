@@ -130,6 +130,12 @@ class TaskParser:
             else:
                 raise PlanParseError("Task 'id' must be an integer.")
 
+        # Coerce files: string → [string], None → []
+        if isinstance(files, str) and files.strip():
+            files = [files.strip()]
+        elif files is None:
+            files = []
+
         # Fix #6: allow empty files array — Aider will use repo-map to pick files.
         if not isinstance(files, list):
             raise PlanParseError(f"Task {task_id} 'files' must be an array.")
