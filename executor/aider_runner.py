@@ -246,6 +246,43 @@ class AiderRunner:
         estimated_output_tokens = (total_chars / 4) * 0.20
         return max(60, int(estimated_output_tokens / 6) + 30)  # min 60s, +30s overhead
 
+    # ── Smart edit format selection ────────────────────────────────────────
+
+    # Threshold: files under this many lines use 'whole' format (model rewrites
+    # entire file — no SEARCH/REPLACE matching needed).  Above this, use 'diff'
+    # which requires exact line matching but is much faster for large files.
+    _WHOLE_FORMAT_LINE_THRESHOLD = 200
+
+    def _pick_edit_format(self, file_paths: list[Path]) -> str:
+        """Choose edit format based on total target file size.
+
+        - 'whole': model outputs the complete file.  Avoids SEARCH/REPLACE
+          mismatch errors that plague small models (7b/14b) which hallucinate
+          indentation and code structure.  Fast enough for files < 200 lines.
+        - 'diff': model outputs only changed lines via SEARCH/REPLACE blocks.
+          Required for large files to stay within timeout.
+        """
+        total_lines = 0
+        for p in file_paths:
+            try:
+                if p.exists():
+                    total_lines += sum(1 for _ in p.open(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+
+        if total_lines <= self._WHOLE_FORMAT_LINE_THRESHOLD:
+            self._logger.info(
+                "Edit format: whole (%d lines total — under %d threshold)",
+                total_lines, self._WHOLE_FORMAT_LINE_THRESHOLD,
+            )
+            return "whole"
+
+        self._logger.info(
+            "Edit format: diff (%d lines total — above %d threshold)",
+            total_lines, self._WHOLE_FORMAT_LINE_THRESHOLD,
+        )
+        return "diff"
+
     # ── Core subprocess execution ────────────────────────────────────────
 
     def _execute_aider(
@@ -665,7 +702,7 @@ class AiderRunner:
             "--no-detect-urls",          # suppress URL detection warnings
             "--no-suggest-shell-commands",  # prevent shell command suggestions
             "--timeout", str(self._timeout + 60),  # LLM request timeout > bridge timeout
-            "--edit-format", "diff",     # LLM outputs only changed lines (5-10× faster)
+            "--edit-format", self._pick_edit_format(file_paths),
             "--map-refresh", "manual",   # Don't re-scan repo mid-task
             "--message",
             self._build_message(task, aider_context, file_paths),
