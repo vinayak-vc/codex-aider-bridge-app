@@ -904,13 +904,45 @@ def execute_task_with_review(
                     current_task.id, current_task.type, ", ".join(missing),
                 )
 
+        # ── Direct execution for tiny tasks ──────────────────────────────────
+        # If a task has type "direct" and includes a `code` block in the
+        # instruction (fenced with ```), the bridge writes the file directly
+        # without invoking Aider. This saves all local LLM tokens and time.
+        _direct_executed = False
+        if current_task.type == "direct" and len(current_task.files) == 1:
+            import re as _re_direct
+            code_match = _re_direct.search(
+                r'```\w*\n(.*?)```',
+                current_instruction,
+                _re_direct.DOTALL,
+            )
+            if code_match:
+                target_path = config.repo_root / current_task.files[0]
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(code_match.group(1), encoding="utf-8")
+                logger.info(
+                    "Task %s: direct write to %s (%d chars) — Aider bypassed",
+                    current_task.id, current_task.files[0], len(code_match.group(1)),
+                )
+                execution_result = ExecutionResult(
+                    task_id=current_task.id,
+                    succeeded=True,
+                    exit_code=0,
+                    stdout=f"Direct write: {current_task.files[0]}",
+                    stderr="",
+                    command=["direct-write"],
+                    duration_seconds=0.0,
+                )
+                _direct_executed = True
+
         # ── Step 1: Execute via Aider ────────────────────────────────────────
-        if diagnostics:
-            diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
-        execution_result = runner.run(
-            current_task, selected_files.all_paths, aider_context,
-            model_override=model_override,
-        )
+        if not _direct_executed:
+            if diagnostics:
+                diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
+            execution_result = runner.run(
+                current_task, selected_files.all_paths, aider_context,
+                model_override=model_override,
+            )
 
         if execution_result.exit_code == -1:
             stderr = execution_result.stderr
