@@ -48,7 +48,9 @@
       "Read(//h/Vinayak_Project/WorkProjectBridge/codex-aider-bridge-app/utils/**)",
       "Read(//h/Vinayak_Project/WorkProjectBridge/codex-aider-bridge-app/**)",
       "Bash(python -m pytest tests/test_bridge_resilience.py -v)",
-      "Bash(python -m unittest tests.test_bridge_resilience -v)"
+      "Bash(python -m unittest tests.test_bridge_resilience -v)",
+      "WebFetch(domain:127.0.0.1)",
+      "WebFetch(domain:localhost)"
     ]
   }
 }
