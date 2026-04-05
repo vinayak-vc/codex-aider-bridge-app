@@ -50,8 +50,10 @@ app.config["JSON_SORT_KEYS"] = False
 # Register blueprints — extracted API route groups
 from ui.api.git_routes import git_bp
 from ui.api.system_routes import system_bp
+from ui.api.firebase_routes import firebase_bp
 app.register_blueprint(git_bp)
 app.register_blueprint(system_bp)
+app.register_blueprint(firebase_bp)
 
 # Per-client SSE queue registry
 _sse_clients: list[queue.Queue] = []
