@@ -1,118 +1,120 @@
 ---
 name: build
-description: Generate a task plan, write it to disk, launch the bridge, and auto-review all tasks. Usage: /build <goal> --project <path>
+description: Smart builder — tiny tasks done directly, medium/large via bridge+Aider. Usage: /build <goal> --project <path>
 command: build
 ---
 
-# /build — Automated Bridge Runner
+# /build — Smart Automated Builder
 
-When the user says `/build <goal>` or "build X", execute this full workflow:
+When the user says `/build <goal>` or "build X", execute this workflow:
 
 ## Step 1: Parse Arguments
 
-Extract from user message:
+Extract:
 - **goal**: what to build/fix/implement
 - **project**: repo root path (use `--project <path>` or ask if not provided)
-- **model**: Ollama model (default: `ollama/qwen2.5-coder:7b`)
 
-If no project path given, check current settings:
+If no project path given, check settings:
 ```
-cat <bridge_root>/ui/data/settings.json | look for repo_root
+Read <bridge_root>/ui/data/settings.json → repo_root
 ```
 
 ## Step 2: Understand the Project
 
-Read these files from the **target project** (not the bridge):
-1. `<project>/bridge_progress/project_knowledge.json` — file roles, patterns, features done
-2. `<project>/bridge_progress/LATEST_REPORT.md` — last run results (if exists)
+Read from the **target project**:
+1. `<project>/bridge_progress/project_knowledge.json`
+2. `<project>/bridge_progress/LATEST_REPORT.md` (if exists)
+3. Feature spec .md files if referenced in goal
 
-Also run the deep scanner to get code structure:
-```python
-from utils.deep_scanner import scan_project_signatures, signatures_to_context
-from pathlib import Path
-sigs = scan_project_signatures(Path("<project>"), max_files=30)
-code_ctx = signatures_to_context(sigs)
-```
+Read the actual target files that the goal mentions — use Read tool to see exact code structure.
 
-If feature specs are referenced in the goal (e.g., "from missingFeatures/"), read those .md files too.
+## Step 3: Classify & Execute Each Task
 
-## Step 3: Generate Task JSON
+For each change needed, classify and execute:
 
-Based on the project knowledge + code structure + goal, generate a task JSON following these rules:
+### TINY (1 file, < 50 lines changed, simple property/config/import)
+**→ Do it yourself. No bridge. No Aider.**
 
-- Each task targets ONE file, ONE concern
-- Instructions name exact functions, parameters, line numbers
-- Describe code structure (array literal vs function call vs property)
-- Say which VALUE to change, not the whole pattern
-- Keep instructions under 200 words each
-- Use `"model": "ollama/qwen2.5-coder:7b"` for simple tasks, `"ollama/qwen2.5-coder:14b"` for complex logic
-- Include `must_exist` for create tasks
+1. Read the file with Read tool
+2. Edit it with Edit tool (exact string replacement)
+3. Report: "Task N: done (direct edit) — added maxVideos property to uploadOptions"
+4. Move to next task immediately
 
-Write the JSON to: `<project>/taskJsons/plan_<timestamp>.json`
+Examples of tiny tasks:
+- Add a property to an object: `maxVideos: 1`
+- Change a hardcoded value: `"1"` → `String(options.maxVideos || 1)`
+- Add an import statement
+- Rename a variable
+- Toggle a boolean flag
 
-## Step 4: Launch the Bridge
+### MEDIUM (1-2 files, 50-500 lines, function-level changes)
+**→ Delegate to bridge + Ollama 7b**
 
-Run the bridge subprocess in the background:
-```bash
-cd <bridge_root>
-python main.py "<goal>" \
-  --repo-root "<project>" \
-  --plan-file "<project>/taskJsons/plan_<timestamp>.json" \
-  --manual-supervisor \
-  --aider-model "ollama/qwen2.5-coder:7b" \
-  --task-timeout 600 \
-  --max-task-retries 10 \
-  --log-level INFO
-```
+1. Write task to plan JSON with `"model": "ollama/qwen2.5-coder:7b"`
+2. Include in the bridge run
 
-Run this with `run_in_background: true` so we can monitor it.
+### LARGE (2+ files, > 500 lines, new components, complex logic)
+**→ Delegate to bridge + Ollama 14b**
 
-## Step 5: Set Up Auto-Review Cron
+1. Write task to plan JSON with `"model": "ollama/qwen2.5-coder:14b"`
+2. Include in the bridge run
 
-Create a cron job that polls every minute:
-```
-CronCreate "* * * * *":
-  Check <project>/bridge_progress/manual_supervisor/requests/ for new request files.
-  For each request without a corresponding decision:
-  1. Read the request JSON (contains task instruction + diff)
-  2. Analyze: does the diff correctly implement the task?
-  3. Write PASS or REWORK decision to decisions/ folder
+## Step 4: Execute the Plan
 
-  Decision format: {"task_id": N, "decision": "pass"}
-  or: {"task_id": N, "decision": "rework", "instruction": "specific fix..."}
+After classifying all tasks:
 
-  PASS criteria:
-  - Diff is non-empty
-  - Correct file(s) modified
-  - Changes match the task instruction intent
-  - No syntax errors visible in diff
+**If ALL tasks are tiny:**
+- Execute them all directly with Edit tool
+- No bridge needed at all
+- Report results immediately
+- Fastest path — seconds, not minutes
 
-  REWORK criteria:
-  - Empty diff (no changes made)
-  - Wrong file modified
-  - Only whitespace/comments changed
-  - Obvious logic error in diff
-```
+**If there are medium/large tasks:**
+1. Do the tiny tasks yourself first (Edit tool)
+2. Write remaining tasks to `<project>/taskJsons/plan_<timestamp>.json`
+3. Launch bridge subprocess in background:
+   ```bash
+   python main.py "<goal>" \
+     --repo-root "<project>" \
+     --plan-file "<project>/taskJsons/plan_<timestamp>.json" \
+     --manual-supervisor \
+     --aider-model "ollama/qwen2.5-coder:7b" \
+     --task-timeout 600 \
+     --max-task-retries 10
+   ```
+4. Set up auto-review cron (every minute):
+   ```
+   CronCreate "* * * * *":
+     Poll <project>/bridge_progress/manual_supervisor/requests/
+     Read each new request → analyze diff → write PASS/REWORK decision
+   ```
 
-## Step 6: Monitor & Report
+## Step 5: Report
 
-After launching, tell the user:
-- "Bridge running with N tasks. Auto-review active."
-- "Watching: <project>/bridge_progress/manual_supervisor/requests/"
-- "Open http://127.0.0.1:7823/run to see live progress (optional)"
+For direct edits:
+- "Done: edited 3 files directly (0 tokens, 2 seconds)"
 
-When the bridge finishes (background task completes), report:
-- How many tasks completed
-- Any failures
-- Total time elapsed
+For bridge tasks:
+- "Bridge running with N tasks. Tiny tasks already done."
+- Report when bridge finishes
 
-## Example Usage
+## Example
 
 User: `/build implement max-videos-control --project D:\BridgeProjectExperiment`
 
-Response:
-1. Read project knowledge → understand uploadService.js, useAppStore.js
-2. Generate 3-task plan → write to taskJsons/plan_20260405_200000.json
-3. Launch bridge subprocess → running in background
-4. Cron watcher active → auto-reviewing every 60s
-5. "Bridge running with 3 tasks. Auto-review active. I'll report when done."
+I classify:
+```
+Task 1: Add maxVideos:1 to uploadOptions → TINY (1 property add)
+  → I read useAppStore.js → Edit tool → done in 2 seconds
+
+Task 2: Change "1" to options.maxVideos in uploadService.js → TINY (2 value changes)
+  → I read uploadService.js → Edit tool twice → done in 3 seconds
+
+Task 3: Add number input + wire to store in Upload.jsx → MEDIUM (JSX + state)
+  → Delegate to bridge + 7b model
+```
+
+Result:
+- Tasks 1-2: done instantly (direct edit, $0, 0 tokens)
+- Task 3: bridge + Aider (~22 seconds, $0 Ollama)
+- Total: ~25 seconds vs ~8 minutes if all went through Aider
