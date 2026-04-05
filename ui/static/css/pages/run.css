@@ -172,6 +172,10 @@
   border-radius: var(--radius-md);
   font-size: var(--font-size-xs);
 }
+.wiz-task-item.--skipped {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
 
 .wiz-task-num {
   color: var(--color-accent);

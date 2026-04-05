@@ -144,16 +144,32 @@ function renderPlanReview() {
   const list = $('wiz-task-list');
   if (!list) return;
 
-  list.innerHTML = _planTasks.map((t, i) => `
-    <div class="wiz-task-item">
+  list.innerHTML = _planTasks.map((t, i) => {
+    const isSkipped = t.status === 'skipped';
+    return `
+    <div class="wiz-task-item${isSkipped ? ' --skipped' : ''}" data-task-index="${i}">
       <span class="wiz-task-num">${t.id || i + 1}</span>
       <div class="wiz-task-body">
         <div class="wiz-task-title">${_esc(t.instruction || t.title || 'Task ' + (i + 1))}</div>
         <div class="wiz-task-files">${_esc((t.files || []).join(', '))}</div>
       </div>
       <span class="wiz-task-type">${_esc(t.type || '?')}</span>
-    </div>
-  `).join('');
+      <button class="btn btn--secondary btn--sm wiz-skip-btn" data-index="${i}" title="${isSkipped ? 'Unskip' : 'Skip this task'}" style="padding:2px 8px;font-size:10px;opacity:0.7">
+        ${isSkipped ? '↩ unskip' : '⏭ skip'}
+      </button>
+    </div>`;
+  }).join('');
+
+  // Wire skip buttons
+  list.querySelectorAll('.wiz-skip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.index);
+      const task = _planTasks[idx];
+      if (!task) return;
+      task.status = task.status === 'skipped' ? 'pending' : 'skipped';
+      renderPlanReview();  // re-render to update UI
+    });
+  });
 
   // Run preflight
   runPreflight();
@@ -195,13 +211,15 @@ async function launchRun() {
   if (!settings.repo_root) { toast('Set project folder in Settings.', 'warning'); return; }
   if (!_planFile) { toast('No plan file. Generate a plan first.', 'warning'); return; }
 
-  // Populate progress panel from plan tasks
-  _progressTasks = _planTasks.map(t => ({ ...t, status: 'pending' }));
+  // Populate progress panel from non-skipped plan tasks
+  _progressTasks = _planTasks.filter(t => t.status !== 'skipped').map(t => ({ ...t, status: 'pending' }));
   renderProgressPanel();
 
   _isRunning = true;
   goToStep(3);
   $('wiz-done-overlay').style.display = 'none';
+  if ($('wiz-btn-stop')) $('wiz-btn-stop').style.display = '';
+  if ($('wiz-btn-back-from-log')) $('wiz-btn-back-from-log').style.display = 'none';
   clearLog();
   connectSSE();
 
@@ -231,6 +249,8 @@ async function resumeRun() {
   _isRunning = true;
   goToStep(3);
   $('wiz-done-overlay').style.display = 'none';
+  if ($('wiz-btn-stop')) $('wiz-btn-stop').style.display = '';
+  if ($('wiz-btn-back-from-log')) $('wiz-btn-back-from-log').style.display = 'none';
   clearLog();
   connectSSE();
 
@@ -291,6 +311,12 @@ function showDone(success, detail) {
   if (title) title.textContent = success ? 'Run Complete' : 'Run Failed';
   if (sub) sub.textContent = detail;
   overlay.style.display = '';
+
+  // Hide stop button, show back button when run ends
+  const stopBtn = $('wiz-btn-stop');
+  const backBtn = $('wiz-btn-back-from-log');
+  if (stopBtn) stopBtn.style.display = 'none';
+  if (backBtn) backBtn.style.display = '';
 }
 
 // Log functions imported from run-log.js: appendLog, clearLog, switchLogView, toggleTag
