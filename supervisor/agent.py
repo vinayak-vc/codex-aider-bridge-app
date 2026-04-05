@@ -390,7 +390,6 @@ class SupervisorAgent:
             print(prompt)
             print("="*80)
             if output_schema:
-                import sys
                 print("\nEXPECTED SCHEMA:")
                 print(output_schema)
                 print("\nPlease enter your JSON plan below (Press Ctrl+Z/Ctrl+D and Enter to finish):")
