@@ -2040,13 +2040,42 @@ def main() -> int:
             wait_if_paused(repo_root, logger)
 
             if task.id in completed_ids:
-                logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
-                completed_summaries.append(
-                    f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
-                    + (" ..." if len(task.files) > 2 else "")
-                )
-                skipped += 1
-                continue
+                # Verify the completed task's files still exist and have content.
+                # If a git reset reverted the changes, don't skip — re-run.
+                _files_reverted = False
+                if task.type == "create":
+                    # Create tasks: file should exist if task was done
+                    for fp in task.files:
+                        if not (repo_root / fp).exists():
+                            _files_reverted = True
+                            logger.warning(
+                                "Task %s: checkpoint says done but %s doesn't exist (reverted?) — will re-run",
+                                task.id, fp,
+                            )
+                            break
+                elif task.type == "modify":
+                    # Modify tasks: check if file has uncommitted changes vs checkpoint commit
+                    try:
+                        _diff_check = _run_git_command(repo_root, ["diff", "HEAD", "--name-only", "--"] + list(task.files))
+                        if _diff_check.returncode == 0 and not _diff_check.stdout.strip():
+                            # No diff = files match HEAD. Check if HEAD actually has the task changes
+                            # by looking at the commit message
+                            pass  # Can't verify content without storing hash — trust checkpoint
+                    except Exception:
+                        pass
+
+                if _files_reverted:
+                    completed_ids.discard(task.id)
+                    save_checkpoint(repo_root, completed_ids, plan_hash=_plan_hash)
+                    logger.info("Task %s: removed from checkpoint — will re-run", task.id)
+                else:
+                    logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
+                    completed_summaries.append(
+                        f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
+                        + (" ..." if len(task.files) > 2 else "")
+                    )
+                    skipped += 1
+                    continue
 
             aider_context = AiderContext(
                 goal=config.goal,

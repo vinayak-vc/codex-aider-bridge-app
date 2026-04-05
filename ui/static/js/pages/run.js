@@ -442,6 +442,14 @@ function bindControls() {
   $('wiz-btn-back-1')?.addEventListener('click', () => goToStep(1));
   $('wiz-btn-regenerate')?.addEventListener('click', generatePlan);
   $('wiz-btn-launch')?.addEventListener('click', launchRun);
+  $('wiz-btn-force-rerun')?.addEventListener('click', async () => {
+    try {
+      const settings = collectSettings(_planFile);
+      await apiPost('/api/run/clear-checkpoint', { repo_root: settings.repo_root });
+      toast('Checkpoint cleared — all tasks will run fresh', 'success');
+      launchRun();
+    } catch (err) { toast(err.message || 'Failed to clear checkpoint', 'error'); }
+  });
 
   // Step 3
   $('wiz-btn-stop')?.addEventListener('click', async () => { try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {} });

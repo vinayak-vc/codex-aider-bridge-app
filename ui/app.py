@@ -1310,6 +1310,24 @@ def api_run_queue_remove(index):
     # /api/system/unload-model, /api/system/benchmark, /api/system/recommend-model
 
 
+@app.route("/api/run/clear-checkpoint", methods=["POST"])
+def api_run_clear_checkpoint():
+    """Clear the checkpoint so all tasks run fresh on next launch."""
+    data = request.json or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root not set"}), 400
+    try:
+        from utils.checkpoint import clear_checkpoint
+        clear_checkpoint(Path(repo_root))
+        return jsonify({"ok": True, "message": "Checkpoint cleared — all tasks will run fresh"})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
 @app.route("/api/run/import-plan", methods=["POST"])
 def api_run_import_plan():
     """Read a plan JSON file and return tasks with checkpoint status overlay."""
