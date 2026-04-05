@@ -21,6 +21,7 @@ def build_plan_prompt(
     workflow_profile: str = "standard",
     feature_specs: Optional[str] = None,
     model_roster: Optional[str] = None,
+    code_structure: Optional[str] = None,
 ) -> str:
     idea_block = ""
     if idea_text:
@@ -110,6 +111,7 @@ def build_plan_prompt(
         f"{idea_block}"
         f"{_build_feature_specs_block(feature_specs)}"
         f"{_build_model_roster_block(model_roster)}"
+        f"{_build_code_structure_block(code_structure)}"
         f"\nGoal: {goal}\n"
         f"{feedback_block}"
     )
@@ -225,4 +227,16 @@ def _build_model_roster_block(model_roster: Optional[str]) -> str:
         "- When in doubt, prefer the fast model — speed matters more than\n"
         "  marginal quality for most coding tasks\n"
         "- Omit the \"model\" field to use the user's default model\n\n"
+    )
+
+
+def _build_code_structure_block(code_structure: Optional[str]) -> str:
+    if not code_structure:
+        return ""
+    return (
+        f"\n{code_structure}\n\n"
+        "USE THIS to write precise task instructions. Reference exact function\n"
+        "names, parameter lists, and line numbers from the structure above.\n"
+        "When modifying a value inside a data shape, describe the structure\n"
+        "(e.g., 'the uploadOptions object has keys: includeShorts, includeMusic...').\n\n"
     )

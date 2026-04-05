@@ -63,6 +63,7 @@ class SupervisorAgent:
         workflow_profile: str = "standard",
         feature_specs: Optional[str] = None,
         model_roster: Optional[str] = None,
+        code_structure: Optional[str] = None,
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
         prompt = self._build_plan_prompt(
@@ -74,6 +75,7 @@ class SupervisorAgent:
             workflow_profile,
             feature_specs=feature_specs,
             model_roster=model_roster,
+            code_structure=code_structure,
         )
         self._logger.debug(
             "Plan prompt (%d chars): %.500s%s",

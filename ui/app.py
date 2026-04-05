@@ -1676,11 +1676,23 @@ def api_run_nl_plan():
                 logger=logger,
                 timeout=_plan_timeout,
             )
+            # Deep scan: extract function signatures and data shapes
+            _code_structure = None
+            try:
+                from utils.deep_scanner import scan_project_signatures, signatures_to_context
+                sigs = scan_project_signatures(repo_path, max_files=30)
+                if sigs:
+                    _code_structure = signatures_to_context(sigs)
+                    print(f"[PLAN] Deep scan: {len(sigs)} files, {sum(len(s.get('functions',[])) for s in sigs.values())} functions", flush=True)
+            except Exception as _scan_err:
+                print(f"[PLAN] Deep scan failed (non-fatal): {_scan_err}", flush=True)
+
             plan_text = agent.generate_plan(
                 goal=goal_text,
                 repo_tree=repo_tree,
                 knowledge_context=knowledge_ctx or None,
                 workflow_profile=settings.get("workflow_profile", "standard"),
+                code_structure=_code_structure,
             )
             print(f"[PLAN] Supervisor returned {len(plan_text)} chars", flush=True)
 
