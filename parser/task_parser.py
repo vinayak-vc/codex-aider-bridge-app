@@ -40,7 +40,26 @@ class TaskParser:
             raise PlanParseError("Supervisor JSON root must be an object.")
 
         tasks_payload: Any = payload.get("tasks")
+
+        # If root is a dict but no "tasks" key, check if it looks like a
+        # single task or if the tasks are under a different key
+        if tasks_payload is None:
+            # Maybe Claude returned {"plan": {"tasks": [...]}} or similar nesting
+            for key, val in payload.items():
+                if isinstance(val, list) and val and isinstance(val[0], dict) and "instruction" in val[0]:
+                    tasks_payload = val
+                    break
+                if isinstance(val, dict) and "tasks" in val:
+                    tasks_payload = val["tasks"]
+                    break
+
+        # Maybe Claude returned a bare array [{...}, {...}] instead of {"tasks": [...]}
+        if tasks_payload is None and isinstance(payload, list):
+            tasks_payload = payload
+
         if not isinstance(tasks_payload, list) or not tasks_payload:
+            print(f"[PARSER] Cannot find tasks in response. Keys: {list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}", flush=True)
+            print(f"[PARSER] First 500 chars: {str(payload)[:500]}", flush=True)
             raise PlanParseError(
                 "Supervisor JSON must contain a non-empty 'tasks' array."
             )
@@ -50,7 +69,14 @@ class TaskParser:
     def _extract_json(self, raw_text: str) -> str:
         stripped = raw_text.strip()
 
-        # Strip markdown code fences (```json ... ``` or ``` ... ```)
+        # Strip markdown code fences anywhere in the text
+        # Handles: ```json\n{...}\n``` or prose before/after fences
+        import re as _re
+        fence_match = _re.search(r'```(?:json)?\s*\n(.*?)\n```', stripped, _re.DOTALL)
+        if fence_match:
+            stripped = fence_match.group(1).strip()
+
+        # Legacy: fences at the start only
         if stripped.startswith("```"):
             lines = stripped.splitlines()
             if len(lines) >= 3:
