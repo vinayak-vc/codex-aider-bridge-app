@@ -1986,7 +1986,17 @@ def main() -> int:
             if not show_plan_preview(tasks, logger):
                 return 0
 
-        completed_ids = load_checkpoint(repo_root)
+        # Compute a hash of the current plan so the checkpoint can detect
+        # when a NEW plan is loaded (different tasks, same sequential IDs).
+        import hashlib as _hashlib
+        _plan_signature = "|".join(
+            f"{t.id}:{t.type}:{','.join(t.files)}:{t.instruction[:80]}"
+            for t in tasks
+        )
+        _plan_hash = _hashlib.sha256(_plan_signature.encode()).hexdigest()[:16]
+        logger.info("Plan hash: %s (%d tasks)", _plan_hash, len(tasks))
+
+        completed_ids = load_checkpoint(repo_root, expected_plan_hash=_plan_hash)
         resumed_completed_ids = set(completed_ids)
 
         # Circuit breaker: stop after N consecutive failures with same error category
@@ -2122,7 +2132,7 @@ def main() -> int:
             if commit_sha:
                 task_commit_shas[task.id] = commit_sha
             completed_ids.add(task.id)
-            save_checkpoint(repo_root, completed_ids)
+            save_checkpoint(repo_root, completed_ids, plan_hash=_plan_hash)
             task_summary = (
                 f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
                 + (" ..." if len(task.files) > 2 else "")
