@@ -573,7 +573,7 @@ class SupervisorAgent:
         return (
             "{\n"
             '  "type": "object",\n'
-            '  "additionalProperties": false,\n'
+            '  "additionalProperties": true,\n'
             '  "required": ["tasks"],\n'
             '  "properties": {\n'
             '    "tasks": {\n'

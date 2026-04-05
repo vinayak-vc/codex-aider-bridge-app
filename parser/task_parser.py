@@ -109,7 +109,7 @@ class TaskParser:
             raise PlanParseError("Each task entry must be a JSON object.")
 
         task_id: Any = item.get("id")
-        files: Any = item.get("files")
+        files: Any = item.get("files") or item.get("file")  # Claude sometimes uses singular "file"
         instruction: Any = item.get("instruction")
         task_type: Any = item.get("type")
         context_files: Any = item.get("context_files", [])
