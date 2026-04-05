@@ -196,3 +196,56 @@ def api_firebase_clear():
     from utils.firebase_user_setup import get_user_setup
     get_user_setup().clear_config()
     return jsonify({"ok": True})
+
+
+@firebase_bp.route("/dashboard/cloud")
+def page_cloud_dashboard():
+    """Serve the personal cloud dashboard with user's Firebase config injected."""
+    import json as _json
+    from flask import render_template, Response
+    from utils.firebase_user_setup import get_user_setup
+    setup = get_user_setup()
+    config = {}
+    if setup.is_configured():
+        config = {
+            "apiKey": setup._config.get("apiKey", ""),
+            "authDomain": setup._config.get("authDomain", ""),
+            "projectId": setup._config.get("projectId", ""),
+        }
+    html = render_template("cloud_dashboard.html")
+    config_script = f"<script>window.__FIREBASE_CONFIG__ = {_json.dumps(config)};</script>"
+    html = html.replace("</head>", f"{config_script}</head>")
+    return html
+
+
+@firebase_bp.route("/api/firebase/dashboard-url")
+def api_firebase_dashboard_url():
+    from utils.firebase_user_setup import get_user_setup
+    setup = get_user_setup()
+    if not setup.is_configured():
+        return jsonify({"url": None, "local_url": "/dashboard/cloud"})
+    return jsonify({
+        "url": f"https://{setup._config.get('projectId', '')}.web.app",
+        "local_url": "/dashboard/cloud",
+        "project_id": setup._config.get("projectId", ""),
+    })
+
+
+@firebase_bp.route("/api/firebase/export-dashboard")
+def api_firebase_export_dashboard():
+    import json as _json
+    from flask import render_template, Response
+    from utils.firebase_user_setup import get_user_setup
+    setup = get_user_setup()
+    config = {}
+    if setup.is_configured():
+        config = {
+            "apiKey": setup._config.get("apiKey", ""),
+            "authDomain": setup._config.get("authDomain", ""),
+            "projectId": setup._config.get("projectId", ""),
+        }
+    html = render_template("cloud_dashboard.html")
+    config_script = f"<script>window.__FIREBASE_CONFIG__ = {_json.dumps(config)};</script>"
+    html = html.replace("</head>", f"{config_script}</head>")
+    return Response(html, mimetype="text/html",
+                    headers={"Content-Disposition": "attachment; filename=index.html"})
