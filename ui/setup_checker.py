@@ -523,19 +523,9 @@ def validate_config(settings: dict) -> list[dict]:
     return issues
 
 
+# CLI supervisor checks removed — bridge uses only manual/relay mode.
 def check_codex() -> dict:
-    path = shutil.which("codex") or shutil.which("codex.cmd")
-    return {
-        "installed": bool(path),
-        "path": path,
-        "hint": None if path else "Install Codex CLI from https://github.com/openai/codex",
-    }
-
+    return {"installed": True, "path": "(not needed — relay mode)", "hint": None}
 
 def check_claude() -> dict:
-    path = shutil.which("claude")
-    return {
-        "installed": bool(path),
-        "path": path,
-        "hint": None if path else "Install Claude CLI from https://claude.ai/download",
-    }
+    return {"installed": True, "path": "(not needed — relay mode)", "hint": None}
