@@ -1904,6 +1904,11 @@ def main() -> int:
     failed_task_id: Optional[int] = None
     resumed_completed_ids: set[int] = set()
 
+    # Smart model routing — initialized here so both plan-file and
+    # plan-generation paths have access in the task loop.
+    _model_lock = getattr(args, "model_lock", False)
+    _installed_models = _get_installed_models_for_routing(logger)
+
     try:
         if args.plan_file:
             tasks = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
