@@ -13,60 +13,14 @@ from typing import Optional
 # On Windows, prevent spawned subprocesses from opening a visible CMD window.
 _WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+from executor.aider_config import (
+    FATAL_ERROR_PATTERNS,
+    INTERACTIVE_PROMPT_PATTERNS,
+    STANDARDS_FILENAMES,
+    USELESS_RESPONSE_PATTERNS,
+)
 from models.task import AiderContext, ExecutionResult, Task
 from utils.command_resolution import resolve_command_arguments
-
-
-# Standards files auto-injected as --read context when found in the repo root.
-# Listed in priority order — first match is logged; all found are injected.
-_STANDARDS_FILENAMES: list[str] = [
-    "CODE_FORMAT_STANDARDS.md",
-    "CODING_STANDARDS.md",
-    "STYLE_GUIDE.md",
-    ".editorconfig",
-    "CONTRIBUTING.md",
-]
-_INTERACTIVE_PROMPT_PATTERNS: tuple[str, ...] = (
-    "add file to the chat",
-    "attempt to fix lint errors",
-    "(y)es/(n)o",
-    "[y/n]",
-    "open docs url",
-)
-
-# Fatal error patterns detected in Aider stdout/stderr.
-# When matched, override exit-code-0 to failure so the bridge doesn't
-# waste retries on a config/connection problem that will never self-heal.
-# Each tuple: (substring_to_match, error_category, human_readable_message)
-_FATAL_ERROR_PATTERNS: list[tuple[str, str, str]] = [
-    ("litellm.BadRequestError", "config_error", "LLM provider rejected the request — check model name and provider prefix"),
-    ("LLM Provider NOT provided", "config_error", "Model name missing provider prefix (e.g. ollama/)"),
-    ("does not exist", "model_error", "Model not found — run 'ollama pull <model>' first"),
-    ("model not found", "model_error", "Model not installed in Ollama"),
-    ("connection refused", "connection_error", "Ollama is not running — start it with 'ollama serve'"),
-    ("connection error", "connection_error", "Cannot reach LLM provider — check network/Ollama"),
-    ("ConnectError", "connection_error", "Cannot connect to LLM provider"),
-    ("api_error", "api_error", "LLM API returned an error"),
-    ("rate_limit", "rate_limit", "Rate limited by LLM provider — wait and retry"),
-    ("invalid_api_key", "auth_error", "Invalid API key for LLM provider"),
-    ("AuthenticationError", "auth_error", "Authentication failed with LLM provider"),
-    ("Could not connect to ollama", "connection_error", "Ollama is not reachable"),
-    ("exceeds the", "context_overflow", "Prompt too large for model's context window — try a smaller file or larger model"),
-    ("context length exceeded", "context_overflow", "Prompt exceeds model context window"),
-    ("maximum context length", "context_overflow", "Prompt exceeds model context window"),
-]
-
-# Patterns that indicate the model gave a useless response because context
-# was too large — the model "acknowledges" instead of actually coding.
-_USELESS_RESPONSE_PATTERNS: tuple[str, ...] = (
-    "i will keep that in mind",
-    "i'll keep that in mind",
-    "let me know if you need",
-    "please let me know",
-    "if you have any questions",
-    "i understand the task",
-    "i'll help you with that",
-)
 
 
 class AiderRunner:
@@ -137,13 +91,12 @@ class AiderRunner:
         """
         if before_content is None or after_content is None:
             return False
-        import re as _re
 
         def _strip(src: bytes) -> bytes:
             text = src.decode("utf-8", errors="replace")
             # Remove single-line // comments and blank lines
             lines = [
-                _re.sub(r"\s*//.*$", "", line)
+                re.sub(r"\s*//.*$", "", line)
                 for line in text.splitlines()
             ]
             return "\n".join(l for l in lines if l.strip()).encode()
@@ -237,7 +190,7 @@ class AiderRunner:
     def _detect_interactive_prompt_output(self, stdout: str, stderr: str) -> Optional[str]:
         combined = "\n".join([stdout, stderr]).lower()
         matched_patterns: list[str] = []
-        for pattern in _INTERACTIVE_PROMPT_PATTERNS:
+        for pattern in INTERACTIVE_PROMPT_PATTERNS:
             if pattern in combined:
                 matched_patterns.append(pattern)
 
@@ -262,7 +215,7 @@ class AiderRunner:
         so retrying is pointless.
         """
         combined = f"{stdout}\n{stderr}"
-        for pattern, category, message in _FATAL_ERROR_PATTERNS:
+        for pattern, category, message in FATAL_ERROR_PATTERNS:
             if pattern.lower() in combined.lower():
                 self._logger.error(
                     "Aider fatal error detected [%s]: %s (matched: '%s')",
@@ -569,7 +522,7 @@ class AiderRunner:
         # Happens when context overflows: model says "I'll keep that in mind"
         # instead of producing edit blocks.
         _stdout_lower = (result_obj.stdout or "").lower()
-        for useless_pattern in _USELESS_RESPONSE_PATTERNS:
+        for useless_pattern in USELESS_RESPONSE_PATTERNS:
             if useless_pattern in _stdout_lower:
                 self._logger.warning(
                     "Task %s: model gave a useless response ('%s') — likely context overflow",
@@ -841,7 +794,7 @@ class AiderRunner:
     def _find_standards_files(self) -> list[Path]:
         """Return all known code standards files found in the repo root."""
         found: list[Path] = []
-        for name in _STANDARDS_FILENAMES:
+        for name in STANDARDS_FILENAMES:
             candidate = self._repo_root / name
             if candidate.exists():
                 found.append(candidate)

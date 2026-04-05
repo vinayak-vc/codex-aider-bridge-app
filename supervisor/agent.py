@@ -120,7 +120,7 @@ class SupervisorAgent:
         return self._parse_review(report.task.id, response)
 
     # ------------------------------------------------------------------
-    # Prompt builders
+    # Prompt builders — delegated to supervisor/prompts.py
     # ------------------------------------------------------------------
 
     def _build_plan_prompt(
