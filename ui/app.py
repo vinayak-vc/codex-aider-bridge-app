@@ -2091,6 +2091,85 @@ def api_get_tokens():
     return jsonify(state_store.load_token_log())
 
 
+@app.route("/api/tokens", methods=["POST"])
+def api_add_token_session():
+    """Log a token session from external tools (Claude Code, /build skill).
+
+    Accepts a session dict matching the token_tracker.session_report() format.
+    Automatically recalculates all-time totals.
+    """
+    data = request.get_json(force=True) or {}
+    if not data.get("goal"):
+        return jsonify({"error": "goal is required"}), 400
+
+    import time as _t
+    from utils.token_tracker import estimate_cost
+
+    # Build a session entry compatible with token_tracker format
+    supervisor_in = data.get("supervisor_tokens_in", 0)
+    supervisor_out = data.get("supervisor_tokens_out", 0)
+    aider_tokens = data.get("aider_tokens", 0)
+    tasks_executed = data.get("tasks_executed", 0)
+
+    session = {
+        "session_id": data.get("session_id", str(__import__("uuid").uuid4())),
+        "timestamp": data.get("timestamp", _t.strftime("%Y-%m-%dT%H:%M:%S")),
+        "goal": data["goal"],
+        "repo_root": data.get("repo_root", ""),
+        "supervisor_command": data.get("performer", "claude"),
+        "supervisor": {
+            "plan_in": supervisor_in, "plan_out": supervisor_out,
+            "review_in": 0, "review_out": 0,
+            "subplan_in": 0, "subplan_out": 0,
+            "total_in": supervisor_in, "total_out": supervisor_out,
+            "total": supervisor_in + supervisor_out,
+        },
+        "session": {"tokens": 0, "is_estimate": True, "total_ai_tokens": supervisor_in + supervisor_out},
+        "aider": {
+            "tasks_executed": tasks_executed,
+            "tasks_skipped": 0,
+            "reworks": 0,
+            "subplans_generated": 0,
+            "estimated_tokens": aider_tokens,
+            "per_task": data.get("per_task", []),
+        },
+        "productivity": {"is_productive": tasks_executed > 0, "waste_reason": None},
+        "savings": {
+            "estimated_direct_tokens": tasks_executed * 5000,
+            "actual_supervisor_tokens": supervisor_in + supervisor_out,
+            "total_ai_tokens": supervisor_in + supervisor_out,
+            "tokens_saved": max(0, tasks_executed * 5000 - (supervisor_in + supervisor_out)),
+            "savings_percent": 0,
+            "note": f"External session: {data.get('performer', 'claude')}",
+        },
+        "cost": {
+            "bridge_cost_opus": round(estimate_cost(supervisor_in, supervisor_out, "claude-opus-4"), 4),
+            "bridge_cost_sonnet": round(estimate_cost(supervisor_in, supervisor_out, "claude-sonnet-4"), 4),
+            "direct_cost_opus": round(estimate_cost(tasks_executed * 3000, tasks_executed * 2000, "claude-opus-4"), 4),
+            "direct_cost_sonnet": round(estimate_cost(tasks_executed * 3000, tasks_executed * 2000, "claude-sonnet-4"), 4),
+            "ollama_cost": 0.0,
+            "ollama_tokens": aider_tokens,
+            "savings_dollar_opus": 0.0,
+            "savings_dollar_sonnet": 0.0,
+        },
+        "elapsed_seconds": data.get("elapsed", 0),
+    }
+    # Calculate savings percent
+    direct = session["savings"]["estimated_direct_tokens"]
+    if direct > 0:
+        session["savings"]["savings_percent"] = round(session["savings"]["tokens_saved"] / direct * 100, 1)
+    # Dollar savings
+    session["cost"]["savings_dollar_opus"] = round(max(0, session["cost"]["direct_cost_opus"] - session["cost"]["bridge_cost_opus"]), 4)
+    session["cost"]["savings_dollar_sonnet"] = round(max(0, session["cost"]["direct_cost_sonnet"] - session["cost"]["bridge_cost_sonnet"]), 4)
+
+    # Save to token log
+    from utils.token_tracker import save_session_to_log
+    log_path = state_store.TOKEN_LOG_FILE
+    save_session_to_log(session, log_path)
+
+    return jsonify({"ok": True, "session_id": session["session_id"]})
+
+
 @app.route("/api/tokens/current")
 def api_get_tokens_current():
     """Return live token stats for the currently running (or last) run."""
