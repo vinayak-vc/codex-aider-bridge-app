@@ -2032,6 +2032,37 @@ def api_get_history():
     return jsonify(history)
 
 
+@app.route("/api/history", methods=["POST"])
+def api_add_history_entry():
+    """Log an activity entry — for direct edits, /build skill, or external tools.
+
+    Accepts any JSON with at least a 'goal' field. Automatically adds
+    timestamp and ID. This lets Claude Code log direct file edits so they
+    appear in the History page alongside bridge runs.
+    """
+    data = request.get_json(force=True) or {}
+    if not data.get("goal") and not data.get("action"):
+        return jsonify({"error": "goal or action is required"}), 400
+
+    import time
+    entry = {
+        "goal": data.get("goal", data.get("action", "")),
+        "repo_root": data.get("repo_root", ""),
+        "status": data.get("status", "success"),
+        "timestamp": data.get("timestamp", time.strftime("%Y-%m-%d %H:%M:%S")),
+        "performer": data.get("performer", "claude"),
+        "tasks": data.get("tasks", 0),
+        "tasks_detail": data.get("tasks_detail", []),
+        "files_changed": data.get("files_changed", []),
+        "elapsed": data.get("elapsed", 0),
+        "tokens_used": data.get("tokens_used", 0),
+        "source": data.get("source", "external"),  # external | bridge | build_skill
+    }
+
+    entry_id = state_store.add_history_entry(entry)
+    return jsonify({"ok": True, "id": entry_id})
+
+
 @app.route("/api/history/<entry_id>")
 def api_get_history_entry(entry_id: str):
     for entry in state_store.load_history():

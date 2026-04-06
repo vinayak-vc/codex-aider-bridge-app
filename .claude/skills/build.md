@@ -89,7 +89,29 @@ After classifying all tasks:
      Read each new request → analyze diff → write PASS/REWORK decision
    ```
 
-## Step 5: Report
+## Step 5: Log Activity to History
+
+After completing tasks, log them to the bridge history so they appear
+in the UI History page:
+
+```bash
+curl -X POST http://127.0.0.1:7823/api/history -H "Content-Type: application/json" -d '{
+  "goal": "<what was built>",
+  "repo_root": "<project path>",
+  "status": "success",
+  "performer": "claude",
+  "tasks": <number of tasks>,
+  "files_changed": ["file1.js", "file2.jsx"],
+  "source": "build_skill"
+}'
+```
+
+Or use apiPost if bridge is running:
+```python
+apiPost('/api/history', { goal, repo_root, status: 'success', performer: 'claude', tasks: N, files_changed: [...], source: 'build_skill' })
+```
+
+## Step 6: Report
 
 For direct edits:
 - "Done: edited 3 files directly (0 tokens, 2 seconds)"

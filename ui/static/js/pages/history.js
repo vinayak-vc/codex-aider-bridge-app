@@ -96,15 +96,19 @@ function renderTable(entries) {
     const when     = fmtWhen(e.timestamp);
     const dryLabel = e.dry_run ? ' <span class="badge badge--info" style="font-size:10px">dry-run</span>' : '';
 
+    const performerBadge = e.performer === 'claude' ? '<span class="badge badge--info" style="font-size:10px;margin-left:4px">Claude</span>'
+      : e.source === 'build_skill' ? '<span class="badge badge--info" style="font-size:10px;margin-left:4px">Build</span>'
+      : '';
+
     return `
       <tr data-id="${esc(e.id)}">
         <td>
           <div class="history-goal">${esc(e.goal || '(no goal)')}</div>
-          <div class="history-meta">${esc(e.repo_root || '')}${e.aider_model ? ' · ' + esc(e.aider_model) : ''}</div>
+          <div class="history-meta">${esc(e.repo_root || '')}${e.aider_model ? ' · ' + esc(e.aider_model) : ''}${e.files_changed ? ' · ' + e.files_changed.length + ' files' : ''}</div>
         </td>
         <td>
           <span class="badge ${badgeCls}">${esc(e.status || 'unknown')}</span>
-          ${dryLabel}
+          ${dryLabel}${performerBadge}
         </td>
         <td style="font-variant-numeric:tabular-nums">${tasks}</td>
         <td style="font-variant-numeric:tabular-nums;white-space:nowrap">${elapsed}</td>
