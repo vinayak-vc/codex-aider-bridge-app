@@ -904,13 +904,50 @@ def execute_task_with_review(
                     current_task.id, current_task.type, ", ".join(missing),
                 )
 
-        # ── Step 1: Execute via Aider ────────────────────────────────────────
-        if diagnostics:
-            diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
-        execution_result = runner.run(
-            current_task, selected_files.all_paths, aider_context,
-            model_override=model_override,
-        )
+        # ── Step 0.5: Task IR — validate + try deterministic execution ───────
+        _deterministic_result = None
+        try:
+            from executor.task_ir import task_to_ir, validate_task_ir, TaskIRValidationError
+            from executor.deterministic_executor import execute_deterministic
+
+            task_ir = task_to_ir(current_task, config.repo_root)
+            try:
+                ir_warnings = validate_task_ir(task_ir, config.repo_root)
+                for w in ir_warnings:
+                    logger.debug("Task %s IR warning: %s", current_task.id, w)
+            except TaskIRValidationError as val_err:
+                logger.warning("Task %s IR validation failed: %s", current_task.id, val_err)
+
+            # Try deterministic execution first (zero LLM tokens)
+            if task_ir.can_execute_deterministically:
+                logger.info(
+                    "Task %s: attempting deterministic execution (%d operations)",
+                    current_task.id, len(task_ir.operations),
+                )
+                _deterministic_result = execute_deterministic(task_ir, config.repo_root)
+                if _deterministic_result and _deterministic_result.succeeded:
+                    logger.info("Task %s: deterministic execution succeeded — 0 LLM tokens", current_task.id)
+                    if token_tracker:
+                        token_tracker.record_aider_task(
+                            task_id=current_task.id,
+                            instruction=current_instruction,
+                            input_file_chars=0,
+                            diff_chars=0,
+                            performer="deterministic",
+                        )
+        except Exception as ir_err:
+            logger.debug("Task %s: IR processing failed (non-fatal): %s", current_task.id, ir_err)
+
+        # ── Step 1: Execute via Aider (if deterministic didn't handle it) ────
+        if _deterministic_result and _deterministic_result.succeeded:
+            execution_result = _deterministic_result
+        else:
+            if diagnostics:
+                diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
+            execution_result = runner.run(
+                current_task, selected_files.all_paths, aider_context,
+                model_override=model_override,
+            )
 
         if execution_result.exit_code == -1:
             stderr = execution_result.stderr
@@ -956,9 +993,39 @@ def execute_task_with_review(
                     duration_seconds=execution_result.duration_seconds,
                 )
 
+            # ── Failure feedback classification ───────────────────────────
+            _feedback = None
+            try:
+                from executor.failure_feedback import classify_failure, build_retry_instruction
+                _file_changed = execution_result.succeeded  # rough proxy
+                _feedback = classify_failure(
+                    exit_code=execution_result.exit_code,
+                    stdout=execution_result.stdout or "",
+                    stderr=execution_result.stderr or "",
+                    file_changed=_file_changed,
+                    instruction=current_instruction,
+                )
+                logger.info(
+                    "Task %s: failure classified as '%s' — %s",
+                    current_task.id, _feedback.failure_type, _feedback.suggested_action,
+                )
+                _escalation_log[-1]["failure_type"] = _feedback.failure_type
+                _escalation_log[-1]["suggested_action"] = _feedback.suggested_action
+
+                # Non-retryable failures (config errors) → stop immediately
+                if not _feedback.is_retryable:
+                    raise RuntimeError(
+                        f"Task {current_task.id}: non-retryable failure ({_feedback.failure_type}): {_feedback.reason}"
+                    )
+
+                # Adjust instruction for next retry based on feedback
+                current_instruction = build_retry_instruction(
+                    current_instruction, _feedback, attempt + 1,
+                )
+            except ImportError:
+                pass  # failure_feedback module not available — continue with existing logic
+
             # ── Same-error detection ─────────────────────────────────────
-            # If the last 2 failures are identical, it's a config/connection
-            # problem that will never self-heal.  Stop immediately.
             if len(_failure_reasons) >= 2 and _failure_reasons[-1] == _failure_reasons[-2]:
                 logger.error(
                     "Task %s: same error repeated %d times — aborting retries: %s",
@@ -974,9 +1041,6 @@ def execute_task_with_review(
                 )
 
             # ── Skip review, retry immediately ───────────────────────────
-            # BUG FIX: Previously, failed executions fell through to diff
-            # collection + manual review, wasting supervisor tokens on a
-            # task that produced no useful output.  Now we backoff and retry.
             wait_seconds = min(2 ** attempt, 30)
             logger.info(
                 "Task %s: backing off %ss before retry %s (skipping review — no useful output)",

@@ -246,22 +246,26 @@ class AiderRunner:
         estimated_output_tokens = (total_chars / 4) * 0.20
         return max(60, int(estimated_output_tokens / 6) + 30)  # min 60s, +30s overhead
 
-    # ── Smart edit format selection ────────────────────────────────────────
+    # ── Adaptive edit format selection ──────────────────────────────────────
 
-    # Threshold: files under this many lines use 'whole' format (model rewrites
-    # entire file — no SEARCH/REPLACE matching needed).  Above this, use 'diff'
-    # which requires exact line matching but is much faster for large files.
     _WHOLE_FORMAT_LINE_THRESHOLD = 2000
 
-    def _pick_edit_format(self, file_paths: list[Path]) -> str:
-        """Choose edit format based on total target file size.
+    # Track per-file edit mode success/failure for adaptive fallback
+    _edit_format_failures: dict[str, int] = {}  # file_path → consecutive diff failures
 
-        - 'whole': model outputs the complete file.  Avoids SEARCH/REPLACE
-          mismatch errors that plague small models (7b/14b) which hallucinate
-          indentation and code structure.  Fast enough for files < 200 lines.
-        - 'diff': model outputs only changed lines via SEARCH/REPLACE blocks.
-          Required for large files to stay within timeout.
+    def _pick_edit_format(self, file_paths: list[Path], force_whole: bool = False) -> str:
+        """Choose edit format based on file size, history, and forced overrides.
+
+        Adaptive strategy:
+          1. Files under threshold → whole (default, safest for 7B models)
+          2. Files over threshold → diff (faster, but may fail)
+          3. If diff failed before for this file → switch to whole
+          4. force_whole → always whole (used by retry system after pattern_mismatch)
         """
+        if force_whole:
+            self._logger.info("Edit format: whole (forced by retry feedback)")
+            return "whole"
+
         total_lines = 0
         for p in file_paths:
             try:
@@ -270,18 +274,38 @@ class AiderRunner:
             except OSError:
                 pass
 
+        # Check if diff has failed for any of these files before
+        for p in file_paths:
+            key = str(p)
+            if self._edit_format_failures.get(key, 0) >= 1:
+                self._logger.info(
+                    "Edit format: whole (diff failed previously for %s)", p.name,
+                )
+                return "whole"
+
         if total_lines <= self._WHOLE_FORMAT_LINE_THRESHOLD:
             self._logger.info(
-                "Edit format: whole (%d lines total — under %d threshold)",
+                "Edit format: whole (%d lines — under %d threshold)",
                 total_lines, self._WHOLE_FORMAT_LINE_THRESHOLD,
             )
             return "whole"
 
         self._logger.info(
-            "Edit format: diff (%d lines total — above %d threshold)",
+            "Edit format: diff (%d lines — above %d threshold)",
             total_lines, self._WHOLE_FORMAT_LINE_THRESHOLD,
         )
         return "diff"
+
+    def record_edit_format_failure(self, file_paths: list[Path]) -> None:
+        """Record that the current edit format failed for these files."""
+        for p in file_paths:
+            key = str(p)
+            self._edit_format_failures[key] = self._edit_format_failures.get(key, 0) + 1
+
+    def record_edit_format_success(self, file_paths: list[Path]) -> None:
+        """Reset failure counter on success."""
+        for p in file_paths:
+            self._edit_format_failures.pop(str(p), None)
 
     # ── Core subprocess execution ────────────────────────────────────────
 
@@ -455,8 +479,16 @@ class AiderRunner:
         aider_context: Optional[AiderContext] = None,
         model_override: Optional[str] = None,
     ) -> ExecutionResult:
-        # Per-task model override: temporarily swap model for this run
+        # Per-task model override with 7B enforcement
         _original_model = self._model
+        _effective_model = model_override or self._model or ""
+        # Warn if 14B+ is used — 7B is faster with retries
+        if "14b" in _effective_model.lower() or "32b" in _effective_model.lower():
+            self._logger.warning(
+                "Task %s: using slow model '%s' — 7B is recommended for interactive use "
+                "(fast retries outperform slow correctness)",
+                task.id, _effective_model,
+            )
         if model_override:
             self._logger.info(
                 "Task %s: model override → %s (default: %s)",
