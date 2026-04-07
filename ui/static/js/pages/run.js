@@ -1,4 +1,4 @@
-// pages/run.js — AI Relay Chat Controller
+// pages/run.js — AI Relay "Mission Control" Controller
 
 import { SSEClient } from '/static/js/core/sse.js';
 import { apiPost }   from '/static/js/core/api.js';
@@ -9,7 +9,7 @@ const _esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-let _state = 'idle'; // idle | prompting | waiting_plan | tasks_loaded | running | reviewing | done
+let _state = 'idle';  // idle | prompting | waiting_plan | tasks_loaded | running | reviewing | done
 let _tasks = [];
 let _planFile = '';
 let _repoRoot = '';
@@ -17,225 +17,350 @@ let _relaySessionId = '';
 let _sse = null;
 let _pollTimer = null;
 let _currentReviewTaskId = null;
+let _runStartTime = null;
+let _elapsedTimer = null;
 
-// ── Message Rendering ────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-function addUserMsg(text) {
-  const el = _createMsg('user');
-  el.querySelector('.relay-bubble').textContent = text;
-  _append(el);
+function loadSettings() {
+  return {
+    repo_root: ($('f-repo-root') || {}).value || _repoRoot,
+    aider_model: ($('f-aider-model') || {}).value || 'ollama/qwen2.5-coder:7b',
+    task_timeout: parseInt(($('f-task-timeout') || {}).value) || 600,
+    max_task_retries: parseInt(($('f-max-retries') || {}).value) || 10,
+  };
 }
 
-function addBridgeMsg(text) {
-  const el = _createMsg('bridge');
-  el.querySelector('.relay-bubble').textContent = text;
-  _append(el);
+function autoResize(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
 }
 
-function addPromptCard(title, prompt) {
+// ── Status Badge ─────────────────────────────────────────────────────────────
+
+function setStatus(text, type = '') {
+  const el = $('mc-status');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'mc-status' + (type ? ` --${type}` : '');
+}
+
+// ── Pipeline Rendering ───────────────────────────────────────────────────────
+
+function renderPipeline(tasks) {
+  const list = $('mc-task-list');
+  if (!list) return;
+  if (!tasks || tasks.length === 0) {
+    list.innerHTML = '<div class="mc-empty-pipeline">No tasks loaded</div>';
+    $('mc-progress-label').textContent = '—';
+    $('mc-progress-fill').style.width = '0%';
+    return;
+  }
+
+  let html = '';
+  for (const t of tasks) {
+    const state = _getTaskState(t);
+    const icon  = _getTaskIcon(t, state);
+    const files = (t.files || []).join(', ');
+    html += `
+      <div class="mc-task --${state}" data-id="${t.id}">
+        <div class="mc-task-icon">${icon}</div>
+        <div class="mc-task-body">
+          <div class="mc-task-label">${_esc(t.type || '?').toUpperCase()} ${_esc((t.title || files).substring(0, 30))}</div>
+          <div class="mc-task-file">${_esc(files)}</div>
+        </div>
+      </div>`;
+  }
+  list.innerHTML = html;
+  _updateProgress(tasks);
+}
+
+function _getTaskState(task) {
+  const s = (task.status || '').toLowerCase();
+  if (s === 'approved' || s === 'done' || s === 'completed') return 'done';
+  if (s === 'failed') return 'failed';
+  if (s === 'skipped') return 'skipped';
+  if (s === 'reviewing' || s === 'review') return 'review';
+  if (s === 'running' || s === 'active') return 'active';
+  return 'locked';
+}
+
+function _getTaskIcon(task, state) {
+  if (state === 'done')    return '✓';
+  if (state === 'failed')  return '✕';
+  if (state === 'skipped') return '—';
+  if (state === 'active')  return '▶';
+  if (state === 'review')  return '⚠';
+  return task.id;
+}
+
+function updateTaskState(taskId, state, label) {
+  // Update internal array
+  const task = _tasks.find(t => String(t.id) === String(taskId));
+  if (task) {
+    task.status = state;
+    task.status_label = label || state;
+  }
+  // Update DOM
+  const el = $('mc-task-list');
+  if (!el) return;
+  const row = el.querySelector(`[data-id="${taskId}"]`);
+  if (row) {
+    row.className = `mc-task --${state}`;
+    const iconEl = row.querySelector('.mc-task-icon');
+    if (iconEl) iconEl.textContent = _getTaskIcon({ id: taskId }, state);
+  }
+  _updateProgress(_tasks);
+}
+
+function _updateProgress(tasks) {
+  const done = tasks.filter(t => {
+    const s = (t.status || '').toLowerCase();
+    return s === 'approved' || s === 'done' || s === 'completed' || s === 'skipped';
+  }).length;
+  const total = tasks.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const label = $('mc-progress-label');
+  const fill  = $('mc-progress-fill');
+  if (label) label.textContent = `${done} / ${total}`;
+  if (fill) fill.style.width = `${pct}%`;
+}
+
+// ── Session Metadata ─────────────────────────────────────────────────────────
+
+function updateSessionMeta() {
+  const proj = $('mc-meta-project');
+  const model = $('mc-meta-model');
+  const sess = $('mc-meta-session');
+  if (proj) {
+    const name = _repoRoot.split(/[\\/]/).pop() || '—';
+    proj.textContent = name;
+    proj.title = _repoRoot;
+  }
+  if (model) model.textContent = ($('f-aider-model') || {}).value || '—';
+  if (sess) sess.textContent = _relaySessionId || '—';
+}
+
+function startElapsedTimer() {
+  _runStartTime = Date.now();
+  if (_elapsedTimer) clearInterval(_elapsedTimer);
+  _elapsedTimer = setInterval(() => {
+    const secs = Math.floor((Date.now() - _runStartTime) / 1000);
+    const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+    const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+    const s = String(secs % 60).padStart(2, '0');
+    const el = $('mc-meta-elapsed');
+    if (el) el.textContent = `${h}:${m}:${s}`;
+  }, 1000);
+}
+
+function stopElapsedTimer() {
+  if (_elapsedTimer) { clearInterval(_elapsedTimer); _elapsedTimer = null; }
+}
+
+// ── Console ──────────────────────────────────────────────────────────────────
+
+function showConsole() {
+  const el = $('mc-console');
+  if (el) el.style.display = '';
+}
+
+function hideConsole() {
+  const el = $('mc-console');
+  if (el) el.style.display = 'none';
+}
+
+function appendLog(line) {
+  const el = $('mc-console-output');
+  if (!el) return;
+  el.textContent += line + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearConsole() {
+  const el = $('mc-console-output');
+  if (el) el.textContent = '';
+}
+
+// ── Action Zone Rendering ────────────────────────────────────────────────────
+
+function clearAction() {
+  const el = $('mc-action');
+  if (el) el.innerHTML = '';
+}
+
+function addActionCard(type, title, bodyHtml) {
+  const el = $('mc-action');
+  if (!el) return null;
   const card = document.createElement('div');
-  card.className = 'relay-card relay-card--prompt';
+  card.className = `mc-card --${type}`;
   card.innerHTML = `
-    <div class="relay-card-title">${_esc(title)}</div>
-    <div class="relay-card-body">Copy this and paste into your AI:</div>
-    <pre>${_esc(prompt)}</pre>
-    <div class="relay-card-actions">
-      <button class="btn btn--primary btn--sm relay-copy-btn">Copy to Clipboard</button>
-    </div>
+    <div class="mc-card-title">${_esc(title)}</div>
+    <div class="mc-card-body">${bodyHtml}</div>
   `;
-  card.querySelector('.relay-copy-btn').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(prompt);
-    toast('Copied to clipboard', 'success');
-  });
-  _append(card);
+  el.appendChild(card);
+  el.scrollTop = el.scrollHeight;
+  return card;
+}
+
+function addStatusMsg(text, type = 'status') {
+  addActionCard(type, type === 'error' ? 'Error' : type === 'done' ? 'Complete' : 'Status', _esc(text));
+}
+
+function addPromptCard(prompt) {
+  const card = addActionCard('prompt', 'Planning Prompt', `
+    <div>Copy this and paste into your AI:</div>
+    <pre>${_esc(prompt)}</pre>
+    <div class="mc-card-actions">
+      <button class="btn btn--primary btn--sm mc-copy-btn">Copy to Clipboard</button>
+    </div>
+  `);
+  if (card) {
+    card.querySelector('.mc-copy-btn').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(prompt);
+      toast('Copied to clipboard', 'success');
+    });
+  }
 }
 
 function addPasteCard(title, placeholder, onSubmit) {
-  const card = document.createElement('div');
-  card.className = 'relay-card relay-card--prompt';
-  card.innerHTML = `
-    <div class="relay-card-title">${_esc(title)}</div>
-    <textarea class="relay-paste-area" placeholder="${_esc(placeholder)}"></textarea>
-    <div class="relay-card-actions">
-      <button class="btn btn--primary btn--sm relay-submit-btn">Submit</button>
+  const card = addActionCard('prompt', title, `
+    <textarea class="mc-paste-area" placeholder="${_esc(placeholder)}"></textarea>
+    <div class="mc-card-actions">
+      <button class="btn btn--primary btn--sm mc-paste-submit">Submit</button>
     </div>
-  `;
-  const textarea = card.querySelector('.relay-paste-area');
-  const btn = card.querySelector('.relay-submit-btn');
-  btn.addEventListener('click', () => {
+  `);
+  if (!card) return;
+  const textarea = card.querySelector('.mc-paste-area');
+  card.querySelector('.mc-paste-submit').addEventListener('click', () => {
     const text = textarea.value.trim();
-    if (!text) { toast('Paste the AI response first', 'warning'); return; }
-    btn.disabled = true;
-    btn.textContent = 'Processing...';
+    if (!text) { toast('Paste content first', 'warning'); return; }
     onSubmit(text);
   });
-  _append(card);
   textarea.focus();
 }
 
-function addTaskListCard(tasks) {
-  const card = document.createElement('div');
-  card.className = 'relay-card relay-card--tasks';
-  let html = `<div class="relay-card-title">Loaded ${tasks.length} task(s)</div>`;
-  for (const t of tasks) {
-    html += `<div class="relay-task-item relay-task-item--${t.status || 'not_started'}" data-id="${t.id}">
-      <span class="relay-task-num">${t.id}</span>
-      <span class="relay-task-type">${_esc(t.type || '?')}</span>
-      <span class="relay-task-files">${_esc((t.files || []).join(', '))}</span>
-      <span class="relay-task-status">${_esc(t.status_label || 'Not started')}</span>
-    </div>`;
-  }
-  html += `<div class="relay-card-actions">
-    <button class="btn btn--primary btn--sm relay-run-btn">Run All</button>
-    <button class="btn btn--secondary btn--sm relay-load-btn">Load Different Plan</button>
-  </div>`;
-  card.innerHTML = html;
-  card.querySelector('.relay-run-btn').addEventListener('click', () => launchRun());
-  card.querySelector('.relay-load-btn')?.addEventListener('click', () => {
-    _state = 'idle';
-    addBridgeMsg('Enter a new goal or paste a plan JSON.');
-  });
-  _append(card);
-}
-
-function addStatusCard(text, type = 'status') {
-  const card = document.createElement('div');
-  card.className = `relay-card relay-card--${type}`;
-  card.innerHTML = `<div class="relay-card-body">${_esc(text)}</div>`;
-  _append(card);
-}
-
 function addReviewCard(taskId, packet) {
-  const card = document.createElement('div');
-  card.className = 'relay-card relay-card--review';
-  card.innerHTML = `
-    <div class="relay-card-title">Review Required — Task ${taskId}</div>
-    <div class="relay-card-body">Copy this diff and paste into your AI for review:</div>
+  const action = $('mc-action');
+  if (action) action.classList.add('--reviewing');
+
+  const card = addActionCard('review', `Review Required — Task ${taskId}`, `
+    <div>Copy this diff and paste into your AI for review:</div>
     <pre>${_esc(packet)}</pre>
-    <div class="relay-card-actions">
-      <button class="btn btn--primary btn--sm relay-copy-btn">Copy Review to Clipboard</button>
+    <div class="mc-card-actions">
+      <button class="btn btn--primary btn--sm mc-copy-review">Copy Review to Clipboard</button>
     </div>
-  `;
-  card.querySelector('.relay-copy-btn').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(packet);
-    toast('Review packet copied', 'success');
-  });
-  _append(card);
+  `);
+  if (card) {
+    card.querySelector('.mc-copy-review').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(packet);
+      toast('Review packet copied', 'success');
+    });
+  }
 
-  // Add paste card for decision
-  addPasteCard('Paste AI Decision', 'Paste PASS or REWORK: <instruction> here...', async (text) => {
-    try {
-      await apiPost('/api/relay/submit-decision', {
-        raw_text: text,
-        task_id: taskId,
-        repo_root: _repoRoot,
-        relay_session_id: _relaySessionId,
-      });
-      addBridgeMsg(`Decision submitted for Task ${taskId}`);
-      _state = 'running';
-      _currentReviewTaskId = null;
-    } catch (err) {
-      toast(err.message || 'Failed to submit decision', 'error');
-    }
-  });
+  // Show decision zone
+  showDecision(taskId);
 }
 
-function _createMsg(role) {
-  const wrapper = document.createElement('div');
-  wrapper.className = `relay-msg relay-msg--${role}`;
-  const bubble = document.createElement('div');
-  bubble.className = 'relay-bubble';
-  const meta = document.createElement('span');
-  meta.className = 'relay-meta';
-  meta.textContent = role === 'user' ? 'You' : 'Bridge';
-  wrapper.appendChild(bubble);
-  wrapper.appendChild(meta);
-  return wrapper;
+// ── Decision Zone ────────────────────────────────────────────────────────────
+
+function showDecision(taskId) {
+  const el = $('mc-decision');
+  if (el) el.style.display = '';
+  const input = $('mc-decision-input');
+  if (input) { input.value = ''; input.focus(); }
+
+  // Wire the submit button (re-wire each time to capture taskId)
+  const btn = $('btn-submit-decision');
+  if (btn) {
+    const newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+    newBtn.id = 'btn-submit-decision';
+    newBtn.addEventListener('click', async () => {
+      const text = ($('mc-decision-input') || {}).value?.trim();
+      if (!text) { toast('Paste a decision first', 'warning'); return; }
+      try {
+        await apiPost('/api/relay/submit-decision', {
+          raw_text: text,
+          task_id: taskId,
+          repo_root: _repoRoot,
+          relay_session_id: _relaySessionId,
+        });
+        toast('Decision submitted', 'success');
+        hideDecision();
+        _currentReviewTaskId = null;
+        updateTaskState(taskId, 'done', 'Approved');
+        _state = 'running';
+        setStatus('Running...', 'running');
+        const action = $('mc-action');
+        if (action) action.classList.remove('--reviewing');
+      } catch (err) {
+        toast(err.message || 'Failed to submit', 'error');
+      }
+    });
+  }
 }
 
-function _append(el) {
-  const container = $('relay-messages');
-  if (!container) return;
-  // Hide welcome message
-  const welcome = $('relay-welcome');
-  if (welcome) welcome.style.display = 'none';
-  container.appendChild(el);
-  container.scrollTop = container.scrollHeight;
+function hideDecision() {
+  const el = $('mc-decision');
+  if (el) el.style.display = 'none';
 }
 
-// ── Core Flow ────────────────────────────────────────────────────────────────
+// ── Goal Input Handling ──────────────────────────────────────────────────────
 
-async function handleInput(text) {
-  if (!text.trim()) return;
-
-  // Try to detect if it's a JSON plan paste
+async function handleGoalInput(text) {
   const trimmed = text.trim();
-  if ((trimmed.startsWith('{') || trimmed.startsWith('```')) && trimmed.includes('"tasks"')) {
-    addUserMsg(trimmed.length > 200 ? trimmed.slice(0, 200) + '...' : trimmed);
+  if (!trimmed) return;
+
+  // Try to detect JSON plan paste
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     await importPlan(trimmed, _repoRoot);
     return;
   }
 
-  // Try to detect if it's a PASS/REWORK decision
-  const upper = trimmed.toUpperCase();
-  if (_state === 'reviewing' && (upper.startsWith('PASS') || upper.startsWith('REWORK'))) {
-    addUserMsg(trimmed);
-    try {
-      await apiPost('/api/relay/submit-decision', {
-        raw_text: trimmed,
-        task_id: _currentReviewTaskId,
-        repo_root: _repoRoot,
-        relay_session_id: _relaySessionId,
-      });
-      addBridgeMsg(`Decision submitted for Task ${_currentReviewTaskId}`);
-      _state = 'running';
-      _currentReviewTaskId = null;
-    } catch (err) {
-      toast(err.message || 'Failed to submit decision', 'error');
-    }
-    return;
-  }
-
-  // Otherwise treat as a goal
-  addUserMsg(trimmed);
   await generatePrompt(trimmed);
 }
 
 async function generatePrompt(goal) {
   _state = 'prompting';
-  setStatus('Generating prompt...');
+  setStatus('Generating...');
+  setGoalBarEnabled(false);
 
   try {
     const settings = loadSettings();
     _repoRoot = settings.repo_root;
 
     if (!_repoRoot) {
-      addStatusCard('Set a project folder in Settings first.', 'error');
+      addStatusMsg('Set a project folder in Settings first.', 'error');
       _state = 'idle';
       setStatus('Idle');
+      setGoalBarEnabled(true);
       return;
     }
 
     const res = await apiPost('/api/relay/generate-prompt', { goal, repo_root: _repoRoot });
     if (res.error) {
-      addStatusCard(res.error, 'error');
+      addStatusMsg(res.error, 'error');
       _state = 'idle';
       setStatus('Idle');
+      setGoalBarEnabled(true);
       return;
     }
 
-    addPromptCard('Planning Prompt', res.prompt);
+    clearAction();
+    addPromptCard(res.prompt);
     addPasteCard('Paste AI Response', 'Paste the JSON task plan from your AI here...', async (text) => {
-      addUserMsg(text.length > 200 ? text.slice(0, 200) + '...' : text);
       await importPlan(text, _repoRoot);
     });
 
     _state = 'waiting_plan';
     setStatus('Waiting for plan...');
   } catch (err) {
-    addStatusCard(err.message || 'Failed to generate prompt', 'error');
+    addStatusMsg(err.message || 'Failed to generate prompt', 'error');
     _state = 'idle';
     setStatus('Idle');
+    setGoalBarEnabled(true);
   }
 }
 
@@ -243,18 +368,33 @@ async function importPlan(rawText, repoRoot) {
   try {
     const res = await apiPost('/api/relay/import-plan', { raw_text: rawText, repo_root: repoRoot });
     if (res.error) {
-      addStatusCard(res.error, 'error');
+      addStatusMsg(res.error, 'error');
       return;
     }
     _tasks = res.tasks || [];
     _relaySessionId = res.relay_session_id || '';
-    addTaskListCard(_tasks);
+    _planFile = res.plan_file || '';
+    renderPipeline(_tasks);
+    updateSessionMeta();
+
+    clearAction();
+    addStatusMsg(`${_tasks.length} tasks loaded. Click "Run All" to start.`, 'status');
+
+    // Show controls
+    const runBtn = $('btn-run-all');
+    const loadBtn = $('btn-load-plan');
+    if (runBtn) runBtn.style.display = '';
+    if (loadBtn) loadBtn.style.display = '';
+
     _state = 'tasks_loaded';
     setStatus(`${_tasks.length} tasks loaded`);
+    setGoalBarEnabled(false);
   } catch (err) {
-    addStatusCard(err.message || 'Failed to import plan', 'error');
+    addStatusMsg(err.message || 'Failed to import plan', 'error');
   }
 }
+
+// ── Run Execution ────────────────────────────────────────────────────────────
 
 async function launchRun() {
   const settings = loadSettings();
@@ -268,69 +408,84 @@ async function launchRun() {
   }
 
   _state = 'running';
-  setStatus('Running...');
+  setStatus('Running...', 'running');
+  setGoalBarEnabled(false);
   $('btn-stop-run').style.display = '';
-  addStatusCard('Bridge started — Aider is executing tasks...', 'status');
-  
-  // Hide run buttons
-  document.querySelectorAll('.relay-card-actions').forEach(el => {
-    if (el.querySelector('.relay-run-btn')) el.style.display = 'none';
-  });
+  $('btn-run-all').style.display = 'none';
+  $('btn-load-plan').style.display = 'none';
+
+  clearAction();
+  addStatusMsg('Bridge started — Aider is executing tasks...', 'status');
+  showConsole();
+  startElapsedTimer();
+
+  // Connect SSE
+  if (_sse) _sse.disconnect();
   _sse = new SSEClient('/api/run/stream');
   _sse
     .on('log', d => {
-      // Show important log lines as status cards
       const line = d.line || '';
-      if (/Task\s+\d+.*attempt/i.test(line)) {
-        addStatusCard(line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), 'status');
+      appendLog(line);
+      // Update pipeline on task start
+      const taskMatch = line.match(/Task\s+(\d+).*attempt/i);
+      if (taskMatch) {
+        const tid = parseInt(taskMatch[1]);
+        updateTaskState(tid, 'active', 'Running');
+        addStatusMsg(line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), 'status');
       }
     })
     .on('supervisor_review_requested', () => {
-      console.log('Instant review requested via SSE');
       pollReview();
     })
     .on('complete', d => {
       _state = 'done';
       const ok = d.status === 'success';
-      addStatusCard(ok ? 'All tasks completed successfully!' : 'Run finished with failures.', ok ? 'done' : 'error');
-      setStatus(ok ? 'Complete' : 'Failed');
+      setStatus(ok ? 'Complete' : 'Failed', ok ? 'done' : 'error');
+      addStatusMsg(ok ? 'All tasks completed successfully!' : 'Run finished with failures.', ok ? 'done' : 'error');
       $('btn-stop-run').style.display = 'none';
       stopPolling();
-      addBridgeMsg('Enter a new goal to start another run.');
+      stopElapsedTimer();
+      setGoalBarEnabled(true);
     })
     .on('error', d => {
       _state = 'done';
-      addStatusCard(d.message || 'Run failed', 'error');
-      setStatus('Error');
+      setStatus('Error', 'error');
+      addStatusMsg(d.message || 'Run failed', 'error');
       $('btn-stop-run').style.display = 'none';
       stopPolling();
+      stopElapsedTimer();
+      setGoalBarEnabled(true);
     })
     .on('stopped', () => {
       _state = 'idle';
-      addStatusCard('Run stopped by user.', 'error');
-      setStatus('Stopped');
+      setStatus('Stopped', 'error');
+      addStatusMsg('Run stopped by user.', 'error');
       $('btn-stop-run').style.display = 'none';
       stopPolling();
+      stopElapsedTimer();
+      setGoalBarEnabled(true);
     })
     .connect();
 
-  // Start polling for review requests
   startPolling();
 
   try {
     await apiPost('/api/settings', settings);
     await apiPost('/api/run', settings);
   } catch (err) {
-    addStatusCard(err.message || 'Failed to start run', 'error');
-    _state = 'idle';
-    setStatus('Error');
+    addStatusMsg(err.message || 'Failed to start run', 'error');
+    _state = 'done';
+    setStatus('Error', 'error');
+    stopPolling();
+    stopElapsedTimer();
+    setGoalBarEnabled(true);
   }
 }
 
-// ── Polling for Review Requests ──────────────────────────────────────────────
+// ── Polling ──────────────────────────────────────────────────────────────────
 
 function startPolling() {
-  if (_pollTimer) return;
+  stopPolling();
   _pollTimer = setInterval(pollReview, 2000);
 }
 
@@ -344,12 +499,19 @@ async function pollReview() {
   try {
     const state = await fetch('/api/relay/state?repo_root=' + encodeURIComponent(_repoRoot)).then(r => r.json());
 
+    // Update tasks in pipeline if available
+    if (state.tasks && state.tasks.length > 0) {
+      _tasks = state.tasks;
+      renderPipeline(_tasks);
+    }
+
     // Check for review request
     if (state.current_review && !_currentReviewTaskId) {
       const taskId = state.current_review.task_id;
       _currentReviewTaskId = taskId;
       _state = 'reviewing';
-      setStatus(`Review required — Task ${taskId}`);
+      setStatus(`Review — Task ${taskId}`, 'reviewing');
+      updateTaskState(taskId, 'review', 'Review');
 
       // Get the review packet
       const packetRes = await fetch(
@@ -362,36 +524,25 @@ async function pollReview() {
     // Check if run completed
     if (!state.is_running && !state.live_run_active && _state === 'running') {
       _state = 'done';
-      setStatus('Complete');
+      setStatus('Complete', 'done');
       stopPolling();
+      stopElapsedTimer();
+      setGoalBarEnabled(true);
     }
   } catch (_) {}
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── UI Zone Control ──────────────────────────────────────────────────────────
 
-function loadSettings() {
-  return {
-    repo_root: $('f-repo-root')?.value?.trim() || '',
-    aider_model: $('f-aider-model')?.value?.trim() || 'ollama/qwen2.5-coder:7b',
-    supervisor: 'manual',
-    manual_supervisor: true,
-    task_timeout: parseInt($('f-task-timeout')?.value || '600', 10),
-    max_task_retries: parseInt($('f-max-retries')?.value || '10', 10),
-  };
+function setGoalBarEnabled(enabled) {
+  const bar = $('mc-goal-bar');
+  if (bar) {
+    if (enabled) bar.classList.remove('--disabled');
+    else bar.classList.add('--disabled');
+  }
 }
 
-function setStatus(text) {
-  const el = $('relay-status');
-  if (el) el.textContent = text;
-}
-
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
-
-// ── Init ─────────────────────────────────────────────────────────────────────
+// ── Initialization ───────────────────────────────────────────────────────────
 
 async function init() {
   // Load settings
@@ -402,115 +553,151 @@ async function init() {
     if ($('f-task-timeout')) $('f-task-timeout').value = settings.task_timeout || 600;
     if ($('f-max-retries')) $('f-max-retries').value = settings.max_task_retries || 10;
     _repoRoot = settings.repo_root || '';
+    updateSessionMeta();
   } catch (_) {}
 
-  // Check if a run or relay session is active and restore state
+  // Restore relay state from project
   try {
     const state = await fetch('/api/relay/state?repo_root=' + encodeURIComponent(_repoRoot)).then(r => r.json());
-    
-    // 1. Restore repo root and model
-    if ($('f-repo-root')) $('f-repo-root').value = state.repo_root || _repoRoot;
+
     _repoRoot = state.repo_root || _repoRoot;
     _relaySessionId = state.relay_session_id || '';
+    updateSessionMeta();
 
-    // 2. Re-render message history if we have a goal and prompt
-    if (state.goal && state.prompt_output) {
-      // Hide welcome msg
-      const welcome = $('relay-welcome');
+    // Restore tasks
+    if (state.tasks && state.tasks.length > 0) {
+      _tasks = state.tasks;
+      _planFile = state.plan_file || '';
+      renderPipeline(_tasks);
+
+      // Hide welcome
+      const welcome = $('mc-welcome');
       if (welcome) welcome.style.display = 'none';
 
-      addUserMsg(state.goal);
-      addPromptCard('Planning Prompt', state.prompt_output);
-      
-      if (state.tasks && state.tasks.length > 0) {
-        _tasks = state.tasks;
-        addTaskListCard(_tasks);
+      // Show prompt if available
+      if (state.prompt_output) {
+        addPromptCard(state.prompt_output);
+      }
+
+      // Check if bridge is running
+      const runStatus = await fetch('/api/run/status').then(r => r.json());
+      if (runStatus.is_running) {
+        _state = 'running';
+        setStatus('Running...', 'running');
+        setGoalBarEnabled(false);
+        $('btn-stop-run').style.display = '';
+        showConsole();
+        startElapsedTimer();
+        addStatusMsg('Reconnected to running bridge session.', 'status');
+
+        // Reconnect SSE
+        if (!_sse) {
+          _sse = new SSEClient('/api/run/stream');
+          _sse
+            .on('log', d => {
+              const line = d.line || '';
+              appendLog(line);
+              const taskMatch = line.match(/Task\s+(\d+).*attempt/i);
+              if (taskMatch) {
+                updateTaskState(parseInt(taskMatch[1]), 'active', 'Running');
+              }
+            })
+            .on('supervisor_review_requested', () => pollReview())
+            .on('complete', d => {
+              _state = 'done';
+              setStatus(d.status === 'success' ? 'Complete' : 'Failed', d.status === 'success' ? 'done' : 'error');
+              $('btn-stop-run').style.display = 'none';
+              stopPolling();
+              stopElapsedTimer();
+              setGoalBarEnabled(true);
+            })
+            .connect();
+        }
+        startPolling();
+      } else {
+        // Not running — show controls
         _state = 'tasks_loaded';
         setStatus(`${_tasks.length} tasks loaded`);
-      } else {
-        // Still wait for plan paste if prompt was generated but no tasks loaded
-        addPasteCard('Paste AI Response', 'Paste the JSON task plan from your AI here...', async (text) => {
-          addUserMsg(text.length > 200 ? text.slice(0, 200) + '...' : text);
-          await importPlan(text, _repoRoot);
-        });
-        _state = 'waiting_plan';
-        setStatus('Waiting for plan...');
+        setGoalBarEnabled(false);
+        const runBtn = $('btn-run-all');
+        const loadBtn = $('btn-load-plan');
+        if (runBtn) runBtn.style.display = '';
+        if (loadBtn) loadBtn.style.display = '';
+        addStatusMsg(`${_tasks.length} tasks restored from project. Click "Run All" to continue.`, 'status');
       }
-    }
 
-    // 3. Connect SSE and poll if a bridge run is actually active
-    const status = await fetch('/api/run/status').then(r => r.json());
-    if (status.is_running) {
-      // (Rest of the existing reconnection logic remains but we move it inside this state-aware block)
-      _state = 'running';
-      setStatus('Running...');
-      $('btn-stop-run').style.display = '';
-      addStatusCard('A run is already in progress. Reconnecting...', 'status');
-      
-      if (!_sse) {
-        _sse = new SSEClient('/api/run/stream');
-        _sse
-          .on('log', d => {
-            const line = d.line || '';
-            if (/Task\s+\d+.*attempt/i.test(line)) {
-              addStatusCard(line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), 'status');
-            }
-          })
-          .on('supervisor_review_requested', () => {
-            console.log('Instant review requested via SSE (reconnect)');
-            pollReview();
-          })
-          .on('complete', d => {
-            _state = 'done';
-            addStatusCard(d.status === 'success' ? 'All tasks completed!' : 'Run finished with failures.', d.status === 'success' ? 'done' : 'error');
-            setStatus(d.status === 'success' ? 'Complete' : 'Failed');
-            $('btn-stop-run').style.display = 'none';
-            stopPolling();
-          })
-          .connect();
+      // Check for active review
+      if (state.current_review) {
+        const taskId = state.current_review.task_id;
+        _currentReviewTaskId = taskId;
+        _state = 'reviewing';
+        setStatus(`Review — Task ${taskId}`, 'reviewing');
+        updateTaskState(taskId, 'review', 'Review');
+
+        const res = await fetch(
+          `/api/relay/review-packet?task_id=${taskId}&repo_root=${encodeURIComponent(_repoRoot)}&relay_session_id=${_relaySessionId}`
+        ).then(r => r.json());
+        addReviewCard(taskId, res.packet || JSON.stringify(state.current_review, null, 2));
+        startPolling();
       }
-      startPolling();
-    }
-
-    // 4. If there's an active review, show it IMMEDIATELY
-    if (state.current_review) {
-      const taskId = state.current_review.task_id;
-      _currentReviewTaskId = taskId;
-      _state = 'reviewing';
-      setStatus(`Review required — Task ${taskId}`);
-
-      // Get the review packet
-      const res = await fetch(
-        `/api/relay/review-packet?task_id=${taskId}&repo_root=${encodeURIComponent(_repoRoot)}&relay_session_id=${_relaySessionId}`
-      ).then(r => r.json());
-
-      addReviewCard(taskId, res.packet || JSON.stringify(state.current_review, null, 2));
     }
   } catch (err) {
     console.error('Failed to restore relay state:', err);
   }
 
-  // Wire send button
+  // ── Wire Events ──────────────────────────────────────────────────────────
+
+  // Send button
   $('btn-send')?.addEventListener('click', () => {
-    const input = $('relay-input');
+    const input = $('mc-goal-input');
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
-    handleInput(text);
+    // Hide welcome
+    const welcome = $('mc-welcome');
+    if (welcome) welcome.style.display = 'none';
+    handleGoalInput(text);
     input.value = '';
     autoResize(input);
   });
 
-  // Wire enter key (Ctrl+Enter to send)
-  $('relay-input')?.addEventListener('keydown', e => {
+  // Enter key (Ctrl/Cmd + Enter)
+  $('mc-goal-input')?.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       $('btn-send')?.click();
     }
   });
 
-  // Auto-resize textarea
-  $('relay-input')?.addEventListener('input', e => autoResize(e.target));
+  // Auto-resize
+  $('mc-goal-input')?.addEventListener('input', e => autoResize(e.target));
+
+  // Run All button
+  $('btn-run-all')?.addEventListener('click', () => launchRun());
+
+  // Load Different Plan
+  $('btn-load-plan')?.addEventListener('click', () => {
+    _state = 'idle';
+    _tasks = [];
+    renderPipeline([]);
+    clearAction();
+    hideConsole();
+    hideDecision();
+    setGoalBarEnabled(true);
+    setStatus('Idle');
+    const welcome = $('mc-welcome');
+    if (welcome) welcome.style.display = '';
+    $('btn-run-all').style.display = 'none';
+    $('btn-load-plan').style.display = 'none';
+  });
+
+  // Clear console
+  $('btn-clear-console')?.addEventListener('click', clearConsole);
+
+  // Stop button
+  $('btn-stop-run')?.addEventListener('click', async () => {
+    try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {}
+  });
 
   // Settings
   $('btn-settings')?.addEventListener('click', () => {
@@ -518,9 +705,9 @@ async function init() {
   });
   $('wiz-btn-close-settings')?.addEventListener('click', () => {
     $('settings-overlay').style.display = 'none';
-    // Save settings
     const settings = loadSettings();
     _repoRoot = settings.repo_root;
+    updateSessionMeta();
     apiPost('/api/settings', settings).catch(() => {});
   });
   $('settings-overlay')?.addEventListener('click', e => {
@@ -528,6 +715,7 @@ async function init() {
       $('settings-overlay').style.display = 'none';
       const settings = loadSettings();
       _repoRoot = settings.repo_root;
+      updateSessionMeta();
       apiPost('/api/settings', settings).catch(() => {});
     }
   });
@@ -539,13 +727,9 @@ async function init() {
       if (d.path && $('f-repo-root')) {
         $('f-repo-root').value = d.path;
         _repoRoot = d.path;
+        updateSessionMeta();
       }
     } catch (_) {}
-  });
-
-  // Stop button
-  $('btn-stop-run')?.addEventListener('click', async () => {
-    try { await fetch('/api/run/stop', { method: 'POST' }); } catch (_) {}
   });
 }
 
