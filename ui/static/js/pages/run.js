@@ -78,10 +78,11 @@ function addTaskListCard(tasks) {
   card.className = 'relay-card relay-card--tasks';
   let html = `<div class="relay-card-title">Loaded ${tasks.length} task(s)</div>`;
   for (const t of tasks) {
-    html += `<div class="relay-task-item" data-id="${t.id}">
+    html += `<div class="relay-task-item relay-task-item--${t.status || 'not_started'}" data-id="${t.id}">
       <span class="relay-task-num">${t.id}</span>
       <span class="relay-task-type">${_esc(t.type || '?')}</span>
       <span class="relay-task-files">${_esc((t.files || []).join(', '))}</span>
+      <span class="relay-task-status">${_esc(t.status_label || 'Not started')}</span>
     </div>`;
   }
   html += `<div class="relay-card-actions">
@@ -171,7 +172,7 @@ async function handleInput(text) {
   const trimmed = text.trim();
   if ((trimmed.startsWith('{') || trimmed.startsWith('```')) && trimmed.includes('"tasks"')) {
     addUserMsg(trimmed.length > 200 ? trimmed.slice(0, 200) + '...' : trimmed);
-    await importPlan(trimmed);
+    await importPlan(trimmed, _repoRoot);
     return;
   }
 
@@ -226,7 +227,7 @@ async function generatePrompt(goal) {
     addPromptCard('Planning Prompt', res.prompt);
     addPasteCard('Paste AI Response', 'Paste the JSON task plan from your AI here...', async (text) => {
       addUserMsg(text.length > 200 ? text.slice(0, 200) + '...' : text);
-      await importPlan(text);
+      await importPlan(text, _repoRoot);
     });
 
     _state = 'waiting_plan';
@@ -238,9 +239,9 @@ async function generatePrompt(goal) {
   }
 }
 
-async function importPlan(rawText) {
+async function importPlan(rawText, repoRoot) {
   try {
-    const res = await apiPost('/api/relay/import-plan', { raw_text: rawText });
+    const res = await apiPost('/api/relay/import-plan', { raw_text: rawText, repo_root: repoRoot });
     if (res.error) {
       addStatusCard(res.error, 'error');
       return;
@@ -259,6 +260,7 @@ async function launchRun() {
   const settings = loadSettings();
   settings.plan_file = _planFile || '';
   settings.manual_supervisor = true;
+  settings.relay_session_id = _relaySessionId;
 
   if (!settings.repo_root) {
     toast('Set project folder in Settings', 'warning');
@@ -269,9 +271,11 @@ async function launchRun() {
   setStatus('Running...');
   $('btn-stop-run').style.display = '';
   addStatusCard('Bridge started — Aider is executing tasks...', 'status');
-
-  // Connect SSE for live log
-  if (_sse) _sse.disconnect();
+  
+  // Hide run buttons
+  document.querySelectorAll('.relay-card-actions').forEach(el => {
+    if (el.querySelector('.relay-run-btn')) el.style.display = 'none';
+  });
   _sse = new SSEClient('/api/run/stream');
   _sse
     .on('log', d => {
@@ -280,6 +284,10 @@ async function launchRun() {
       if (/Task\s+\d+.*attempt/i.test(line)) {
         addStatusCard(line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), 'status');
       }
+    })
+    .on('supervisor_review_requested', () => {
+      console.log('Instant review requested via SSE');
+      pollReview();
     })
     .on('complete', d => {
       _state = 'done';
@@ -331,10 +339,10 @@ function stopPolling() {
 }
 
 async function pollReview() {
-  if (_state !== 'running') return;
+  if (_state !== 'running' && _state !== 'reviewing') return;
 
   try {
-    const state = await fetch('/api/relay/state').then(r => r.json());
+    const state = await fetch('/api/relay/state?repo_root=' + encodeURIComponent(_repoRoot)).then(r => r.json());
 
     // Check for review request
     if (state.current_review && !_currentReviewTaskId) {
@@ -396,14 +404,49 @@ async function init() {
     _repoRoot = settings.repo_root || '';
   } catch (_) {}
 
-  // Check if a run is already active
+  // Check if a run or relay session is active and restore state
   try {
+    const state = await fetch('/api/relay/state?repo_root=' + encodeURIComponent(_repoRoot)).then(r => r.json());
+    
+    // 1. Restore repo root and model
+    if ($('f-repo-root')) $('f-repo-root').value = state.repo_root || _repoRoot;
+    _repoRoot = state.repo_root || _repoRoot;
+    _relaySessionId = state.relay_session_id || '';
+
+    // 2. Re-render message history if we have a goal and prompt
+    if (state.goal && state.prompt_output) {
+      // Hide welcome msg
+      const welcome = $('relay-welcome');
+      if (welcome) welcome.style.display = 'none';
+
+      addUserMsg(state.goal);
+      addPromptCard('Planning Prompt', state.prompt_output);
+      
+      if (state.tasks && state.tasks.length > 0) {
+        _tasks = state.tasks;
+        addTaskListCard(_tasks);
+        _state = 'tasks_loaded';
+        setStatus(`${_tasks.length} tasks loaded`);
+      } else {
+        // Still wait for plan paste if prompt was generated but no tasks loaded
+        addPasteCard('Paste AI Response', 'Paste the JSON task plan from your AI here...', async (text) => {
+          addUserMsg(text.length > 200 ? text.slice(0, 200) + '...' : text);
+          await importPlan(text, _repoRoot);
+        });
+        _state = 'waiting_plan';
+        setStatus('Waiting for plan...');
+      }
+    }
+
+    // 3. Connect SSE and poll if a bridge run is actually active
     const status = await fetch('/api/run/status').then(r => r.json());
     if (status.is_running) {
+      // (Rest of the existing reconnection logic remains but we move it inside this state-aware block)
       _state = 'running';
       setStatus('Running...');
       $('btn-stop-run').style.display = '';
       addStatusCard('A run is already in progress. Reconnecting...', 'status');
+      
       if (!_sse) {
         _sse = new SSEClient('/api/run/stream');
         _sse
@@ -412,6 +455,10 @@ async function init() {
             if (/Task\s+\d+.*attempt/i.test(line)) {
               addStatusCard(line.replace(/.*\|\s*INFO\s*\|\s*\w+\s*\|\s*/, ''), 'status');
             }
+          })
+          .on('supervisor_review_requested', () => {
+            console.log('Instant review requested via SSE (reconnect)');
+            pollReview();
           })
           .on('complete', d => {
             _state = 'done';
@@ -423,9 +470,25 @@ async function init() {
           .connect();
       }
       startPolling();
-      return;
     }
-  } catch (_) {}
+
+    // 4. If there's an active review, show it IMMEDIATELY
+    if (state.current_review) {
+      const taskId = state.current_review.task_id;
+      _currentReviewTaskId = taskId;
+      _state = 'reviewing';
+      setStatus(`Review required — Task ${taskId}`);
+
+      // Get the review packet
+      const res = await fetch(
+        `/api/relay/review-packet?task_id=${taskId}&repo_root=${encodeURIComponent(_repoRoot)}&relay_session_id=${_relaySessionId}`
+      ).then(r => r.json());
+
+      addReviewCard(taskId, res.packet || JSON.stringify(state.current_review, null, 2));
+    }
+  } catch (err) {
+    console.error('Failed to restore relay state:', err);
+  }
 
   // Wire send button
   $('btn-send')?.addEventListener('click', () => {

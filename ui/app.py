@@ -469,7 +469,7 @@ class SupervisorProxyThread(threading.Thread):
             packet = ""
             try:
                 from utils.relay_formatter import build_review_packet
-                tasks = state_store.load_relay_tasks()
+                tasks = state_store.load_relay_tasks(self._repo_root)
                 total = len(tasks)
                 task = next((t for t in tasks if str(t.get("id")) == str(task_id)), req_data)
                 diff = req_data.get("diff", "")
@@ -482,7 +482,7 @@ class SupervisorProxyThread(threading.Thread):
 
             _broadcast("reviewer_active", {
                 "task_index": task_id,
-                "task_total": len(state_store.load_relay_tasks()) or "?",
+                "task_total": len(state_store.load_relay_tasks(self._repo_root)) or "?",
                 "task_title": req_data.get("instruction", "")[:60],
             })
             _broadcast("supervisor_review_requested", {
@@ -805,6 +805,20 @@ def api_start_run():
         }), 400
 
     state_store.save_settings(settings)
+    
+    # AI Relay Fix: if manual_supervisor is on (AI Relay mode) but no plan_file is set,
+    # it means the tasks are only in relay_tasks storage. 
+    # Bridge CLI (main.py) REQUIRES a physical file. We create one here.
+    if settings.get("manual_supervisor") and not settings.get("plan_file"):
+        tasks = state_store.load_relay_tasks(settings.get("repo_root"))
+        if tasks:
+            plan_dir = Path(settings["repo_root"]) / "bridge_progress"
+            plan_dir.mkdir(parents=True, exist_ok=True)
+            plan_path = plan_dir / "relay_plan.json"
+            plan_path.write_text(json.dumps({"tasks": tasks}, indent=2), encoding="utf-8")
+            settings["plan_file"] = str(plan_path)
+            # Update history_payload in _start_bridge_run with the new plan_file
+    
     run_id = _start_bridge_run(settings)
 
     return jsonify({"ok": True, "run_id": run_id})

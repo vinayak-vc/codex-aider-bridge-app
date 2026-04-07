@@ -151,45 +151,75 @@ def _empty_token_totals() -> dict:
     }
 
 
-# ── Relay tasks ───────────────────────────────────────────────────────────────
+# ── Relay tasks (Project-Scoped) ──────────────────────────────────────────────
 
-def load_relay_tasks() -> list[dict]:
-    """Return the currently imported relay task list (empty list if none)."""
-    _ensure()
-    if RELAY_TASKS_FILE.exists():
+def _relay_state_file(repo_root: str) -> Path:
+    """Return the absolute path to the relay state file for a project."""
+    return Path(repo_root) / "bridge_progress" / "relay_state.json"
+
+
+def load_relay_tasks(repo_root: str) -> list[dict]:
+    """Return the currently imported relay task list for a project."""
+    if not repo_root:
+        return []
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
         try:
-            return json.loads(RELAY_TASKS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            return data.get("tasks", [])
         except Exception:
             pass
     return []
 
 
-def save_relay_tasks(tasks: list[dict]) -> None:
-    """Persist the relay task list."""
-    _ensure()
-    RELAY_TASKS_FILE.write_text(json.dumps(tasks, indent=2), encoding="utf-8")
+def save_relay_tasks(repo_root: str, tasks: list[dict]) -> None:
+    """Persist the relay task list for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Load current UI state to preserve it
+    current_state = load_relay_ui_state(repo_root)
+    payload = {"tasks": tasks, "ui_state": current_state}
+    state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def clear_relay_tasks() -> None:
-    """Remove any previously imported relay tasks."""
-    _ensure()
-    if RELAY_TASKS_FILE.exists():
-        RELAY_TASKS_FILE.unlink()
-
-
-def load_relay_ui_state() -> dict:
-    _ensure()
-    if RELAY_UI_STATE_FILE.exists():
+def clear_relay_tasks(repo_root: str) -> None:
+    """Remove any previously imported relay tasks for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
         try:
-            raw = json.loads(RELAY_UI_STATE_FILE.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            data["tasks"] = []
+            state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def load_relay_ui_state(repo_root: str) -> dict:
+    """Return the persisted relay UI state for a project."""
+    if not repo_root:
+        return {}
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            return data.get("ui_state", {})
         except Exception:
             pass
     return {}
 
 
-def save_relay_ui_state(state: dict) -> None:
-    _ensure()
+def save_relay_ui_state(repo_root: str, state: dict) -> None:
+    """Persist the relay UI state for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
     allowed = {
         "step",
         "goal",
@@ -201,13 +231,25 @@ def save_relay_ui_state(state: dict) -> None:
         "plan_paste",
     }
     cleaned = {key: state.get(key) for key in allowed if key in state}
-    RELAY_UI_STATE_FILE.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
+    
+    # Load current tasks to preserve them
+    current_tasks = load_relay_tasks(repo_root)
+    payload = {"tasks": current_tasks, "ui_state": cleaned}
+    state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def clear_relay_ui_state() -> None:
-    _ensure()
-    if RELAY_UI_STATE_FILE.exists():
-        RELAY_UI_STATE_FILE.unlink()
+def clear_relay_ui_state(repo_root: str) -> None:
+    """Remove any previously imported relay UI state for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            data["ui_state"] = {}
+            state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
 
 # Chat sessions

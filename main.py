@@ -1085,7 +1085,7 @@ def execute_task_with_review(
             )
 
         # ── Step 2: Collect diff ─────────────────────────────────────────────
-        diff = diff_collector.collect()
+        diff = diff_collector.collect(files=current_task.files)
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
 
         # Track Aider token usage (estimated from task instruction + file sizes + diff)

@@ -227,9 +227,26 @@
   font-size: 11px;
 }
 
-.relay-task-item.--skipped {
-  opacity: 0.35;
+.relay-task-item--approved {
+  color: var(--color-success);
+}
+.relay-task-item--approved .relay-task-status {
+  font-weight: bold;
+}
+
+.relay-task-item--failed {
+  color: var(--color-danger);
+}
+
+.relay-task-item--skipped {
+  opacity: 0.4;
   text-decoration: line-through;
+}
+
+.relay-task-status {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 /* ── Paste area ──────────────────────────────────────────────────────────── */

@@ -5,6 +5,8 @@ Extracted from ui/app.py for maintainability.
 from __future__ import annotations
 
 import json
+import sys
+import uuid
 from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, render_template, request
@@ -43,19 +45,31 @@ def _relay_executable_task_count(tasks: list[dict]) -> int:
     return count
 
 
-def _relay_current_session_id() -> str:
-    return str(state_store.load_relay_ui_state().get("relay_session_id") or "").strip()
+def _relay_current_session_id(repo_root: str = "") -> str:
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root") or "").strip()
+    return str(state_store.load_relay_ui_state(repo_root).get("relay_session_id") or "").strip()
+
+
+def _relay_normalize(text: str) -> str:
+    """Strip all non-alphanumeric chars and lowercase for lenient matching."""
+    return "".join(c for c in str(text).lower() if c.isalnum())
 
 
 def _relay_task_matches_payload(task: dict, payload: dict) -> bool:
+    # Match primarily on Task ID for manual-supervisor resumption
+    if int(task.get("id", -1)) == int(payload.get("task_id", -2)):
+        # Further confirm with normalized instructions
+        t_norm = _relay_normalize(task.get("instruction", ""))
+        p_norm = _relay_normalize(payload.get("instruction", ""))
+        if t_norm == p_norm:
+            return True
+            
+    # Fallback to older strict matching if needed
     payload_instruction = str(payload.get("instruction", "")).strip()
-    payload_files = payload.get("files", [])
-    if not isinstance(payload_files, list):
-        return False
-
     task_instruction = str(task.get("instruction", "")).strip()
-    task_files = [str(item) for item in task.get("files", [])]
-    return payload_instruction == task_instruction and [str(item) for item in payload_files] == task_files
+    return payload_instruction == task_instruction
 
 
 def _relay_matches_session(payload: dict, relay_session_id: str) -> bool:
@@ -143,11 +157,17 @@ def _relay_task_statuses(repo_root: str, current_tasks: list[dict], relay_sessio
     return statuses
 
 
-def _relay_state_payload() -> dict:
-    ui_state = state_store.load_relay_ui_state()
-    tasks = state_store.load_relay_tasks()
+def _relay_state_payload(repo_root: str = "") -> dict:
+    # If no repo_root provided as arg, try to find it from global settings
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = str(settings.get("repo_root") or "").strip()
+
+    ui_state = state_store.load_relay_ui_state(repo_root)
+    tasks = state_store.load_relay_tasks(repo_root)
     settings = state_store.load_settings()
-    repo_root = str(ui_state.get("repo_root") or settings.get("repo_root") or "").strip()
+    
+    # Use the verified repo_root for everything else
     relay_session_id = str(ui_state.get("relay_session_id") or "").strip()
     task_statuses = _relay_task_statuses(repo_root, tasks, relay_session_id)
 
@@ -265,6 +285,14 @@ def api_relay_generate_prompt():
                 pass
 
     prompt = build_plan_prompt(goal, knowledge_context, repo_root)
+    
+    # Save the generated state so the UI can restore it after tab switching
+    ui_state = state_store.load_relay_ui_state(repo_root)
+    ui_state["goal"] = goal
+    ui_state["repo_root"] = repo_root
+    ui_state["prompt_output"] = prompt
+    state_store.save_relay_ui_state(repo_root, ui_state)
+    
     return jsonify({"prompt": prompt})
 
 
@@ -273,18 +301,32 @@ def api_relay_import_plan():
     """Parse the web AI's plan response and persist the task list."""
     from utils.relay_formatter import parse_plan
 
-    data     = request.get_json(force=True) or {}
-    raw_text = data.get("raw_text", "")
+    data      = request.get_json(force=True) or {}
+    raw_text  = (data.get("raw_text") or "").strip()
+    repo_root = (data.get("repo_root") or "").strip()
+    if not raw_text:
+        return jsonify({"error": "raw_text is required"}), 400
+    
+    # Try to extract repo_root from settings if not passed
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "")
+
     try:
         tasks = parse_plan(raw_text)
+        if not tasks:
+            return jsonify({"error": "No tasks found in AI response. Ensure it is a valid JSON plan."}), 400
+
+        # Save to project-specific state
+        state_store.save_relay_tasks(repo_root, tasks)
+        
+        session_id = _relay_current_session_id(repo_root)
+        ui_state = state_store.load_relay_ui_state(repo_root)
+        ui_state["relay_session_id"] = session_id
+        ui_state["plan_paste"] = raw_text
+        state_store.save_relay_ui_state(repo_root, ui_state)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 422
-
-    state_store.save_relay_tasks(tasks)
-    ui_state = state_store.load_relay_ui_state()
-    ui_state["step"] = 2
-    ui_state["relay_session_id"] = uuid.uuid4().hex[:12]
-    state_store.save_relay_ui_state(ui_state)
     return jsonify({"tasks": tasks, "count": len(tasks), "relay_session_id": ui_state["relay_session_id"]})
 
 
@@ -301,13 +343,19 @@ def api_relay_skip_task():
     if run.is_running or run.status in ("running", "waiting_review", "paused"):
         return jsonify({"error": "Stop or finish the active run before changing skipped tasks."}), 409
 
-    tasks = state_store.load_relay_tasks()
+    # Try to extract repo_root from settings if not passed
+    repo_root = (data.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "")
+
+    tasks = state_store.load_relay_tasks(repo_root)
     task = next((item for item in tasks if int(item.get("id", 0)) == task_id), None)
     if task is None:
         return jsonify({"error": f"Task {task_id} was not found."}), 404
 
     current_status = str(task.get("status", "")).strip().lower()
-    ui_state = state_store.load_relay_ui_state()
+    ui_state = state_store.load_relay_ui_state(repo_root)
     known_statuses = _relay_task_statuses(
         str(ui_state.get("repo_root", "") or ""),
         tasks,
@@ -323,19 +371,25 @@ def api_relay_skip_task():
         if current_status == "skipped":
             task.pop("status", None)
 
-    state_store.save_relay_tasks(tasks)
-    return jsonify(_relay_state_payload())
+    state_store.save_relay_tasks(repo_root, tasks)
+    return jsonify(_relay_state_payload(repo_root))
 
 
 @relay_bp.route("/api/relay/state", methods=["GET"])
 def api_relay_state():
-    return jsonify(_relay_state_payload())
+    repo_root = (request.args.get("repo_root") or "").strip()
+    return jsonify(_relay_state_payload(repo_root))
 
 
 @relay_bp.route("/api/relay/state", methods=["DELETE"])
 def api_relay_state_clear():
-    state_store.clear_relay_ui_state()
-    state_store.clear_relay_tasks()
+    repo_root = (request.args.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "")
+    
+    state_store.clear_relay_ui_state(repo_root)
+    state_store.clear_relay_tasks(repo_root)
     return jsonify({"ok": True})
 
 
@@ -347,7 +401,7 @@ def api_relay_review_packet():
     task_id   = request.args.get("task_id", "")
     repo_root = (request.args.get("repo_root") or "").strip()
     goal      = (request.args.get("goal") or "").strip()
-    relay_session_id = (request.args.get("relay_session_id") or _relay_current_session_id()).strip()
+    relay_session_id = (request.args.get("relay_session_id") or _relay_current_session_id(repo_root)).strip()
 
     if not task_id or not repo_root:
         return jsonify({"error": "task_id and repo_root are required"}), 400
@@ -362,7 +416,7 @@ def api_relay_review_packet():
     except Exception as exc:
         return jsonify({"error": f"Could not read request file: {exc}"}), 500
 
-    tasks      = state_store.load_relay_tasks()
+    tasks      = state_store.load_relay_tasks(repo_root)
     total      = len(tasks)
     task       = next((t for t in tasks if str(t.get("id")) == str(task_id)), req_data)
     diff       = req_data.get("diff", "")
@@ -383,7 +437,7 @@ def api_relay_submit_decision():
     raw_text  = data.get("raw_text", "")
     task_id   = data.get("task_id")
     repo_root = (data.get("repo_root") or "").strip()
-    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id()).strip()
+    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id(repo_root)).strip()
 
     if not task_id or not repo_root:
         return jsonify({"error": "task_id and repo_root are required"}), 400
@@ -420,7 +474,7 @@ def api_relay_replan_prompt():
     failed_reason = (data.get("failed_reason") or "").strip()
     repo_root     = (data.get("repo_root") or "").strip()
     goal          = (data.get("goal") or "").strip()
-    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id()).strip()
+    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id(repo_root)).strip()
 
     if not task_id or not repo_root:
         return jsonify({"error": "task_id and repo_root are required"}), 400
@@ -432,7 +486,7 @@ def api_relay_replan_prompt():
         try:
             req_data = json.loads(req_file.read_text(encoding="utf-8"))
             diff     = req_data.get("diff", "")
-            tasks    = state_store.load_relay_tasks()
+            tasks    = state_store.load_relay_tasks(repo_root)
             found    = next((t for t in tasks if str(t.get("id")) == str(task_id)), None)
             if found:
                 task = found
@@ -451,19 +505,20 @@ def api_relay_import_replan():
     """Parse replacement tasks from the web AI and splice them into the task list."""
     from utils.relay_formatter import parse_plan
 
-    data     = request.get_json(force=True) or {}
-    raw_text = data.get("raw_text", "")
-    task_id  = data.get("task_id")
+    data      = request.get_json(force=True) or {}
+    raw_text  = data.get("raw_text", "")
+    task_id   = data.get("task_id")
+    repo_root = (data.get("repo_root") or "").strip()
 
-    if not task_id:
-        return jsonify({"error": "task_id is required"}), 400
+    if not task_id or not repo_root:
+        return jsonify({"error": "task_id and repo_root are required"}), 400
 
     try:
         replacement_tasks = parse_plan(raw_text)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 422
 
-    tasks = state_store.load_relay_tasks()
+    tasks = state_store.load_relay_tasks(repo_root)
     # Remove the failed task and everything after it, then splice in replacements
     pivot = next((i for i, t in enumerate(tasks) if str(t.get("id")) == str(task_id)), None)
     if pivot is not None:
@@ -471,5 +526,5 @@ def api_relay_import_replan():
     else:
         tasks = tasks + replacement_tasks
 
-    state_store.save_relay_tasks(tasks)
+    state_store.save_relay_tasks(repo_root, tasks)
     return jsonify({"tasks": tasks, "count": len(tasks)})

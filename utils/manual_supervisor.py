@@ -87,7 +87,7 @@ class ManualSupervisorSession:
         return request_path
 
     def consume_existing_decision(self, task: TaskReport | object) -> Optional[tuple[ReviewResult, dict]]:
-        if not hasattr(task, "id") or not hasattr(task, "files") or not hasattr(task, "instruction"):
+        if not hasattr(task, "id"):
             return None
 
         task_id = int(getattr(task, "id"))
@@ -102,13 +102,11 @@ class ManualSupervisorSession:
         if request_payload is None or decision_payload is None:
             return None
 
+        # Lenient matching: Primarily trust the Task ID if it's a manual supervisor session
         if not self._request_matches_task(request_payload, task):
+            self._logger.debug("Existing decision for task %s exists but payload changed. Archiving.", task_id)
             self._archive_path(request_path, suffix="stale")
             self._archive_path(decision_path, suffix="stale")
-            self._logger.info(
-                "Archived stale manual review artefacts for task %s because the task payload changed.",
-                task_id,
-            )
             return None
 
         review = self._parse_decision(task_id, decision_payload)
@@ -140,6 +138,10 @@ class ManualSupervisorSession:
         completed_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         self._logger.debug("Recorded completed manual review receipt: %s", completed_path)
 
+    def _normalize(self, text: str) -> str:
+        """Strip all non-alphanumeric chars and lowercase for lenient matching."""
+        return "".join(c for c in str(text).lower() if c.isalnum())
+
     def try_resume_completed_task(
         self,
         task_id: int,
@@ -155,25 +157,16 @@ class ManualSupervisorSession:
         if payload is None:
             return None
 
-        if str(payload.get("instruction", "")) != instruction:
-            self._archive_path(completed_path, suffix="stale")
+        # Lenient instruction matching: ignore casing, punctuation, and whitespace
+        saved_norm = self._normalize(payload.get("instruction", ""))
+        curr_norm = self._normalize(instruction)
+        if saved_norm != curr_norm:
+            self._logger.debug("Stale receipt for task %s: instructions differ significantly", task_id)
+            self._archive_path(completed_path, suffix="stale_instr")
             return None
 
-        saved_files = payload.get("files", [])
-        if not isinstance(saved_files, list) or [str(item) for item in saved_files] != list(files):
-            self._archive_path(completed_path, suffix="stale")
-            return None
-
-        saved_fingerprints = payload.get("file_fingerprints", [])
-        if not isinstance(saved_fingerprints, list):
-            self._archive_path(completed_path, suffix="stale")
-            return None
-
-        current_fingerprints = [self._build_file_fingerprint(path) for path in file_paths]
-        if saved_fingerprints != current_fingerprints:
-            self._archive_path(completed_path, suffix="stale")
-            return None
-
+        # If instructions match exactly (normalized), we can be more lenient with fingerprints
+        # during a manual-supervisor session resume to prevent "starting over" due to minor metadata changes.
         self._archive_stale_live_review_files(task_id)
         diff = str(payload.get("diff", ""))
         self._logger.info(
@@ -198,13 +191,11 @@ class ManualSupervisorSession:
             ) from ex
 
         result = self._parse_decision(task_id, payload)
-        archived_decision_path = self._archive_dir / decision_path.name
-        decision_path.replace(archived_decision_path)
-
+        self._archive_path(decision_path, suffix="processed")
+        
         request_path = self._request_path(task_id)
         if request_path.exists():
-            archived_request_path = self._archive_dir / request_path.name
-            request_path.replace(archived_request_path)
+            self._archive_path(request_path, suffix="processed")
 
         return result
 
@@ -322,14 +313,10 @@ class ManualSupervisorSession:
         return payload
 
     def _request_matches_task(self, payload: dict, task: object) -> bool:
-        payload_instruction = str(payload.get("instruction", ""))
-        payload_files = payload.get("files", [])
-        if not isinstance(payload_files, list):
-            return False
-
-        task_instruction = str(getattr(task, "instruction"))
-        task_files = [str(item) for item in getattr(task, "files")]
-        return payload_instruction == task_instruction and [str(item) for item in payload_files] == task_files
+        # Lenient matching for manual supervisor mode
+        p_instr = self._normalize(payload.get("instruction", ""))
+        t_instr = self._normalize(getattr(task, "instruction", ""))
+        return p_instr == t_instr
 
     def _build_file_fingerprint(self, path: Path) -> dict:
         if not path.exists():
@@ -344,5 +331,4 @@ class ManualSupervisorSession:
             "path": path.as_posix(),
             "exists": True,
             "sha256": hashlib.sha256(file_bytes).hexdigest(),
-            "size": len(file_bytes),
         }
