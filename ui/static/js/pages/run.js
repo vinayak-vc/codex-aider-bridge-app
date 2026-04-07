@@ -617,13 +617,25 @@ async function init() {
       } else {
         // Not running — show controls
         _state = 'tasks_loaded';
-        setStatus(`${_tasks.length} tasks loaded`);
+        const done = state.completed_tasks || 0;
+        const total = state.total_tasks || 0;
+        const failedTask = _tasks.find(t => t.status === 'failed');
+        
+        setStatus(`${done} / ${total} tasks done`);
         setGoalBarEnabled(false);
         const runBtn = $('btn-run-all');
         const loadBtn = $('btn-load-plan');
         if (runBtn) runBtn.style.display = '';
         if (loadBtn) loadBtn.style.display = '';
-        addStatusMsg(`${_tasks.length} tasks restored from project. Click "Run All" to continue.`, 'status');
+
+        let msg = `${total} tasks restored. ${done} completed.`;
+        if (failedTask) {
+            msg += ` Task ${failedTask.id} failed last time. Click "Run All" to resume.`;
+            addStatusMsg(msg, 'error');
+        } else {
+            msg += ` Click "Run All" to finish the plan.`;
+            addStatusMsg(msg, 'status');
+        }
       }
 
       // Check for active review

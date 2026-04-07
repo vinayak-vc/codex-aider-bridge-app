@@ -111,7 +111,46 @@ def _relay_task_statuses(repo_root: str, current_tasks: list[dict], relay_sessio
     if not repo_root:
         return statuses
 
-    completed_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "completed"
+    bp_dir = Path(repo_root) / "bridge_progress"
+
+    # 1. Read checkpoint.json (Definitive completed IDs)
+    ckpt_path = bp_dir / "checkpoint.json"
+    if ckpt_path.exists():
+        try:
+            ckpt = json.loads(ckpt_path.read_text(encoding="utf-8"))
+            for tid in ckpt.get("completed", []):
+                statuses[int(tid)] = {"code": "approved", "label": "Done"}
+        except Exception: pass
+
+    # 2. Read task_metrics.json (Richer per-task state)
+    metrics_path = bp_dir / "task_metrics.json"
+    if metrics_path.exists():
+        try:
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+            for t_metric in metrics.get("tasks", []):
+                tid = int(t_metric.get("id", 0))
+                if tid <= 0: continue
+                if t_metric.get("completed") and tid not in statuses:
+                    statuses[tid] = {"code": "approved", "label": "Done"}
+            
+            f_id = metrics.get("failed_task_id")
+            if f_id:
+                statuses[int(f_id)] = {"code": "failed", "label": "Failed"}
+        except Exception: pass
+
+    # 3. Read last_run.json (Last failure reason)
+    last_run_path = bp_dir / "last_run.json"
+    if last_run_path.exists():
+        try:
+            lr = json.loads(last_run_path.read_text(encoding="utf-8"))
+            if lr.get("status") == "failure":
+                f_id = lr.get("failed_task_id")
+                if f_id and int(f_id) not in statuses:
+                    statuses[int(f_id)] = {"code": "failed", "label": "Failed"}
+        except Exception: pass
+
+    # 4. Fallback: manual_supervisor/completed/
+    completed_dir = bp_dir / "manual_supervisor" / "completed"
     if completed_dir.exists():
         pattern = f"task_*_{relay_session_id}_completed.json" if relay_session_id else "task_*_completed.json"
         for completed_file in sorted(completed_dir.glob(pattern)):
@@ -132,7 +171,8 @@ def _relay_task_statuses(repo_root: str, current_tasks: list[dict], relay_sessio
             except Exception:
                 pass
 
-    requests_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
+    # 5. Fallback: manual_supervisor/requests/ (Waiting for review)
+    requests_dir = bp_dir / "manual_supervisor" / "requests"
     if requests_dir.exists():
         pattern = f"task_*_{relay_session_id}_request.json" if relay_session_id else "task_*_request.json"
         for request_file in sorted(requests_dir.glob(pattern)):
