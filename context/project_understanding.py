@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 from utils.onboarding_scanner import OnboardingScanner
 from utils.project_knowledge import save_knowledge, to_context_text
+from utils.code_review_graph_sync import refresh_project_knowledge_with_code_review_graph
 
 _UNDERSTANDING_FILENAME: str = "AI_UNDERSTANDING.md"
 _MAX_DOC_FILES: int = 8
@@ -91,6 +92,28 @@ def ensure_project_understanding(
                 knowledge["project"]["type"] = original_project_type
         except Exception as ex:
             logger.warning("Project understanding scan failed (continuing without): %s", ex)
+
+    # External deep scanner enrichment (code-review-graph).
+    # Runs incrementally once initial knowledge exists, and refreshes graph-derived
+    # architecture context when enough time has elapsed.
+    try:
+        refresh_result = refresh_project_knowledge_with_code_review_graph(
+            repo_root,
+            knowledge,
+            logger,
+            force_full_rebuild=False,
+            min_interval_seconds=1800,
+        )
+        if refresh_result.get("ok") and refresh_result.get("changed"):
+            logger.info(
+                "code-review-graph sync complete (%s): nodes=%s edges=%s files=%s",
+                refresh_result.get("mode", "unknown"),
+                refresh_result.get("snapshot", {}).get("nodes", 0),
+                refresh_result.get("snapshot", {}).get("edges", 0),
+                refresh_result.get("snapshot", {}).get("files", 0),
+            )
+    except Exception as ex:
+        logger.warning("code-review-graph sync failed (continuing): %s", ex)
 
     _write_understanding_file(repo_root, knowledge)
     save_knowledge(knowledge, repo_root)

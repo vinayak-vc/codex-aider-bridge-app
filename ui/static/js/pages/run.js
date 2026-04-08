@@ -743,6 +743,54 @@ async function init() {
       }
     } catch (_) {}
   });
+
+  // ── Resizer Logic ────────────────────────────────────────────────────────
+  const resizer = $('mc-resizer');
+  const shell = document.querySelector('.mc-shell');
+  if (resizer && shell) {
+    // Restore preserved width
+    const savedWidth = localStorage.getItem('mc-pipeline-width');
+    if (savedWidth) {
+      shell.style.setProperty('--pipeline-width', savedWidth);
+    }
+
+    let isDragging = false;
+
+    resizer.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      resizer.classList.add('is-dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      
+      // Calculate new width (X position relative to the shell)
+      const rect = shell.getBoundingClientRect();
+      let newWidth = e.clientX - rect.left;
+      
+      // Constraints: 100px to 600px (or percentage-based if preferred, but pixels are more stable for sidebars)
+      if (newWidth < 150) newWidth = 150;
+      if (newWidth > 600) newWidth = 600;
+      
+      const widthStr = `${newWidth}px`;
+      shell.style.setProperty('--pipeline-width', widthStr);
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      resizer.classList.remove('is-dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      
+      // Save for next time
+      const finalWidth = shell.style.getPropertyValue('--pipeline-width');
+      localStorage.setItem('mc-pipeline-width', finalWidth);
+    });
+  }
 }
 
 init();
