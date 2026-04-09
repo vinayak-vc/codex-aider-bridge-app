@@ -308,30 +308,109 @@ Be specific in rework reasons. Vague reasons cause the LLM to make random change
 
 ## Stage 5 — Checkpoint & Completion
 
-After all tasks complete:
+The bridge auto-generates rich output files after every run. Read them all — do not skip any. They contain everything the user needs to see and everything claude-mem needs to remember.
 
-1. Check `<REPO_ROOT>/bridge_progress/task_metrics.json` — verify all task IDs show `"approved"` or `"success"`
-2. If any task shows `"failed"` after max retries — report it to the user with the failure reason from `bridge_progress/`
-3. The bridge auto-commits each approved task. Confirm with `git log --oneline -10` in `REPO_ROOT`
-4. Delete `<bridge_root>/TASK_PLAN_active.json` (cleanup)
-5. Report to the user: tasks completed, tasks failed, total git commits made
+### Step 5-A: Read all generated files
 
-### Save run summary to claude-mem
+Read these files from `<REPO_ROOT>/bridge_progress/` in this order:
 
-If claude-mem is running, save a compact run note so future sessions start with context. Use the `claude-mem:mem-search` skill's save mechanism or write a structured note with this content:
+**1. `task_metrics.json`**
+- Verify `status` is `"success"` or `"failure"`
+- Extract: `completed_task_ids`, `failed_task_id`, `planned_tasks`, `skipped_tasks`, `diffs_recorded`
+- If any task shows `"failed"` → extract the failure reason and report it
+
+**2. `RUN_REPORT.md`** ← the main token report, surface this directly to the user
+- Contains: supervisor token breakdown (plan/review/subplan in+out), Aider estimated tokens, total AI tokens, session overhead
+- Contains: savings comparison — tokens used WITH bridge vs estimated WITHOUT bridge
+- Contains: per-task token usage table
+- **Show this entire file to the user verbatim.** It is the primary accountability record for every token spent.
+
+**3. `RUN_DIAGNOSTICS.json`**
+- Read `blocking_patterns[]` — if any patterns were detected, surface them as actionable warnings:
+  - `interactive_prompt` → "Aider asked for file confirmation — add those files to context_files next time"
+  - `timeout` → "Tasks timed out — consider increasing --task-timeout or switching to a faster model"
+  - `silent_failure` → "Tasks exited 0 with no changes — instructions need to be more specific"
+  - `supervisor_rework_loop` → "Multiple reworks on same task — acceptance criteria need to be clearer"
+  - `model_capability_gap` → "Syntax errors in output — consider using a larger model"
+- Read `ai_summary` — include this in the claude-mem note
+- Read per-task `attempts[]` counts — any task with 3+ attempts is worth flagging
+
+**4. `last_run.json`**
+- Quick confirmation of status, tasks executed, elapsed seconds, token totals
+
+**5. `token_log.json`** → read the latest entry in `sessions[]`
+- Extract: `savings.savings_percent`, `savings.tokens_saved`, `cost.bridge_cost_sonnet`, `cost.savings_dollar_sonnet`
+- Extract: `aider.reworks`, `aider.estimated_tokens`, `session.total_ai_tokens`
+- Surface the savings % to the user — this is the headline metric
+
+**6. `LATEST_REPORT.md`**
+- Quick status overview, confirm it matches task_metrics.json
+
+### Step 5-B: Confirm git commits
+
+```bash
+git -C "<REPO_ROOT>" log --oneline -<N>   # N = number of completed tasks
+```
+
+Confirm each completed task has a corresponding commit. If commits are missing → warn the user.
+
+### Step 5-C: Cleanup
+
+```bash
+rm "<bridge_root>/TASK_PLAN_active.json"
+```
+
+### Step 5-D: Present the run summary to user
+
+Surface a clean summary. Use actual numbers from the files above — no estimates:
+
+```
+Run complete — <REPO_ROOT basename>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Tasks:    <completed> / <planned> completed  (<skipped> skipped)
+Reworks:  <N> task(s) needed rework
+Commits:  <N> git commits made
+Duration: <elapsed_seconds>s
+
+Token usage (from RUN_REPORT.md):
+  Supervisor (plan + review):  <total> tokens
+  Aider / Ollama (local):      ~<estimated> tokens (free)
+  Your session overhead:       <session_tokens> tokens
+  Total cloud AI:              <total_ai> tokens
+
+Savings vs doing this without the bridge:
+  Estimated direct cost:  <estimated_direct> tokens
+  Actual cost:            <total_ai> tokens
+  Saved:                  <tokens_saved> tokens (<savings_pct>%)
+
+Blocking patterns detected: <none / list>
+Reports written to: <REPO_ROOT>/bridge_progress/
+```
+
+### Step 5-E: Save to claude-mem
+
+If claude-mem is running, save the full run record. Include actual numbers — not vague summaries. This is what future sessions will search:
 
 ```
 Project: <REPO_ROOT basename>
+Date: <today>
 Goal: <the original user goal>
-Tasks: <N completed> / <N total>
-Failed tasks: <list task IDs + failure type, or "none">
-Models used: <aider model(s) that ran>
-Flags that helped: <any non-default flags that improved results>
-Files that needed REWORK: <list, or "none">
-Notes: <anything unusual — quirks, workarounds, patterns observed>
+Status: <success / failure>
+Tasks: <completed> / <planned>  |  Reworks: <N>  |  Skipped: <N>
+Failed task: <task_id + failure_type, or "none">
+Aider model: <model used>
+Flags: <non-default flags that ran>
+Supervisor tokens: <N> (plan: <N> in/<N> out, review: <N> in/<N> out)
+Aider tokens (estimated): <N>
+Total AI tokens: <N>
+Tokens saved vs direct: <N> (<pct>%)
+Files that needed REWORK: <list or "none">
+Blocking patterns: <list from RUN_DIAGNOSTICS or "none">
+Files modified: <list of files touched by completed tasks>
+Notes: <ai_summary from RUN_DIAGNOSTICS.json>
 ```
 
-This note costs ~100 tokens to save and saves hundreds per future session by eliminating re-discovery. Do not skip it if claude-mem is running.
+This note costs ~150 tokens to save and eliminates re-discovery across every future session on this project. Do not skip it.
 
 ---
 

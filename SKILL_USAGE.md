@@ -278,6 +278,81 @@ Claude will invoke `--resume` and skip any already-completed tasks using the che
 
 ---
 
+## Token Usage & Statistics — What Gets Logged Automatically
+
+Yes — token usage is logged automatically. You don't do anything. Here's exactly what the bridge tracks and where it lives:
+
+### What's tracked per run
+
+| Stat | Where it's stored | Auto or manual? |
+|---|---|---|
+| Supervisor tokens (plan in/out, review in/out, subplan in/out) | `bridge_progress/token_log.json` | Auto |
+| Aider / Ollama estimated tokens (per task) | `bridge_progress/token_log.json` | Auto |
+| Your Claude session overhead tokens | `bridge_progress/token_log.json` | Via `--session-tokens N` flag |
+| Total AI cloud tokens | `bridge_progress/token_log.json` | Auto (calculated) |
+| Estimated cost (Opus, Sonnet pricing) | `bridge_progress/token_log.json` | Auto |
+| Tokens saved vs doing it without the bridge | `bridge_progress/token_log.json` | Auto (calculated) |
+| Per-task: attempts, exit codes, stdout/stderr tail | `bridge_progress/RUN_DIAGNOSTICS.json` | Auto |
+| Per-task: Aider duration, failure reason, validation result | `bridge_progress/RUN_DIAGNOSTICS.json` | Auto |
+| Blocking patterns detected (timeout, silent_failure, etc.) | `bridge_progress/RUN_DIAGNOSTICS.json` | Auto |
+| Task completion status, commit SHAs, diffs | `bridge_progress/task_metrics.json` | Auto |
+| Project file roles, run history, feature list | `bridge_progress/project_knowledge.json` | Auto |
+| Telemetry events (run start/end, task pass/fail/rework) | `bridge_progress/telemetry.json` | Auto |
+
+### Files generated after every run
+
+```
+bridge_progress/
+├── RUN_REPORT.md         ← token breakdown + savings table (shown to you by skill)
+├── RUN_DIAGNOSTICS.json  ← per-task attempts, failure patterns, AI summary
+├── token_log.json        ← full session token log + cumulative totals
+├── task_metrics.json     ← task completion status + commit SHAs
+├── LATEST_REPORT.md      ← quick status overview
+├── last_run.json         ← compact run summary
+├── project_knowledge.json ← updated project context
+└── telemetry.json        ← anonymized usage events
+```
+
+### What you see at the end of every run
+
+The skill reads all of these and surfaces a summary like:
+
+```
+Run complete — my-project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Tasks:    4 / 4 completed  (0 skipped)
+Reworks:  1 task needed rework
+Commits:  4 git commits made
+Duration: 187s
+
+Token usage:
+  Supervisor (plan + review):  3,240 tokens
+  Aider / Ollama (local):      ~18,500 tokens (free)
+  Your session overhead:       4,821 tokens
+  Total cloud AI:              8,061 tokens
+
+Savings vs doing this without the bridge:
+  Estimated direct cost:  24,000 tokens
+  Actual cost:             8,061 tokens
+  Saved:                  15,939 tokens (66.4%)
+
+Blocking patterns: none
+Reports written to: /path/to/project/bridge_progress/
+```
+
+Then the full `RUN_REPORT.md` is shown verbatim for complete token accounting.
+
+### Cumulative totals across all sessions
+
+`token_log.json` accumulates a `totals` block across every run ever made on this project:
+- `sessions_count` — total bridge runs
+- `tasks_executed_total` — total Aider tasks ever run
+- `tokens_saved_total` — lifetime tokens saved
+- `savings_percent_weighted` — weighted average savings %
+- `cost_total` — total cost breakdown (Opus/Sonnet/Ollama)
+
+---
+
 ## How the Two Context Tools Update
 
 A common question: do `code-review-graph` and `claude-mem` keep themselves up to date as Aider makes changes?
