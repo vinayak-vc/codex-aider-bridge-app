@@ -56,7 +56,8 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\(''supervisor/agent.py'', doraise=True\\); print\\(''OK''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''ui/app.py'', doraise=True\\); py_compile.compile\\(''supervisor/agent.py'', doraise=True\\); print\\(''OK''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''utils/token_tracker.py'', doraise=True\\); print\\(''OK''\\)\")",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Read(//h/Vinayak_Project/codex-aider-bridge-app/**)"
     ]
   }
 }

@@ -143,11 +143,22 @@ class TaskParser:
             raise PlanParseError(f"Task {task_id} contains an invalid file path.")
         if not isinstance(instruction, str) or not instruction.strip():
             raise PlanParseError(f"Task {task_id} must include a non-empty 'instruction'.")
-        if not isinstance(task_type, str) or task_type not in {"create", "modify", "delete", "validate", "read", "investigate"}:
-            raise PlanParseError(
-                f"Task {task_id} has an unsupported type {task_type!r}. "
-                "Must be one of: create, modify, delete, validate, read, investigate."
+        _valid_types = {"create", "modify", "delete", "validate", "read", "investigate"}
+        if task_type is None:
+            # Missing type field — infer from instruction context or default to "modify"
+            instr_lower = str(instruction).lower()
+            if any(kw in instr_lower for kw in ("create", "add a new", "write a new", "scaffold")):
+                task_type = "create"
+            else:
+                task_type = "modify"
+        elif not isinstance(task_type, str) or task_type not in _valid_types:
+            # Unrecognized string — warn and default rather than hard-fail
+            import sys
+            print(
+                f"[PARSER] Task {task_id}: unrecognized type {task_type!r}, defaulting to 'modify'",
+                file=sys.stderr, flush=True,
             )
+            task_type = "modify"
 
         normalized_files = [fp.strip() for fp in files]
         for fp in normalized_files:

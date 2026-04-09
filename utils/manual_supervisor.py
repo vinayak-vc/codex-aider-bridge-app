@@ -206,7 +206,8 @@ class ManualSupervisorSession:
             )
 
         decision = str(payload.get("decision", "")).strip().lower()
-        if decision == "pass":
+        # Accept "approved" as alias for "pass" (documentation-friendly)
+        if decision in {"pass", "approved"}:
             return ReviewResult(
                 task_id=task_id,
                 verdict="PASS",
@@ -216,7 +217,8 @@ class ManualSupervisorSession:
             )
 
         if decision == "rework":
-            instruction = str(payload.get("instruction", "")).strip()
+            # Accept "reason" as alias for "instruction" (documentation-friendly)
+            instruction = str(payload.get("instruction") or payload.get("reason", "")).strip()
             if not instruction:
                 raise ManualSupervisorError(
                     f"Manual supervisor decision for task {task_id} is missing 'instruction'."

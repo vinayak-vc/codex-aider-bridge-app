@@ -853,7 +853,7 @@ def execute_task_with_review(
                     stdout=combined_content[:2000], stderr="",
                     command=[], attempt_number=attempt + 1,
                 )
-                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:4000])
+                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:10000])
                 request_path = manual_supervisor.submit_review_request(
                     task_report, validation_message="Read-only analysis task — review the file content.",
                     unexpected_files=[],
