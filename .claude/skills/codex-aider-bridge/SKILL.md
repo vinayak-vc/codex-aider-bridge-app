@@ -44,6 +44,8 @@ ls <REPO_ROOT>/bridge_progress/
 Proceed to **Stage 0-CS (Cold Start Protocol)** before Stage 1.
 If it exists → normal flow, skip Stage 0-CS entirely.
 
+**Note:** The **warm repo, cold user** check (new user on an existing bridged repo) is deferred to after Stage 1.5, because it depends on mem-search results. See the note at the end of Stage 1.5.
+
 ---
 
 ## Stage 0-CS — Cold Start Protocol
@@ -83,6 +85,38 @@ Tell the user what you detected:
 > *"Detected project type: `python`. I'll use this to pick the right validator and plan hints."*
 
 If unclear, ask. Getting this wrong means the wrong syntax checker runs after each task.
+
+### CS-2b: Auto-detect validation command
+
+After detecting the project type, scan for a validation command to pass as `--validate-cmd`. Check in this order:
+
+| Project type | Files to check | Command to use |
+|---|---|---|
+| `python` | `pytest.ini`, `pyproject.toml` (`[tool.pytest]`), `setup.cfg` (`[tool:pytest]`) | `pytest --tb=short -q` |
+| `python` | `pyproject.toml` (`[tool.ruff]`) | `ruff check .` |
+| `javascript` / `typescript` | `package.json` → `scripts.test` key | `npm test` |
+| `javascript` / `typescript` | `package.json` → `scripts.lint` key | `npm run lint` |
+| `rust` | `Cargo.toml` present | `cargo check` |
+| `go` | `go.mod` present | `go build ./...` |
+| `csharp` | `*.sln` present | `dotnet build` |
+| any | `.github/workflows/*.yml` → first `run:` step under a `test` job | extract that command |
+
+Run the detection non-interactively:
+```bash
+# Example for python
+cat <REPO_ROOT>/pytest.ini 2>/dev/null | head -5
+cat <REPO_ROOT>/pyproject.toml 2>/dev/null | grep -A2 "tool.pytest"
+# Example for node
+node -e "const p=require('./<REPO_ROOT>/package.json'); console.log(p.scripts?.test||'')"
+```
+
+Once found, tell the user:
+> *"Found validation command: `pytest --tb=short -q`. This will run after each task. Add `--validate-cmd 'pytest --tb=short -q'` to the Stage 3 invocation."*
+
+If no validation command is found → tell the user:
+> *"No test command detected. Tasks will run without post-task validation. You can add `--validate-cmd '<cmd>'` manually if you have a test suite."*
+
+Store the detected command — it will be appended automatically to the Stage 3 invocation in this session.
 
 ### CS-3: Check for large non-code directories
 
@@ -131,12 +165,16 @@ Only continue once the tree is clean.
 
 ### CS-6: Determine `--auto-split-threshold`
 
-On a cold repo with an unknown codebase, Aider is more likely to receive multi-file tasks it cannot handle well. Ask:
+On a cold repo with an unknown codebase, Aider is more likely to receive multi-file tasks it cannot handle well. Ask the user now (Stage 1.5 hasn't run yet so there is no memory to draw from):
 
-> *"Which Aider model will you be using?"*
-> - 7B model (e.g. `qwen2.5-coder:7b`) → add `--auto-split-threshold 3` to Stage 3 (safer for small models)
+> *"Which Aider model will you be using for this repo?"*
+> - 7B model (e.g. `qwen2.5-coder:7b`) → note `--auto-split-threshold 3` for Stage 3 (safer for small models)
 > - 14B+ model → no split threshold needed
 > - Not sure → default to `--auto-split-threshold 3` (safer)
+
+Store the model name — it will be used as `--aider-model` in Stage 3 and saved to claude-mem in Stage 5-E so future cold starts on this repo won't need to ask.
+
+**Note:** If Stage 1.5 mem-search later finds a stronger model preference, it will override this choice. Stage 1.5 always wins.
 
 ---
 
@@ -213,11 +251,36 @@ If mem-search returns nothing (first run, or claude-mem not installed), silently
 
 **After the run completes (end of Stage 5):** use `claude-mem` to save a brief run summary — what worked, what failed, which model was used, any flags that helped. This feeds future sessions automatically.
 
+### Warm Repo, Cold User Check (run after mem-search)
+
+Now that mem-search results are available, check if this is a **warm repo with a new user** (prior bridge runs exist but no session memory yet):
+
+**Conditions:**
+- `bridge_progress/last_run.json` exists (bridge has run before), AND
+- mem-search returned zero results for this project
+
+If both conditions are met → read prior run context and brief the user:
+
+```bash
+# Read last run summary
+cat <REPO_ROOT>/bridge_progress/last_run.json
+```
+
+> *"This repo has been run through the bridge before — `<N>` tasks completed as of `<last_run_date>`. I have no session memory for it yet. Here's what I found:*
+> *— Status: `<status>`, Tasks: `<completed>/<planned>`, Model: `<aider_model>`*
+> *I'll use this as my starting context for planning."*
+
+Also read `bridge_progress/task_metrics.json` to understand the prior run's scope. Use this data as additional Stage 2 context alongside code-review-graph output.
+
+At end of session (Stage 5-E): save the full run record to claude-mem so this session won't be cold next time.
+
 ---
 
-## Stage 1.6 — Run Code-Review-Graph (Always, Every Session Start)
+## Stage 1.6 — Run Code-Review-Graph (Every Session Start, Except Cold Start)
 
-Run the `code-review-graph` skill on `REPO_ROOT` automatically at the start of every session. Do not ask. Inform the user with one line:
+**Skip this stage if this is a cold start** — CS-4 already ran the graph. Proceed directly to Stage 2.
+
+For all other sessions, run the `code-review-graph` skill on `REPO_ROOT` automatically. Do not ask. Inform the user with one line:
 
 > *"Indexing `<REPO_ROOT>` with code-review-graph..."*
 
@@ -241,22 +304,85 @@ Before invoking the real executor, YOU produce the task plan. This is the simula
 ### How to produce the plan
 
 1. Get repo context, layered in priority order:
-   - **Highest:** `code-review-graph` output if user said YES in Stage 1.6
+   - **Highest:** `code-review-graph` output from Stage 1.6 (always runs — use it as primary source)
    - **Then:** `claude-mem` results from Stage 1.5 (past run patterns, known failures, model preferences)
    - **Then:** `bridge_progress/project_knowledge.json` in `REPO_ROOT` if present
-   - **Fallback:** `git ls-files --others --cached --exclude-standard` in `REPO_ROOT` (cap at 300 lines)
+   - **Fallback:** `git -C "<REPO_ROOT>" ls-files` (all tracked files, cap at 300 lines)
 2. Produce a JSON plan following the **exact schema** in `references/pipeline.md` → **Task Schema**
 3. Apply the MICRO-TASK PROFILE rules (one file per task, surgical instructions, explicit assertions)
 4. Apply any patterns learned from claude-mem (e.g. pre-split files that historically needed REWORK, apply known-good model preferences)
-5. When `code-review-graph` context is available, include exact file paths and line numbers in instructions
+5. When `code-review-graph` context is available:
+   - Include exact `file:line` locations in every instruction
+   - **Auto-populate `context_files` using dependency edges:** for each task's target file, look up its import/dependency edges in the graph. Any file it directly imports or that directly imports it is a candidate for `context_files`. Add the top 1–3 most relevant ones (ignore third-party packages, only include repo-local files). This prevents Aider from asking for file confirmation mid-run.
 6. Show the plan to the user as a numbered list — **not** raw JSON — and ask: *"Does this plan look right before I hand it to the executor?"*
 7. If the user requests changes, revise. Once confirmed, save the plan to `<bridge_root>/TASK_PLAN_active.json`
 
 ---
 
+## Stage 2.5 — Plan Self-Check (MICRO-TASK Validation)
+
+Before saving `TASK_PLAN_active.json` and handing off to the executor, run this checklist against **every task** in the plan. Fix violations automatically — do not ask the user for each one unless the fix requires domain knowledge you don't have.
+
+### Checklist (run per task)
+
+| Rule | Check | Auto-fix |
+|---|---|---|
+| **One file per task** | `files[]` must have exactly 1 entry | If 2–3 files: split into separate tasks. If 4+ files: warn user before proceeding |
+| **Word count** | `instruction` must be ≥ 15 words and ≤ 120 words | Too short: expand with exact symbol names and expected outcome. Too long: strip narrative, keep only the imperative. |
+| **No banned verbs** | `instruction` must not start with: "Refactor", "Clean up", "Improve", "Update", "Fix" (alone, without specifics) | Rewrite with a precise imperative: what to add/remove/change and where |
+| **Exact location** | If graph context is available: every `instruction` must name at least one `file:line` or function name | Inject the exact location from graph output |
+| **`must_exist` for create tasks** | If `instruction` says "create" or "add a new file": `must_exist[]` must list the new file path | Add the expected output path to `must_exist` |
+| **File exists for modify tasks** | If task modifies an existing file: confirm that file appears in `git ls-files` or graph output | If file not found: flag to user — task may target a non-existent file |
+| **No "and" in instructions** | `instruction` must not describe two independent actions joined by "and" | Split into two tasks |
+
+### Self-check output format
+
+After checking, report a single status line before saving the plan:
+
+> **Plan self-check:** 7 tasks checked — 2 split, 1 instruction rewritten, 0 blockers. Ready to save.
+
+If any blockers were found (e.g. file not found, split would create 5+ tasks):
+
+> **Plan self-check:** BLOCKED — Task 3 targets `src/foo.rs` which does not exist in the repo. Please confirm the correct path before proceeding.
+
+Only proceed to Stage 3 once the plan is blocker-free.
+
+---
+
 ## Stage 3 — Executor Handoff
 
-Once the plan is confirmed, invoke the real bridge. Use the exact invocation pattern from `references/flags.md` → **Standard Invocation**.
+**Resolve `bridge_root` before any commands:** `bridge_root` is always the directory containing `main.py` — which is the root of the `codex-aider-bridge-app` repo (not `REPO_ROOT` unless the user is running the bridge against itself). If unsure:
+```bash
+find / -name "main.py" -path "*/codex-aider-bridge-app/*" 2>/dev/null | head -1 | xargs dirname
+```
+
+Once the plan is confirmed, **always run a dry-run first** before the real executor. This validates the plan JSON against the bridge's schema and catches flag errors before any code is touched.
+
+### Step 3-A: Dry run
+
+```bash
+python <bridge_root>/main.py \
+  --repo-root "<REPO_ROOT>" \
+  --plan-file "<bridge_root>/TASK_PLAN_active.json" \
+  --dry-run
+```
+
+The `--dry-run` flag makes the bridge parse and validate the plan without executing any tasks or calling Aider.
+
+**If dry run fails:**
+- Read the error output — it will identify the specific task or field that is invalid
+- Fix the plan JSON (or the task instruction) and re-run Stage 2.5 self-check
+- Re-run the dry run until it passes
+- Do not proceed to the real run until the dry run exits 0
+
+**If dry run passes:**
+> *"Dry run passed — plan JSON is valid. Starting real run now."*
+
+Then proceed with the real executor invocation.
+
+### Step 3-B: Real run
+
+Once the plan is confirmed and the dry run passes, invoke the real bridge. Use the exact invocation pattern from `references/flags.md` → **Standard Invocation**.
 
 The core command structure is:
 
@@ -303,6 +429,23 @@ For each task that completes:
 ```
 
 Be specific in rework reasons. Vague reasons cause the LLM to make random changes.
+
+### Mid-session REWORK learning
+
+**Every time you write a REWORK decision**, immediately save the pattern to claude-mem (do not wait for Stage 5). This ensures the pattern is captured even if the session ends early or the run is aborted.
+
+Save this record to claude-mem right after writing the REWORK JSON:
+
+```
+REWORK — <REPO_ROOT basename>
+File: <task target file>
+Task: <task_id>
+Instruction that failed: <original instruction, first 80 chars>
+Why it failed: <your rework reason>
+Pattern: <one of: instruction_too_vague | wrong_file | missing_context | multi_step_task | model_capability | other>
+```
+
+Do not save this at the end of the session — save it **at the moment of the REWORK decision**. Future sessions on this repo will find this immediately via Stage 1.5 mem-search and can pre-split or rewrite similar tasks before they fail.
 
 ---
 
@@ -356,9 +499,13 @@ Confirm each completed task has a corresponding commit. If commits are missing �
 
 ### Step 5-C: Cleanup
 
+Remove the active plan file regardless of run outcome (success, failure, or abort):
+
 ```bash
-rm "<bridge_root>/TASK_PLAN_active.json"
+rm -f "<bridge_root>/TASK_PLAN_active.json"
 ```
+
+If the run failed mid-way and `TASK_PLAN_active.json` already contains a partial/broken plan, leaving it would cause the next session to load stale tasks. Always clean it up before ending the session.
 
 ### Step 5-D: Present the run summary to user
 
@@ -422,8 +569,33 @@ These are non-negotiable. If you find yourself about to break one, stop and re-r
 - **Never skip Stage 1 (setup checks)** — a broken Aider install will corrupt bridge_progress state silently
 - **Never run main.py without `--manual-supervisor`** — without it, the bridge calls an external supervisor CLI and ignores you as reviewer
 - **Never skip Stage 2 (simulate plan)** — the user must see and approve the task plan before any code is touched
-- **Never use `--auto-split-threshold` unless the user asks** — it changes task granularity unpredictably on unknown repos
-- **If a task fails 3+ times** → pause, read the failure log from `bridge_progress/`, diagnose, and propose a revised instruction to the user before retrying
+- **Never use `--auto-split-threshold` unless the user asks, or CS-6 set it automatically** — it changes task granularity unpredictably on unknown repos; the only automatic exception is CS-6 on cold start where the model size is known
+- **If a task fails 3+ times** → pause the run and execute the failure escalation procedure below
+
+### Failure Escalation Procedure (3+ failures on same task)
+
+1. Read `bridge_progress/RUN_DIAGNOSTICS.json` → find the failing task's `attempts[]` array
+2. Identify the failure type using the taxonomy in `references/pipeline.md` → **Failure Taxonomy**
+3. Apply the escalation action for that type:
+
+| Failure type | Escalation action |
+|---|---|
+| `interactive_prompt` | Add the file Aider asked for to `context_files` in the task instruction |
+| `timeout` | Split the task into 2 smaller tasks. If already 1 file, add `--task-timeout <2x current>` |
+| `silent_failure` | Rewrite instruction: name the exact function/class/symbol to add or change |
+| `repeated_validation_failure` | Rewrite assertion in `must_exist` / `must_contain`. If syntax error: add `--validate-cmd` to catch it earlier |
+| `supervisor_rework_loop` | Clarify the acceptance criteria — what does "done" look like exactly? Add a `must_contain` check |
+| `model_capability_gap` | Tell user: switch to a larger model (`--aider-model`). Do not retry with the same model |
+| `missing_dependency` | Add the dependency as a preceding task in the plan. Do not assume the file exists |
+
+4. Show the revised instruction to the user:
+   > *"Task `<id>` has failed 3 times. Failure type: `<type>`. Here is a revised instruction:*
+   > `<new instruction>`
+   > *Shall I update the plan and retry, or abort this task?"*
+
+5. If user approves → update `TASK_PLAN_active.json` with the revised instruction and continue the run
+6. If user declines → mark the task as skipped and continue with remaining tasks
+7. Save the failure pattern to claude-mem immediately (same format as Stage 4 REWORK learning)
 
 ---
 
