@@ -195,12 +195,25 @@ See `references/flags.md` → **Setup Checks** section for the exact commands to
 | Aider installed | `aider --version` | exits 0 |
 | Ollama running | `ollama list` | exits 0, shows at least one model |
 | main.py exists | `ls main.py` | file present in cwd |
+| bridge-memory-service running | `curl -s http://localhost:3000/health` | returns `{"status":"ok"}` |
 | claude-mem running | `curl -s http://localhost:37777/health` | returns 200 or any response |
 
 `bridge_root` = **current working directory (`cwd`)**. The skill always runs from inside the bridge repo. Never navigate to a parent directory. Never search for `main.py` with `find`. All bridge commands use `python main.py` (not `python <full_path>/main.py`).
 
 If Aider is missing: `pip install aider-chat`
 If Ollama is not running: tell user to start Ollama (`ollama serve`) and select a model.
+
+**If bridge-memory-service is not running:**
+The bridge automatically enhances every task instruction with memory context and ingests results after each task — but silently degrades if the service is unavailable (original instruction is used, ingest is skipped with a warning). To start the service:
+```bash
+cd H:/Ai_Project/memory/bridge-memory-service && npm run dev
+```
+To use a non-default URL, set `MEMORY_SERVICE_URL` before running the bridge:
+```bash
+set MEMORY_SERVICE_URL=http://localhost:3000   # Windows
+export MEMORY_SERVICE_URL=http://localhost:3000  # Unix
+```
+Do not block on this — if the service is down the bridge still runs normally.
 
 **If claude-mem is not running:**
 Tell the user:
