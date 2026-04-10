@@ -35,6 +35,7 @@ from utils.project_knowledge import (
 )
 from utils.project_type_prompt import PROJECT_TYPES, describe, prompt_project_type
 from validator.validator import MechanicalValidator
+import memory.memory_client as memory_client
 
 
 def _write_json_file(path: Path, payload: dict) -> None:
@@ -604,6 +605,7 @@ def execute_task_with_review(
     """
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
+    current_instruction = memory_client.enhance_prompt(current_instruction)
 
     if manual_supervisor is not None:
         resumed_diff = manual_supervisor.try_resume_completed_task(
@@ -2186,6 +2188,7 @@ def main() -> int:
                     model_override=_task_model_override,
                 )
                 _consecutive_failures = 0  # Reset circuit breaker on success
+                memory_client.ingest_result(task.instruction, task_diff[:1000], "aider-bridge")
             except RuntimeError as task_ex:
                 # Task-level rollback: revert to pre-task state
                 if _pre_task_sha:
