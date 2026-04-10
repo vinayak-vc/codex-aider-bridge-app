@@ -2188,7 +2188,7 @@ def main() -> int:
                     model_override=_task_model_override,
                 )
                 _consecutive_failures = 0  # Reset circuit breaker on success
-                memory_client.ingest_result(task.instruction, task_diff[:1000], "aider-bridge")
+                memory_client.ingest_result(task.instruction, (task_diff or "")[:1000], "aider-bridge")
             except RuntimeError as task_ex:
                 # Task-level rollback: revert to pre-task state
                 if _pre_task_sha:
