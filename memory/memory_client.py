@@ -28,8 +28,8 @@ def enhance_prompt(instruction: str) -> str:
         with urlopen(req, timeout=3) as response:
             response_data = json.loads(response.read().decode('utf-8'))
             return response_data.get("enhancedPrompt", instruction)
-    except (URLError, HTTPError, json.JSONDecodeError, ConnectionError) as e:
-        logger.warning(f"Failed to enhance prompt for '{instruction}'. Error: {e}. Returning original instruction.")
+    except Exception as e:
+        logger.warning(f"Failed to enhance prompt. Error: {e}. Returning original instruction.")
         return instruction
 
 def ingest_result(input_text: str, output_text: str, agent: str) -> None:
@@ -53,5 +53,5 @@ def ingest_result(input_text: str, output_text: str, agent: str) -> None:
         with urlopen(req, timeout=3) as response:
             # We log warning on any exception, never raise, so we just attempt the request.
             pass
-    except (URLError, HTTPError, json.JSONDecodeError, ConnectionError) as e:
+    except Exception as e:
         logger.warning(f"Failed to ingest result for agent '{agent}'. Error: {e}.")
