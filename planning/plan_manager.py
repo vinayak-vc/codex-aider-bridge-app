@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from context.project_context import ProjectContext
 from models.task import BridgeConfig, Task
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
@@ -146,9 +147,8 @@ def obtain_plan(
     config: BridgeConfig,
     supervisor: SupervisorAgent,
     task_parser: TaskParser,
-    repo_tree: str,
+    project_context: ProjectContext,
     logger: logging.Logger,
-    knowledge_context: Optional[str] = None,
     feature_specs: Optional[str] = None,
     model_roster: Optional[str] = None,
 ) -> list[Task]:
@@ -160,11 +160,10 @@ def obtain_plan(
         try:
             plan_text = supervisor.generate_plan(
                 config.goal,
-                repo_tree,
-                config.idea_text,
-                feedback,
-                knowledge_context,
-                config.workflow_profile,
+                project_context=project_context,
+                idea_text=config.idea_text,
+                feedback=feedback,
+                workflow_profile=config.workflow_profile,
                 feature_specs=feature_specs,
                 model_roster=model_roster,
             )

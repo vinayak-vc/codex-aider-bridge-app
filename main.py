@@ -15,8 +15,8 @@ from typing import Optional
 from bridge_logging.logger import configure_logging
 from context.file_selector import FileSelector
 from context.idea_loader import IdeaLoader
+from context.project_context_service import ProjectContextService
 from context.project_understanding import ensure_project_understanding, understanding_file_path
-from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
 from models.task import AiderContext, BridgeConfig, ExecutionResult, SubTask, Task, TaskReport
@@ -30,7 +30,6 @@ from utils.run_diagnostics import RunDiagnostics
 from utils.project_knowledge import (
     load_knowledge,
     save_knowledge,
-    to_context_text,
     update_knowledge_from_run,
 )
 from utils.project_type_prompt import PROJECT_TYPES, describe, prompt_project_type
@@ -1842,7 +1841,6 @@ def main() -> int:
         supervisor=config.supervisor_command or "manual",
         task_timeout=config.task_timeout_seconds,
     )
-    repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
 
@@ -1916,7 +1914,7 @@ def main() -> int:
             _understanding_err,
         )
 
-    knowledge_context = to_context_text(knowledge)
+    project_context = ProjectContextService(repo_root).load_for_planner()
     if knowledge.get("files"):
         logger.info(
             "Project knowledge loaded: %d files registered, %d features done",
@@ -1925,6 +1923,12 @@ def main() -> int:
         )
     else:
         logger.info("No project knowledge yet — will create after this run.")
+
+    logger.info(
+        "Planner context source: %s%s",
+        project_context.source,
+        " (graphify available)" if project_context.graphify.available else "",
+    )
 
     # Only create supervisor agent when needed (not in auto-approve mode).
     supervisor: Optional[SupervisorAgent] = None
@@ -2031,8 +2035,8 @@ def main() -> int:
                 })
 
             tasks = obtain_plan(
-                config, supervisor, task_parser, repo_tree, logger,
-                knowledge_context, feature_specs=feature_specs,
+                config, supervisor, task_parser, project_context, logger,
+                feature_specs=feature_specs,
                 model_roster=_model_roster,
             )
 
