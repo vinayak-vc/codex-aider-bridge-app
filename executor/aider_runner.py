@@ -253,18 +253,42 @@ class AiderRunner:
     # Track per-file edit mode success/failure for adaptive fallback
     _edit_format_failures: dict[str, int] = {}  # file_path → consecutive diff failures
 
+    def _is_local_model(self) -> bool:
+        """Return True if the current model is a local/ollama model.
+
+        Local models (qwen, llama, gemma, etc.) naturally output diff-format
+        responses even when instructed to use whole-format.  Forcing diff format
+        avoids the mismatch where Aider requests whole but the model returns diff,
+        causing Aider to apply no changes and exit 0 silently.
+        """
+        model = (self._model or "").lower()
+        return (
+            model.startswith("ollama/")
+            or ":latest" in model
+            or any(name in model for name in ("qwen", "llama", "gemma", "mistral", "deepseek", "phi"))
+        )
+
     def _pick_edit_format(self, file_paths: list[Path], force_whole: bool = False) -> str:
         """Choose edit format based on file size, history, and forced overrides.
 
         Adaptive strategy:
-          1. Files under threshold → whole (default, safest for 7B models)
-          2. Files over threshold → diff (faster, but may fail)
-          3. If diff failed before for this file → switch to whole
-          4. force_whole → always whole (used by retry system after pattern_mismatch)
+          1. force_whole → always whole (used by retry system after pattern_mismatch)
+          2. Local/ollama models → always diff (they output diff regardless of instruction)
+          3. Files under threshold → whole (safest for frontier models)
+          4. Files over threshold → diff (faster, but may fail)
+          5. If diff failed before for this file → switch to whole
         """
         if force_whole:
             self._logger.info("Edit format: whole (forced by retry feedback)")
             return "whole"
+
+        # Local models (qwen, gemma, llama etc.) output diff-format responses even
+        # when Aider requests whole-format.  Match Aider's expectation to their output.
+        if self._is_local_model():
+            self._logger.info(
+                "Edit format: diff (local/ollama model — always outputs diff format)"
+            )
+            return "diff"
 
         total_lines = 0
         for p in file_paths:
