@@ -216,7 +216,11 @@ def api_save_settings():
             _safe_settings = {
                 "default_model": settings.get("aider_model", ""),
                 "default_supervisor": settings.get("supervisor", ""),
-                "auto_commit": settings.get("auto_commit", True),
+                "auto_commit": (
+                    settings.get("auto_commit")
+                    if isinstance(settings.get("auto_commit"), bool)
+                    else True
+                ),
                 "task_timeout": settings.get("task_timeout", 600),
             }
             _fbu.write_to_user_firestore("settings/global", _safe_settings)
