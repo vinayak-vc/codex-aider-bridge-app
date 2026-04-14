@@ -1,0 +1,29 @@
+[
+  [
+    "AGENTIC_AI_ONBOARDING.md",
+    "AGENT_CONTEXT.md",
+    "AI_SUPERVISOR_PROMPT.md",
+    "CASE_STUDY.md",
+    "CHANGELOG.md",
+    "FIREBASE_ARCHITECTURE.md",
+    "FIREBASE_IMPLEMENTATION_PLAN.md",
+    "FIREBASE_TEST_CASES.md",
+    "HOW_TO.md",
+    "HOW_TO_TALK_TO_SUPERVISOR.md",
+    "PER_USER_FIREBASE_ARCHITECTURE.md",
+    "README.md",
+    "SKILL_USAGE.md",
+    "Universal Pipeline.md",
+    "WHY_THIS_REPO.md",
+    "WORK_LOG.md",
+    "features.md",
+    "requirements.txt",
+    "requirements_ui.txt",
+    "bridge_progress\\AI_UNDERSTANDING.md",
+    "bridge_progress\\LATEST_REPORT.md",
+    "bridge_progress\\RUN_REPORT.md"
+  ],
+  [
+    "ui\\static\\favicon.svg"
+  ]
+]
