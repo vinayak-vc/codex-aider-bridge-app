@@ -595,6 +595,7 @@ Read these files from `<REPO_ROOT>/bridge_progress/` in this order:
   - `interactive_prompt` → "Aider asked for file confirmation — add those files to context_files next time"
   - `timeout` → "Tasks timed out — consider increasing --task-timeout or switching to a faster model"
   - `silent_failure` → "Tasks exited 0 with no changes — instructions need to be more specific"
+  - Empty-file guardrail: do not treat `**/__init__.py`, `**/.gitkeep`, or `**/.keep` as silent-failure evidence when they are intentionally empty.
   - `supervisor_rework_loop` → "Multiple reworks on same task — acceptance criteria need to be clearer"
   - `model_capability_gap` → "Syntax errors in output — consider using a larger model"
 - Read `ai_summary` — include this in the claude-mem note

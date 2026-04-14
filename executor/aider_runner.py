@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 # On Windows, prevent spawned subprocesses from opening a visible CMD window.
@@ -104,6 +105,16 @@ class AiderRunner:
 
         return _strip(before_content) == _strip(after_content)
 
+    @staticmethod
+    def _is_allowed_empty_file(path: Path) -> bool:
+        """Return True for intentionally empty marker/module files."""
+        rel = PurePosixPath(path.as_posix())
+        return (
+            rel.match("**/__init__.py")
+            or rel.match("**/.gitkeep")
+            or rel.match("**/.keep")
+        )
+
     def _check_for_silent_failure(
         self,
         task_id: int,
@@ -148,7 +159,11 @@ class AiderRunner:
             after_hash = self._hash_file(path)
             pre_hash = before.get(key)
 
-            if path.exists() and path.stat().st_size == 0:
+            if (
+                path.exists()
+                and path.stat().st_size == 0
+                and not self._is_allowed_empty_file(path)
+            ):
                 unchanged.append(path.name)
                 continue
             

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 from bridge_logging.logger import configure_logging
@@ -35,6 +36,15 @@ from utils.project_knowledge import (
 from utils.project_type_prompt import PROJECT_TYPES, describe, prompt_project_type
 from validator.validator import MechanicalValidator
 import memory.memory_client as memory_client
+
+
+def _is_allowed_empty_task_file(relative_path: str) -> bool:
+    rel = PurePosixPath(relative_path.replace("\\", "/"))
+    return (
+        rel.match("**/__init__.py")
+        or rel.match("**/.gitkeep")
+        or rel.match("**/.keep")
+    )
 
 
 def _write_json_file(path: Path, payload: dict) -> None:
@@ -1057,6 +1067,7 @@ def execute_task_with_review(
                 fp for fp in current_task.files
                 if (config.repo_root / fp).exists()
                 and (config.repo_root / fp).stat().st_size == 0
+                and not _is_allowed_empty_task_file(fp)
             ]
             if empty_files:
                 logger.warning(
