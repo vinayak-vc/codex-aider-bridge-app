@@ -282,13 +282,13 @@ class AiderRunner:
             self._logger.info("Edit format: whole (forced by retry feedback)")
             return "whole"
 
-        # Local models (qwen, gemma, llama etc.) output diff-format responses even
-        # when Aider requests whole-format.  Match Aider's expectation to their output.
+        # For local models, prefer whole-file edits for reliability.
+        # This avoids SEARCH/REPLACE mismatch failures seen with weaker local models.
         if self._is_local_model():
             self._logger.info(
-                "Edit format: diff (local/ollama model — always outputs diff format)"
+                "Edit format: whole (local/ollama model reliability mode)"
             )
-            return "diff"
+            return "whole"
 
         total_lines = 0
         for p in file_paths:
