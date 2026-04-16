@@ -171,3 +171,45 @@ if not validation_result.succeeded:
 | 2026-03-27 | 🔴 Bridge | Crash after writing manual review request due stdout emit `OSError: [Errno 22] Invalid argument` |
 | 2026-03-27 | 🔵 Codex | Reviewed final `config.py` result, recorded `PASS`, and re-ran recovery plan successfully |
 | 2026-03-27 | 🔴 Bridge | Recovery plan `plan_002_config_bootstrap.json` completed successfully with `qwen2.5-coder:7b` |
+| 2026-03-29 | 🔵 Codex | Read onboarding & generated `plan_001_cinematic_shorts.json` for Valorant project v3 |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_001_config` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_002_utils_grouping` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_002_utils_grouping` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_003_main_grouping` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_003_main_grouping` (attempt 1) and issued `REWORK` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_003_main_grouping` (attempt 2) and issued `PASS` via decision JSON |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_004_video_editor_signature` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_004_video_editor_signature` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_005_video_editor_shake_flash` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_005_video_editor_shake_flash` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_006_video_editor_replay` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_006_video_editor_replay` (attempt 1) and issued `REWORK` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_006_video_editor_replay` (attempt 2) and issued `PASS` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Task plan `plan_001_cinematic_shorts.json` executed completely and successfully! |
+| 2026-03-29 | 🔵 Codex | Detected `IndexError` bug caused by `clip.iter_frames()` hallucination in Task 4 |
+| 2026-03-29 | 🔵 Codex | Generated `plan_002_fix_bug.json` to repair `_build_clip_segment` signature |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_100_fix_build_clip_segment` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_100_fix_build_clip_segment` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Detected `TypeError` during zoom scale calculation due to a list replacing a float parameter |
+| 2026-03-29 | 🔵 Codex | Generated `plan_003_fix_zoom.json` to properly map lists of float timestamps inside `_calculate_zoom_scale` |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_200_fix_zoom_scale_typeerror` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_200_fix_zoom_scale_typeerror` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Bug fix sequence `plan_003_fix_zoom.json` executed successfully |
+| 2026-03-29 | 🔵 Codex | Detected `AttributeError` for deprecated `vfx.speedx` removed in moviepy 2.0 |
+| 2026-03-29 | 🔵 Codex | Generated `plan_004_fix_moviepy.json` to update speedx to MultiplySpeed |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_300_update_moviepy_speedx` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_300_update_moviepy_speedx` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Bug fix sequence `plan_004_fix_moviepy.json` executed successfully |
+| 2026-03-29 | 🔵 Codex | User requested 1 input = 1 output exactly. Designed `plan_005_single_clip.json` to concatenate kill groups into a single montage highlight |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_400_concat_kill_groups` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_400_concat_kill_groups` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Feature `plan_005_single_clip.json` executed successfully |
+| 2026-03-29 | 🔵 Codex | Caught `NameError`. Aider accidentally removed the `_append_loop_outro` definition while refactoring the loop! |
+| 2026-03-29 | 🔵 Codex | Designed `plan_006_restore_outro.json` to restore the missing method. |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_500_restore_outro_function` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_500_restore_outro_function` and issued `PASS` via decision JSON |
+| 2026-03-29 | 🔵 Codex | Bug fix sequence `plan_006_restore_outro.json` executed successfully |
+| 2026-03-29 | 🔵 Codex | Identified severe rendering bottleneck: `method='compose'` in concat + per-frame `min()` + per-frame `np.random.randint` in shake loop |
+| 2026-03-29 | 🔵 Codex | Designed `plan_007_performance.json` to fix all three bottlenecks |
+| 2026-03-29 | 🟡 Aider | Started execution of `task_600_performance_fix` |
+| 2026-03-29 | 🔵 Codex | Reviewed result of `task_600_performance_fix` and issued `PASS` via decision JSON. All 3 optimizations confirmed in diff |
