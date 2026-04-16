@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 
 from . import setup_checker, state_store
 from .bridge_runner import get_run
+from utils.code_review_graph_sync import refresh_project_knowledge_with_code_review_graph
 
 # Telemetry — local-only usage analytics
 try:
@@ -66,6 +68,11 @@ from ui.app_state import _sse_clients, _sse_lock
 # Knowledge context cache: {repo_root: (context_str, timestamp)}
 _knowledge_cache: dict[str, tuple[str, float]] = {}
 _KNOWLEDGE_CACHE_TTL = 60.0  # seconds
+_CRG_PERIODIC_ENABLED = True
+_CRG_PERIODIC_SCAN_SECONDS = 300
+_CRG_MIN_REFRESH_INTERVAL_SECONDS = 1800
+_crg_periodic_thread_started = False
+_crg_periodic_lock = threading.Lock()
 
 
 def _chat_project_key(repo_root: str) -> str:
@@ -2304,6 +2311,111 @@ def _normalize_knowledge_payload(raw: dict, repo_root: Path) -> dict:
     }
 
 
+def _collect_periodic_scan_repos() -> list[Path]:
+    repo_roots: set[str] = set()
+
+    active_repo = str(state_store.load_settings().get("repo_root", "")).strip()
+    if active_repo:
+        repo_roots.add(active_repo)
+
+    for project in state_store.load_projects():
+        if not isinstance(project, dict):
+            continue
+        project_path = str(project.get("path", "")).strip()
+        if project_path:
+            repo_roots.add(project_path)
+
+    repos: list[Path] = []
+    for root in sorted(repo_roots):
+        repo_path = Path(root)
+        if repo_path.is_dir():
+            repos.append(repo_path)
+    return repos
+
+
+def _periodic_code_review_graph_sync_worker() -> None:
+    logger = logging.getLogger("bridge_app")
+    while True:
+        try:
+            for repo_path in _collect_periodic_scan_repos():
+                try:
+                    from utils.project_knowledge import load_knowledge, save_knowledge
+                    knowledge = load_knowledge(repo_path)
+                    result = refresh_project_knowledge_with_code_review_graph(
+                        repo_path,
+                        knowledge,
+                        logger,
+                        force_full_rebuild=False,
+                        min_interval_seconds=_CRG_MIN_REFRESH_INTERVAL_SECONDS,
+                    )
+                    if result.get("ok") and result.get("changed"):
+                        save_knowledge(knowledge, repo_path)
+                        logger.info(
+                            "Periodic code-review-graph refresh complete for %s (%s)",
+                            repo_path,
+                            result.get("mode", "incremental"),
+                        )
+                except Exception as repo_ex:
+                    logger.warning(
+                        "Periodic code-review-graph refresh failed for %s: %s",
+                        repo_path,
+                        repo_ex,
+                    )
+        except Exception as loop_ex:
+            logger.warning("Periodic code-review-graph worker loop failed: %s", loop_ex)
+        time.sleep(_CRG_PERIODIC_SCAN_SECONDS)
+
+
+def _start_periodic_code_review_graph_sync() -> None:
+    global _crg_periodic_thread_started
+    if not _CRG_PERIODIC_ENABLED:
+        return
+    with _crg_periodic_lock:
+        if _crg_periodic_thread_started:
+            return
+        worker = threading.Thread(
+            target=_periodic_code_review_graph_sync_worker,
+            name="crg-periodic-sync",
+            daemon=True,
+        )
+        worker.start()
+        _crg_periodic_thread_started = True
+
+
+def _kickoff_code_review_graph_sync(repo_path: Path, force_full_rebuild: bool = False) -> None:
+    if not repo_path.is_dir():
+        return
+
+    def _worker() -> None:
+        logger = logging.getLogger("bridge_app")
+        try:
+            from utils.project_knowledge import load_knowledge, save_knowledge
+            knowledge = load_knowledge(repo_path)
+            result = refresh_project_knowledge_with_code_review_graph(
+                repo_path,
+                knowledge,
+                logger,
+                force_full_rebuild=force_full_rebuild,
+                min_interval_seconds=0 if force_full_rebuild else _CRG_MIN_REFRESH_INTERVAL_SECONDS,
+            )
+            if result.get("ok") and result.get("changed"):
+                save_knowledge(knowledge, repo_path)
+                logger.info(
+                    "On-demand code-review-graph sync complete for %s (%s)",
+                    repo_path,
+                    result.get("mode", "incremental"),
+                )
+        except Exception as ex:
+            logger.warning("On-demand code-review-graph sync failed for %s: %s", repo_path, ex)
+
+    thread = threading.Thread(
+        target=_worker,
+        name=f"crg-sync-{repo_path.name}",
+        daemon=True,
+    )
+    thread.start()
+
+
 @app.route("/api/reports/tokens")
 def api_reports_tokens():
     """Token log for a specific project (reads bridge_progress/token_log.json)."""
@@ -2354,7 +2466,6 @@ def api_reports_knowledge():
 @app.route("/api/knowledge/refresh", methods=["POST"])
 def api_knowledge_refresh():
     """Re-scan the project and refresh knowledge + AI_UNDERSTANDING.md."""
-    import logging
     _root = Path(__file__).parent.parent
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
@@ -2388,6 +2499,19 @@ def api_knowledge_refresh():
         # Set last_refreshed timestamp
         from datetime import datetime
         knowledge.setdefault("project", {})["last_refreshed"] = datetime.now().isoformat(timespec="seconds")
+
+        crg_result = refresh_project_knowledge_with_code_review_graph(
+            repo_path,
+            knowledge,
+            logger,
+            force_full_rebuild=True,
+            min_interval_seconds=0,
+        )
+        if not crg_result.get("ok"):
+            logger.warning(
+                "Knowledge refresh: code-review-graph unavailable (%s)",
+                crg_result.get("reason", "unknown"),
+            )
 
         # Save knowledge
         save_knowledge(knowledge, repo_path)
@@ -2429,6 +2553,12 @@ def api_knowledge_refresh():
             "ok": True,
             "files_scanned": files_count,
             "last_refreshed": knowledge["project"]["last_refreshed"],
+            "crg": {
+                "ok": bool(crg_result.get("ok")),
+                "reason": crg_result.get("reason", ""),
+                "mode": crg_result.get("mode", ""),
+                "snapshot": crg_result.get("snapshot", {}),
+            },
         })
     except Exception as ex:
         return jsonify({"error": str(ex)}), 500
@@ -2486,6 +2616,7 @@ def api_projects_add():
     if not path:
         return jsonify({"error": "path is required"}), 400
     state_store.add_project(path, name)
+    _kickoff_code_review_graph_sync(Path(path), force_full_rebuild=False)
     return jsonify({"ok": True, "projects": state_store.load_projects()})
 
 
@@ -2500,6 +2631,7 @@ def api_projects_switch():
     settings["repo_root"] = path
     state_store.save_settings(settings)
     state_store.add_project(path)          # promote to front
+    _kickoff_code_review_graph_sync(Path(path), force_full_rebuild=False)
     return jsonify({"ok": True, "repo_root": path})
 
 
@@ -2521,3 +2653,6 @@ def api_projects_rename():
 
 
 # Relay routes — MOVED to ui/api/relay_routes.py (relay_bp)
+
+# Start background periodic external scanner sync once per UI process.
+_start_periodic_code_review_graph_sync()

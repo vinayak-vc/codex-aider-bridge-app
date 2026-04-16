@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Task:
     id: int
     files: list[str]

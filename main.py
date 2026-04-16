@@ -903,12 +903,20 @@ def execute_task_with_review(
         if current_task.type not in ("create",):
             missing = [f for f in current_task.files if not (config.repo_root / f).exists()]
             if missing and len(missing) == len(current_task.files):
-                # ALL target files are missing — this task will definitely fail
-                raise RuntimeError(
-                    f"Task {current_task.id} ({current_task.type}): none of the target files exist: "
-                    f"{', '.join(missing)}. Check the file paths in your plan — "
-                    f"the file may have a different name or location."
-                )
+                if current_task.type == "modify":
+                    logger.warning(
+                        "Task %s: Auto-converting 'modify' to 'create' because target files do not exist: %s",
+                        current_task.id, ", ".join(missing)
+                    )
+                    # Use a modified copy to avoid polluting the underlying plan if persisted
+                    current_task.type = "create"
+                else:
+                    # ALL target files are missing — this task will definitely fail
+                    raise RuntimeError(
+                        f"Task {current_task.id} ({current_task.type}): none of the target files exist: "
+                        f"{', '.join(missing)}. Check the file paths in your plan — "
+                        f"the file may have a different name or location."
+                    )
             elif missing:
                 logger.warning(
                     "Task %s (%s): some target files do not exist: %s",

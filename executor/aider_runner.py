@@ -742,14 +742,66 @@ class AiderRunner:
 
             # Normalise to forward-slash for cross-platform comparison
             allowed_rel = {r.replace("\\", "/") for r in allowed_rel}
+            allowed_by_basename: dict[str, list[str]] = {}
+            for allowed in allowed_rel:
+                basename = PurePosixPath(allowed).name
+                if basename not in allowed_by_basename:
+                    allowed_by_basename[basename] = []
+                allowed_by_basename[basename].append(allowed)
 
-            out_of_scope: list[str] = []
+            dirty_paths: list[str] = []
             for rel_path in proc.stdout.splitlines():
                 rel_norm = rel_path.strip().replace("\\", "/")
-                if not rel_norm:
+                if rel_norm:
+                    dirty_paths.append(rel_norm)
+
+            mapped_reverts: list[str] = []
+            mapped_notes: list[str] = []
+            dirty_set = set(dirty_paths)
+            for rel_norm in dirty_paths:
+                if rel_norm in allowed_rel:
                     continue
+                # Basename-only edits are common with smaller local models.
+                # If the basename maps to exactly one allowed scoped target,
+                # transplant the edited content to that target path.
+                if "/" in rel_norm:
+                    continue
+                candidates = allowed_by_basename.get(rel_norm, [])
+                if len(candidates) != 1:
+                    continue
+                target_rel = candidates[0]
+                if target_rel in dirty_set:
+                    continue
+                source_abs = self._repo_root / rel_norm
+                target_abs = self._repo_root / target_rel
+                if not source_abs.exists() or not source_abs.is_file():
+                    continue
+                try:
+                    target_abs.parent.mkdir(parents=True, exist_ok=True)
+                    target_abs.write_bytes(source_abs.read_bytes())
+                    mapped_reverts.append(rel_norm)
+                    mapped_notes.append(f"{rel_norm} -> {target_rel}")
+                except OSError as exc:
+                    self._logger.debug(
+                        "Task %s: basename auto-map failed for %s -> %s: %s",
+                        task_id, rel_norm, target_rel, exc,
+                    )
+
+            if mapped_notes:
+                self._logger.info(
+                    "Task %s: auto-mapped basename-only edit(s): %s",
+                    task_id,
+                    ", ".join(mapped_notes),
+                )
+
+            out_of_scope: list[str] = []
+            for rel_norm in dirty_paths:
                 if rel_norm not in allowed_rel:
-                    out_of_scope.append(rel_path.strip())
+                    out_of_scope.append(rel_norm)
+
+            for mapped_rel in mapped_reverts:
+                if mapped_rel not in out_of_scope:
+                    out_of_scope.append(mapped_rel)
 
             if not out_of_scope:
                 return

@@ -1,164 +1,421 @@
-/* ── AI Relay Chat Layout ────────────────────────────────────────────────── */
+/* ── Mission Control — Run Panel ─────────────────────────────────────────── */
 
-.relay-shell {
-  display: flex;
-  flex-direction: column;
+/* ── Shell ───────────────────────────────────────────────────────────────── */
+
+.mc-shell {
+  --pipeline-width: 240px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
   height: calc(100vh - 56px);
-  max-width: 900px;
-  margin: 0 auto;
+  overflow: hidden;
 }
 
-.relay-header {
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.mc-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
 }
 
-.relay-title {
-  font-size: 16px;
+.mc-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mc-header-title {
+  font-size: 15px;
   font-weight: 700;
   margin: 0;
+  color: var(--color-text);
 }
 
-.relay-header-actions {
+.mc-header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.relay-status {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
+.mc-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
   background: var(--color-surface-2);
   color: var(--color-text-muted);
+  transition: all var(--transition);
 }
 
-/* ── Messages ────────────────────────────────────────────────────────────── */
+.mc-status.--running {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+}
 
-.relay-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 16px;
+.mc-status.--reviewing {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.2);
+  animation: mc-pulse 1.5s ease-in-out infinite;
+}
+
+.mc-status.--done {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.mc-status.--error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+@keyframes mc-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* ── Three-Column Grid ───────────────────────────────────────────────────── */
+
+.mc-grid {
+  display: grid;
+  grid-template-columns: var(--pipeline-width) 4px 1fr 200px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.mc-resizer {
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  z-index: 10;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+}
+
+.mc-resizer:hover, .mc-resizer.is-dragging {
+  background: var(--color-accent);
+}
+
+/* ── LEFT: Pipeline ──────────────────────────────────────────────────────── */
+
+.mc-pipeline {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow: hidden;
 }
 
-.relay-welcome {
-  text-align: center;
-  padding: 60px 20px;
+.mc-pipeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+}
+
+.mc-pipeline-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
   color: var(--color-text-muted);
 }
 
-.relay-welcome-icon {
+.mc-progress-label {
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+}
+
+.mc-progress-track {
+  height: 3px;
+  background: var(--color-surface-3);
+  margin: 0 12px 8px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mc-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent), #f97316);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.mc-task-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0 8px;
+}
+
+.mc-empty-pipeline {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+}
+
+/* ── Task Items ──────────────────────────────────────────────────────────── */
+
+.mc-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-left: 3px solid transparent;
+  cursor: default;
+  transition: all var(--transition);
+  font-size: 11px;
+}
+
+.mc-task:hover {
+  background: var(--color-surface-2);
+}
+
+.mc-task-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: var(--color-surface-3);
+  color: var(--color-text-subtle);
+  border: 1px solid var(--color-border);
+}
+
+.mc-task-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mc-task-label {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-task-file {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-task-badge {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* Task states */
+.mc-task.--locked {
+  opacity: 0.35;
+}
+.mc-task.--locked .mc-task-icon {
+  background: var(--color-surface-2);
+}
+
+.mc-task.--active {
+  border-left-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.06);
+}
+.mc-task.--active .mc-task-icon {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border-color: #38bdf8;
+  animation: mc-pulse 1.5s ease-in-out infinite;
+}
+.mc-task.--active .mc-task-label {
+  color: #38bdf8;
+}
+
+.mc-task.--review {
+  border-left-color: var(--color-warning);
+  background: var(--color-warning-bg);
+}
+.mc-task.--review .mc-task-icon {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+.mc-task.--review .mc-task-label {
+  color: var(--color-warning);
+}
+
+.mc-task.--done {
+  opacity: 0.7;
+  border-left-color: var(--color-success);
+}
+.mc-task.--done .mc-task-icon {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+.mc-task.--done .mc-task-label {
+  color: var(--color-success);
+}
+
+.mc-task.--failed {
+  border-left-color: var(--color-danger);
+}
+.mc-task.--failed .mc-task-icon {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+.mc-task.--failed .mc-task-label {
+  color: var(--color-danger);
+}
+
+.mc-task.--skipped {
   opacity: 0.3;
+  text-decoration: line-through;
+}
+
+/* ── CENTER: Focus Area ──────────────────────────────────────────────────── */
+
+.mc-focus {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+/* Welcome */
+.mc-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.mc-welcome-icon {
+  opacity: 0.2;
   margin-bottom: 16px;
 }
 
-.relay-welcome h3 {
+.mc-welcome h3 {
   color: var(--color-text);
   margin: 0 0 8px;
+  font-size: 16px;
 }
 
-/* ── Message Bubbles ─────────────────────────────────────────────────────── */
+.mc-welcome p {
+  font-size: 12px;
+  max-width: 400px;
+  line-height: 1.6;
+}
 
-.relay-msg {
+/* Console */
+.mc-console {
+  border-bottom: 1px solid var(--color-border);
+  max-height: 200px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-width: 85%;
-  animation: relay-msg-in .15s ease-out;
+  background: #060406;
 }
 
-@keyframes relay-msg-in {
-  from { opacity: 0; transform: translateY(6px); }
+.mc-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--color-text-subtle);
+  border-bottom: 1px solid var(--color-border-muted);
+  flex-shrink: 0;
+}
+
+.mc-console-clear {
+  background: none;
+  border: none;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+.mc-console-clear:hover { color: var(--color-text-muted); }
+
+.mc-console-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: #6ee7b7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Action Zone */
+.mc-action {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.3s ease;
+}
+
+.mc-action.--reviewing {
+  background: rgba(245, 158, 11, 0.03);
+  box-shadow: inset 0 0 80px rgba(245, 158, 11, 0.04);
+}
+
+/* Action Cards */
+.mc-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  animation: mc-card-in 0.2s ease-out;
+}
+
+@keyframes mc-card-in {
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.relay-msg--user {
-  align-self: flex-end;
-  align-items: flex-end;
-}
+.mc-card.--prompt   { border-left: 3px solid var(--color-info); }
+.mc-card.--status   { border-left: 3px solid var(--color-accent); }
+.mc-card.--review   { border-left: 3px solid var(--color-warning); }
+.mc-card.--error    { border-left: 3px solid var(--color-danger); }
+.mc-card.--done     { border-left: 3px solid var(--color-success); }
 
-.relay-msg--bridge {
-  align-self: flex-start;
-  align-items: flex-start;
-}
-
-.relay-bubble {
-  padding: 10px 14px;
-  border-radius: 16px;
-  font-size: 13px;
-  line-height: 1.6;
-  word-break: break-word;
-  white-space: pre-wrap;
-}
-
-.relay-msg--user .relay-bubble {
-  background: var(--color-accent);
-  color: #fff;
-  border-bottom-right-radius: 6px;
-}
-
-.relay-msg--bridge .relay-bubble {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-  border-bottom-left-radius: 6px;
-}
-
-.relay-meta {
+.mc-card-title {
   font-size: 10px;
-  color: var(--color-text-subtle);
-  padding: 0 4px;
-}
-
-/* ── Cards (prompt, task list, review) ──────────────────────────────────── */
-
-.relay-card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 14px 16px;
-  max-width: 85%;
-  animation: relay-msg-in .15s ease-out;
-}
-
-.relay-card--prompt {
-  align-self: flex-start;
-  border-left: 3px solid var(--color-info);
-}
-
-.relay-card--tasks {
-  align-self: flex-start;
-  border-left: 3px solid var(--color-success);
-}
-
-.relay-card--review {
-  align-self: flex-start;
-  border-left: 3px solid var(--color-warning);
-}
-
-.relay-card--status {
-  align-self: flex-start;
-  border-left: 3px solid var(--color-accent);
-}
-
-.relay-card--error {
-  align-self: flex-start;
-  border-left: 3px solid var(--color-danger);
-}
-
-.relay-card--done {
-  align-self: flex-start;
-  border-left: 3px solid var(--color-success);
-}
-
-.relay-card-title {
-  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -166,98 +423,43 @@
   color: var(--color-text-muted);
 }
 
-.relay-card-body {
-  font-size: 13px;
+.mc-card-body {
+  font-size: 12px;
   line-height: 1.5;
+  color: var(--color-text);
 }
 
-.relay-card pre {
+.mc-card pre {
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   overflow-x: auto;
-  max-height: 300px;
+  max-height: 280px;
   overflow-y: auto;
   margin: 8px 0;
   white-space: pre-wrap;
   word-break: break-all;
+  color: var(--color-text-muted);
 }
 
-.relay-card-actions {
+.mc-card-actions {
   display: flex;
   gap: 8px;
   margin-top: 10px;
 }
 
-/* ── Task list inside card ───────────────────────────────────────────────── */
-
-.relay-task-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  font-size: 12px;
-  border-bottom: 1px solid var(--color-border-muted);
-}
-
-.relay-task-item:last-child { border-bottom: none; }
-
-.relay-task-num {
-  color: var(--color-accent);
-  font-weight: 700;
-  min-width: 20px;
-}
-
-.relay-task-type {
-  font-size: 10px;
-  text-transform: uppercase;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--color-surface-2);
-  color: var(--color-text-muted);
-}
-
-.relay-task-files {
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.relay-task-item--approved {
-  color: var(--color-success);
-}
-.relay-task-item--approved .relay-task-status {
-  font-weight: bold;
-}
-
-.relay-task-item--failed {
-  color: var(--color-danger);
-}
-
-.relay-task-item--skipped {
-  opacity: 0.4;
-  text-decoration: line-through;
-}
-
-.relay-task-status {
-  margin-left: auto;
-  font-size: 10px;
-  opacity: 0.8;
-}
-
-/* ── Paste area ──────────────────────────────────────────────────────────── */
-
-.relay-paste-area {
+/* Paste area inside action card */
+.mc-paste-area {
   width: 100%;
-  min-height: 80px;
-  max-height: 200px;
+  min-height: 70px;
+  max-height: 180px;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -265,42 +467,147 @@
   resize: vertical;
   margin: 8px 0;
 }
-
-.relay-paste-area:focus {
+.mc-paste-area:focus {
   outline: none;
   border-color: var(--color-accent);
 }
 
-/* ── Input bar ───────────────────────────────────────────────────────────── */
+/* Decision Zone */
+.mc-decision {
+  border-top: 1px solid var(--color-border);
+  padding: 12px 16px;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
 
-.relay-input-bar {
+.mc-decision-head {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--color-warning);
+  margin-bottom: 8px;
+}
+
+.mc-decision-input {
+  width: 100%;
+  min-height: 60px;
+  max-height: 120px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  resize: vertical;
+}
+.mc-decision-input:focus {
+  outline: none;
+  border-color: var(--color-warning);
+}
+
+.mc-decision-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── RIGHT: Session Panel ────────────────────────────────────────────────── */
+
+.mc-session {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.mc-meta-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mc-meta-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mc-meta-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--color-text-subtle);
+}
+
+.mc-meta-value {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+.mc-meta-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.mc-meta-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-sep {
+  border: none;
+  border-top: 1px solid var(--color-border-muted);
+  margin: 12px 0;
+}
+
+.mc-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mc-ctrl-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── Bottom: Goal Bar ────────────────────────────────────────────────────── */
+
+.mc-goal-bar {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--color-border);
+  padding: 10px 16px;
   background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
 }
 
-.relay-input {
+.mc-goal-input {
   flex: 1;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 10px 14px;
   font-size: 13px;
   color: var(--color-text);
   resize: none;
-  max-height: 120px;
+  max-height: 100px;
   line-height: 1.5;
 }
 
-.relay-input:focus {
+.mc-goal-input:focus {
   outline: none;
   border-color: var(--color-accent);
 }
 
-.relay-send-btn {
+.mc-send-btn {
   border-radius: 50%;
   width: 38px;
   height: 38px;
@@ -309,6 +616,13 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+/* ── Disabled zones ──────────────────────────────────────────────────────── */
+
+.mc-goal-bar.--disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 /* ── Settings overlay (reused) ───────────────────────────────────────────── */
