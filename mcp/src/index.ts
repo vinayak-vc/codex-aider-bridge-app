@@ -4,6 +4,7 @@ import { registerPingTool } from './tools/ping.js';
 import { registerStateTools } from './tools/state.js';
 import { registerMemoryTools } from './tools/memory.js';
 import { registerHealthTool } from './tools/health.js';
+import { registerExecutionTools } from './tools/execution.js';
 
 async function main() {
   const server = new McpServer({
@@ -22,6 +23,9 @@ async function main() {
 
   // M4 — health tool
   registerHealthTool(server);
+
+  // M5 — execution tools
+  registerExecutionTools(server);
 
   // Future milestones register here:
   // M3: registerMemoryTools(server);

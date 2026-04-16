@@ -177,7 +177,16 @@ structured progress events instead of raw stdout.
 **This is the biggest milestone** — replaces the core bash orchestration loop
 in the skill.
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅`
+
+**Notes:**
+- 4 tools: `bridge_dry_run`, `bridge_run_plan`, `bridge_cancel`, `bridge_get_run_output`
+- `bridge_dry_run`: spawns `python main.py --dry-run --skip-onboarding-scan --auto-approve`, pipes `\n` to stdin for interactive prompts, parses `[dry-run] Task N:` lines and error JSON
+- `bridge_run_plan`: background spawn, pipes stdout+stderr to `bridge_progress/mcp_run.log`, returns `{ pid, log_file }` immediately
+- `bridge_cancel`: SIGTERM to tracked PID — confirmed with real process kill
+- `bridge_get_run_output`: tails log file, parses structured `_bridge_event` JSON lines
+- `runner.ts` module tracks one job at a time; state lives in module-level vars (persists for session)
+- `--skip-onboarding-scan` flag + `\n` stdin feed handles all interactive prompts non-interactively
 
 ---
 
@@ -235,7 +244,7 @@ and memory service.
 | M2 | State Tools | `DONE ✅` |
 | M3 | Memory Tools | `DONE ✅` |
 | M4 | Service Health Tool | `DONE ✅` |
-| M5 | Execution Tools | `NOT STARTED` |
+| M5 | Execution Tools | `DONE ✅` |
 | M6 | Skill Rewrite | `NOT STARTED` |
 | M7 | ensure_services Integration | `NOT STARTED` |
 
@@ -285,3 +294,4 @@ mcp/
 | 2026-04-16 | M2 | All 5 state tools verified against real `bridge_progress/` data — `bridge_get_status`, `bridge_get_checkpoint`, `bridge_get_metrics`, `bridge_get_project_knowledge`, `bridge_list_repos` |
 | 2026-04-16 | M3 | All 5 memory tools verified against live service — `memory_health`, `memory_search`, `memory_save`, `memory_enhance`, `memory_ingest`; fixed SQLite string-float type serialisation bug |
 | 2026-04-16 | M4 | `bridge_health` verified — concurrent probe of Qdrant, Ollama, memory-service, Aider + bridge_root auto-detect in one tool call |
+| 2026-04-16 | M5 | Execution tools verified — dry-run parses plan errors + task previews; run_plan spawns background job; cancel kills PID; get_run_output tails log |
