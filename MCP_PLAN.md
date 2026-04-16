@@ -314,3 +314,4 @@ mcp/
 | 2026-04-16 | M5 | Execution tools verified — dry-run parses plan errors + task previews; run_plan spawns background job; cancel kills PID; get_run_output tails log |
 | 2026-04-16 | M6 | Skill rewritten — 759→535 lines (30% reduction); Stage 1/1.5/3-A/3-B/5-A/5-F replaced with MCP tool calls; 28 MCP references; 10 bash blocks remain (git + direct file reads) |
 | 2026-04-16 | M7 | Already done in M1 — ensure_mcp_server() + mcpServers.bridge settings verified working |
+| 2026-04-16 | Skill+ | code-review-graph hard-checks: CS-4 + Stage 1 HARD STOP if server missing; Stage 1.6 calls build_or_update_graph_tool directly; Stage 4 calls detect_changes_tool after every PASS; Stage 5-A-G does full rebuild at run end |
