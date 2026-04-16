@@ -1,5 +1,17 @@
 {
   "hooks": {
-    "PreToolUse": []
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/ensure_services.py",
+            "timeout": 120,
+            "run_once_per_session": true
+          }
+        ]
+      }
+    ]
   }
 }

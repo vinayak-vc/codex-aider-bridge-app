@@ -1,0 +1,3 @@
+[submodule "services/memory-service"]
+	path = services/memory-service
+	url = https://github.com/WRDeadman10/bridge-memory-service.git
