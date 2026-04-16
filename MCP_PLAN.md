@@ -141,7 +141,15 @@ all `curl /bridge/enhance` + `/bridge/ingest` calls.
 **Replaces:** The three separate health curl calls in Stage 1 setup checks.
 Claude calls one tool, gets a full dependency map.
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅`
+
+**Notes:**
+- All probes run concurrently via `Promise.all` — total latency = slowest probe, not sum
+- Qdrant `/health` returns 404; uses `/` instead which returns version JSON
+- Aider checked via `spawnSync('aider', ['--version'])` — reports version string or install hint
+- `bridge_root` auto-detected by walking up from `import.meta.url` looking for `main.py`
+- `mode` on memory_service inferred from Qdrant probe result (no dedicated mode endpoint)
+- Verified: Qdrant v1.17.1, Ollama 4 models, memory service up, Aider 0.86.2 — all in one call
 
 ---
 
@@ -226,7 +234,7 @@ and memory service.
 | M1 | Scaffold & Transport | `DONE ✅` |
 | M2 | State Tools | `DONE ✅` |
 | M3 | Memory Tools | `DONE ✅` |
-| M4 | Service Health Tool | `NOT STARTED` |
+| M4 | Service Health Tool | `DONE ✅` |
 | M5 | Execution Tools | `NOT STARTED` |
 | M6 | Skill Rewrite | `NOT STARTED` |
 | M7 | ensure_services Integration | `NOT STARTED` |
@@ -276,3 +284,4 @@ mcp/
 | 2026-04-16 | M1 | Scaffold complete — `bridge_ping` tool verified end-to-end; SDK framing issue (NDJSON not LSP) diagnosed and fixed |
 | 2026-04-16 | M2 | All 5 state tools verified against real `bridge_progress/` data — `bridge_get_status`, `bridge_get_checkpoint`, `bridge_get_metrics`, `bridge_get_project_knowledge`, `bridge_list_repos` |
 | 2026-04-16 | M3 | All 5 memory tools verified against live service — `memory_health`, `memory_search`, `memory_save`, `memory_enhance`, `memory_ingest`; fixed SQLite string-float type serialisation bug |
+| 2026-04-16 | M4 | `bridge_health` verified — concurrent probe of Qdrant, Ollama, memory-service, Aider + bridge_root auto-detect in one tool call |

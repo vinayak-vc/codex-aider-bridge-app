@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { registerPingTool } from './tools/ping.js';
 import { registerStateTools } from './tools/state.js';
 import { registerMemoryTools } from './tools/memory.js';
+import { registerHealthTool } from './tools/health.js';
 
 async function main() {
   const server = new McpServer({
@@ -18,6 +19,9 @@ async function main() {
 
   // M3 — memory tools
   registerMemoryTools(server);
+
+  // M4 — health tool
+  registerHealthTool(server);
 
   // Future milestones register here:
   // M3: registerMemoryTools(server);
