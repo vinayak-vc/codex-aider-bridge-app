@@ -502,12 +502,53 @@ function connectSSE() {
   window.addEventListener('beforeunload', () => sse.disconnect());
 }
 
+// ── Project Cards ────────────────────────────────────────────────────────────
+
+async function loadProjectCards() {
+  const grid = $('project-cards-grid');
+  if (!grid) return;
+  try {
+    const data = await fetch('/api/projects/status').then(r => r.json());
+    const projects = data.projects || [];
+    if (!projects.length) {
+      grid.innerHTML = '<div style="font-size:var(--font-size-xs);color:var(--color-text-subtle);padding:12px 0">No projects registered yet.</div>';
+      return;
+    }
+    const statusColors = { success: 'var(--color-success)', failure: 'var(--color-danger)', running: 'var(--color-accent)', stopped: 'var(--color-warning)' };
+    grid.innerHTML = projects.map(p => {
+      const pct = p.tasks_total > 0 ? Math.round(p.tasks_completed / p.tasks_total * 100) : 0;
+      const color = statusColors[p.last_run_status] || 'var(--color-text-subtle)';
+      const status = p.last_run_status || 'no runs';
+      return `<div class="project-card" data-path="${p.path.replace(/"/g, '&quot;')}" title="${p.path.replace(/"/g, '&quot;')}">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
+          <strong style="font-size:var(--font-size-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</strong>
+        </div>
+        <div style="font-size:11px;color:var(--color-text-subtle);margin-bottom:4px">${status} ${p.last_run_date ? '· ' + p.last_run_date.split(' ')[0] : ''}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:4px;background:var(--color-surface-3);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:var(--color-success);border-radius:2px"></div>
+          </div>
+          <span style="font-size:10px;color:var(--color-text-muted)">${p.tasks_completed}/${p.tasks_total}</span>
+        </div>
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('.project-card').forEach(card => {
+      card.addEventListener('click', () => {
+        fetch('/api/projects/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: card.dataset.path }) })
+          .then(() => { window.location = '/run'; });
+      });
+    });
+  } catch (_) {}
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 async function init() {
   bindControls();
   await hydrate();
   connectSSE();
+  loadProjectCards();
 }
 
 init();

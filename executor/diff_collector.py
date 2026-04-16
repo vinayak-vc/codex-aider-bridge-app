@@ -16,24 +16,40 @@ class DiffCollector:
     decision (PASS or REWORK) without needing access to the full file contents.
     """
 
-    _MAX_CHARS: int = 4000
+    _MAX_CHARS: int = 10000
 
     def __init__(self, repo_root: Path) -> None:
         self._root = repo_root
 
-    def collect(self) -> str:
-        """Return a truncated diff string of all changes since the last commit.
+    def collect(self, files: list[str] | None = None) -> str:
+        """Return a truncated diff string of changes.
 
-        Tries git diff HEAD first (staged + unstaged vs last commit).
-        Falls back to git diff (unstaged only) if HEAD diff is empty,
-        which handles repos with no commits yet.
+        If files list provided: 
+        1. Runs 'git add -N' on those specific files to make new ones visible.
+        2. Returns diff scoped strictly to those files.
+
+        Otherwise: 
+        Returns everything changed since last commit (staged + unstaged).
         """
-        stat = self._git(["git", "diff", "--stat", "HEAD"])
-        diff = self._git(["git", "diff", "HEAD"])
+        if files:
+            # 1. Intent-to-add only the scoped files
+            for f in files:
+                self._git(["git", "add", "-N", str(f)])
+            
+            # 2. Scoped diff
+            args_stat = ["git", "diff", "--stat"] + files
+            args_diff = ["git", "diff"] + files
+            
+            stat = self._git(args_stat)
+            diff = self._git(args_diff)
+        else:
+            # Fallback: Whole repo
+            stat = self._git(["git", "diff", "--stat", "HEAD"])
+            diff = self._git(["git", "diff", "HEAD"])
 
-        if not stat and not diff:
-            stat = self._git(["git", "diff", "--stat"])
-            diff = self._git(["git", "diff"])
+            if not stat and not diff:
+                stat = self._git(["git", "diff", "--stat"])
+                diff = self._git(["git", "diff"])
 
         if not stat and not diff:
             return "(no diff available — no file changes detected or repo is not a git repository)"

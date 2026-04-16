@@ -10,6 +10,7 @@ from typing import Optional
 
 _WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+from context.project_context import ProjectContext
 from models.task import ReviewResult, SubTask, Task, TaskReport
 from utils.command_resolution import resolve_command_arguments
 from utils.token_tracker import TokenTracker
@@ -56,20 +57,24 @@ class SupervisorAgent:
     def generate_plan(
         self,
         goal: str,
-        repo_tree: str,
+        project_context: Optional[ProjectContext] = None,
         idea_text: Optional[str] = None,
         feedback: Optional[str] = None,
-        knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
+        feature_specs: Optional[str] = None,
+        model_roster: Optional[str] = None,
+        code_structure: Optional[str] = None,
     ) -> str:
         """Ask the supervisor to produce a JSON atomic task plan."""
         prompt = self._build_plan_prompt(
             goal,
-            repo_tree,
+            project_context,
             idea_text,
             feedback,
-            knowledge_context,
             workflow_profile,
+            feature_specs=feature_specs,
+            model_roster=model_roster,
+            code_structure=code_structure,
         )
         self._logger.debug(
             "Plan prompt (%d chars): %.500s%s",
@@ -116,18 +121,21 @@ class SupervisorAgent:
         return self._parse_review(report.task.id, response)
 
     # ------------------------------------------------------------------
-    # Prompt builders
+    # Prompt builders — delegated to supervisor/prompts.py
     # ------------------------------------------------------------------
 
     def _build_plan_prompt(
         self,
         goal: str,
-        repo_tree: str,
+        project_context: Optional[ProjectContext],
         idea_text: Optional[str],
         feedback: Optional[str],
-        knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
+        feature_specs: Optional[str] = None,
+        model_roster: Optional[str] = None,
     ) -> str:
+        repo_tree = project_context.repo_snapshot.tree if project_context is not None else ""
+        knowledge_context = project_context.planner_text if project_context is not None else None
         idea_block = ""
         if idea_text:
             trimmed = idea_text[:_IDEA_MAX_CHARS]
@@ -161,11 +169,34 @@ class SupervisorAgent:
             )
 
         return (
-            "You are a Tech Supervisor. Your only job is to decompose a development goal into\n"
-            "an atomic sequential plan for a developer tool called Aider.\n\n"
+            "Decompose the development goal below into an atomic sequential task plan\n"
+            "for a coding tool called Aider. Return ONLY valid JSON.\n\n"
+            "CRITICAL CONTEXT — AIDER RUNS ON A SMALL LOCAL LLM (7-14B parameters):\n"
+            "The coding model has a 32K token context window and runs at 6-65 tok/s.\n"
+            "It can only see the target file(s) you specify — it cannot browse the repo.\n"
+            "If your instruction is vague, the model will drift into unrelated files,\n"
+            "overflow its context, and fail. Every instruction MUST be self-contained.\n\n"
+            "AIDER-GRADE INSTRUCTION RULES:\n"
+            "- Name the exact function/class/variable to modify. Never say 'refactor the module'.\n"
+            "- Name the exact parameters, fields, or config keys involved.\n"
+            "- If the task consumes data from another file, describe the data shape inline\n"
+            "  (e.g., 'payload.maxVideos (number)') — do NOT tell the model to go read that file.\n"
+            "- Each instruction must be completable by reading ONLY the target file.\n"
+            "  The model must never need to open, inspect, or reason about other files.\n"
+            "- Specify what the current code does AND what it should do after the change.\n"
+            "- Keep instructions under 200 words. Longer = more tokens = slower.\n\n"
+            "BAD instruction: 'Refactor upload command building so it consumes advanced\n"
+            "  operator inputs from the renderer instead of relying on minimal hardcoded defaults.'\n"
+            "  Why bad: 'advanced operator inputs' is undefined. Model will search the repo for\n"
+            "  what inputs exist, find large files, overflow context, and fail.\n\n"
+            "GOOD instruction: 'In buildUploadCommand(), replace the hardcoded --max-videos \"1\"\n"
+            "  with String(payload.maxVideos || 1). Replace --shorts-policy \"convert\" with\n"
+            "  payload.shortsPolicy || \"convert\". Add new flags: --resolution (payload.resolution),\n"
+            "  --format (payload.format), --quality (payload.quality) if they are defined.'\n"
+            "  Why good: names the function, the parameters, the exact changes. Zero ambiguity.\n\n"
             "STRICT RULES:\n"
             "- Return ONLY the JSON plan. No code. No prose. No questions.\n"
-            "- Each task targets exactly one concern and one or more specific files.\n"
+            "- Each task targets exactly one concern and one or two specific files.\n"
             "- Use only relative file paths that are visible in the repo structure below.\n"
             "  If a file does not yet exist, use the path it should be created at.\n"
             "- Task type must be one of: create, modify, delete, validate, read, investigate\n"
@@ -177,7 +208,6 @@ class SupervisorAgent:
             "  trace data flow, identify impact of changes, find missing tests.\n"
             "  Investigate tasks can be followed by create/modify tasks to fix what was found.\n"
             "- Tasks execute sequentially. Later tasks may depend on earlier ones.\n"
-            "- Instructions must be concrete but code-free: say WHAT to build, never HOW.\n"
             "- Use must_exist / must_not_exist when the task has a clear post-condition.\n"
             "- Do not ask questions. Do not explain. Return the plan only.\n"
             "- Use the FILE REGISTRY below to reference existing file roles correctly.\n"
@@ -186,18 +216,57 @@ class SupervisorAgent:
             f"Repo structure:\n{repo_tree}\n"
             f"{knowledge_block}"
             f"{idea_block}"
+            f"{self._build_feature_specs_block(feature_specs)}"
+            f"{self._build_model_roster_block(model_roster)}"
             f"\nGoal: {goal}\n"
             f"{feedback_block}"
         )
 
+    @staticmethod
+    def _build_feature_specs_block(feature_specs: Optional[str]) -> str:
+        """Build the FEATURE SPECIFICATIONS prompt block."""
+        if not feature_specs:
+            return ""
+        return (
+            "\nFEATURE SPECIFICATIONS:\n"
+            "The user wants you to implement each feature described below.\n"
+            "Generate specific Aider-grade tasks for EACH feature specification.\n"
+            "Each task instruction MUST reference exact details from the spec —\n"
+            "function names, parameters, routes, fields, data shapes, etc.\n"
+            "Do NOT generate vague 'implement feature X' tasks. The coding model\n"
+            "is a small local LLM that cannot read the spec files itself.\n\n"
+            f"{feature_specs}\n"
+        )
+
+    @staticmethod
+    def _build_model_roster_block(model_roster: Optional[str]) -> str:
+        """Build the AVAILABLE MODELS prompt block for smart routing."""
+        if not model_roster:
+            return ""
+        return (
+            "\nAVAILABLE MODELS — pick the best model for each task:\n"
+            f"{model_roster}\n\n"
+            "Add a \"model\" field to each task JSON with the model name.\n"
+            "Guidelines:\n"
+            "- Use FAST models for: simple edits, config changes, renames,\n"
+            "  single-function modifications, adding imports, small refactors\n"
+            "- Use SLOW/HIGH-QUALITY models for: new algorithms, complex business\n"
+            "  logic, multi-concern refactors, security-sensitive code, API design\n"
+            "- When in doubt, prefer the fast model — speed matters more than\n"
+            "  marginal quality for most coding tasks\n"
+            "- Omit the \"model\" field to use the user's default model\n\n"
+        )
+
     def _build_subplan_prompt(self, task: Task, error_message: str) -> str:
         return (
-            "You are a Tech Supervisor. A development task failed mechanical validation.\n\n"
+            "A development task failed mechanical validation.\n\n"
             "Create 1–3 atomic correction sub-tasks that fix the specific error.\n\n"
             "STRICT RULES:\n"
             "- Return ONLY JSON. No prose. No code. No questions.\n"
             "- Sub-tasks must target only files from the parent task's file list.\n"
-            "- Instructions must be concrete but code-free: say WHAT to fix, never HOW.\n"
+            "- Instructions must name exact functions, variables, and parameters to change.\n"
+            "  The coding model is a small local LLM — vague instructions cause it to drift\n"
+            "  into unrelated files and overflow its context window.\n"
             "- Maximum 3 sub-tasks. Prefer fewer.\n\n"
             f"Parent Task {task.id} ({task.type})\n"
             f"Files: {', '.join(task.files)}\n"
@@ -214,10 +283,15 @@ class SupervisorAgent:
         exit_summary = "succeeded" if result.exit_code == 0 else f"failed (exit code {result.exit_code})"
 
         return (
-            "You are a Tech Supervisor reviewing completed developer work.\n"
+            "Review the completed developer work below.\n"
             "Reply with exactly one of these two forms (nothing else):\n"
             "  PASS\n"
-            "  REWORK: <one-sentence atomic replacement instruction — no code>\n\n"
+            "  REWORK: <specific replacement instruction>\n\n"
+            "If REWORK: the instruction must name exact functions, variables, and parameters.\n"
+            "The coding model is a small local LLM (7-14B) with 32K context. Vague rework\n"
+            "instructions like 'fix the implementation' cause it to drift and fail.\n"
+            "Example REWORK: 'In buildUploadCommand(), the --max-videos flag still uses\n"
+            "hardcoded \"1\" — replace with String(payload.maxVideos || 1)'\n\n"
             f"Task {task.id} ({task.type})\n"
             f"Files: {', '.join(task.files)}\n"
             f"Instruction: {task.instruction}\n"
@@ -318,7 +392,6 @@ class SupervisorAgent:
             print(prompt)
             print("="*80)
             if output_schema:
-                import sys
                 print("\nEXPECTED SCHEMA:")
                 print(output_schema)
                 print("\nPlease enter your JSON plan below (Press Ctrl+Z/Ctrl+D and Enter to finish):")
@@ -341,36 +414,103 @@ class SupervisorAgent:
                     f"Cannot resolve supervisor command '{self._command}': {ex}"
                 ) from ex
 
-            self._logger.debug("Running supervisor: %s", arguments)
+            _prompt_len = len(stdin_prompt) if stdin_prompt else 0
+            print(f"[SUPERVISOR] Running: {arguments} (timeout={self._timeout}s, prompt={_prompt_len} chars)", flush=True)
+            self._logger.info(
+                "Running supervisor: %s (timeout=%ds, prompt=%d chars, stdin=%s)",
+                arguments, self._timeout, _prompt_len,
+                "yes" if stdin_prompt else "no",
+            )
 
             try:
-                result = subprocess.run(
-                    arguments,
-                    input=stdin_prompt,
-                    cwd=self._repo_root,
-                    capture_output=True,
-                    text=True,
+                # Write prompt to temp file. On Windows, large prompts (11K+ chars)
+                # with JSON special chars ({, }, ", \n) get mangled by CLI argument
+                # escaping AND stdin piping fails (deadlock + injection detection).
+                #
+                # Solution: write to file, redirect via shell: `claude -p < file.txt`
+                # This is the ONLY method that reliably works on Windows.
+                prompt_file = Path(tmp_dir) / "prompt_input.txt"
+                prompt_file.write_text(
+                    arguments[-1],  # prompt is last argument
                     encoding="utf-8",
-                    check=False,
-                    timeout=self._timeout,
-                    creationflags=_WIN_NO_WINDOW,
                 )
-            except subprocess.TimeoutExpired as ex:
-                if ex.process:
-                    ex.process.kill()
-                raise SupervisorError(
-                    f"Supervisor timed out after {self._timeout}s — "
-                    "command may be hung or waiting for input."
-                ) from ex
+                cmd_without_prompt = arguments[:-1]  # strip prompt from args
+
+                if sys.platform == "win32":
+                    # Windows: use shell redirection
+                    shell_cmd = (
+                        " ".join(f'"{a}"' for a in cmd_without_prompt)
+                        + f' < "{prompt_file}"'
+                    )
+                    print(f"[SUPERVISOR] Shell: {cmd_without_prompt[0]} ... < prompt_input.txt ({len(arguments[-1])} chars)", flush=True)
+                    proc = subprocess.Popen(
+                        shell_cmd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=self._repo_root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=_WIN_NO_WINDOW,
+                        shell=True,
+                    )
+                else:
+                    # Unix: open file as stdin handle
+                    stdin_fh = open(prompt_file, "r", encoding="utf-8")
+                    proc = subprocess.Popen(
+                        cmd_without_prompt,
+                        stdin=stdin_fh,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=self._repo_root,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                    stdin_fh.close()
+
+                try:
+                    stdout, stderr = proc.communicate(timeout=self._timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.communicate(timeout=5)
+                    except Exception:
+                        pass
+                    print(f"[SUPERVISOR] TIMED OUT after {self._timeout}s!", flush=True)
+                    raise SupervisorError(
+                        f"Supervisor timed out after {self._timeout}s — "
+                        "command may be hung or waiting for input."
+                    )
+                returncode = proc.returncode
+            except SupervisorError:
+                raise
             except OSError as ex:
+                print(f"[SUPERVISOR] Cannot start: {ex}", flush=True)
                 raise SupervisorError(
                     f"Cannot start supervisor command '{self._command}': {ex}"
                 ) from ex
 
-            if result.returncode != 0:
+            print(f"[SUPERVISOR] Finished: exit={returncode}, stdout={len(stdout)} chars, stderr={len(stderr)} chars", flush=True)
+            if stderr.strip():
+                print(f"[SUPERVISOR] stderr: {stderr.strip()[:300]}", flush=True)
+            self._logger.info(
+                "Supervisor finished: exit=%d, stdout=%d chars, stderr=%d chars",
+                returncode, len(stdout), len(stderr),
+            )
+
+            if returncode != 0:
+                print(f"[SUPERVISOR] stdout: {stdout.strip()[:500]}", flush=True)
+                print(f"[SUPERVISOR] stderr: {stderr.strip()[:500]}", flush=True)
+                self._logger.error(
+                    "Supervisor exited %d. stdout: %s | stderr: %s",
+                    returncode, stdout.strip()[:300], stderr.strip()[:300],
+                )
                 raise SupervisorError(
-                    f"Supervisor exited with code {result.returncode}. "
-                    f"Stderr: {result.stderr.strip()}"
+                    f"Supervisor exited with code {returncode}. "
+                    f"stdout: {stdout.strip()[:200]} | "
+                    f"Stderr: {stderr.strip()[:200]}"
                 )
 
             if output_file.exists():
@@ -378,10 +518,14 @@ class SupervisorAgent:
                 if output:
                     return output
 
-            stdout_output = result.stdout.strip()
+            stdout_output = stdout.strip()
             if stdout_output:
                 return stdout_output
 
+            self._logger.error(
+                "Supervisor returned no output. stdout=%r, stderr=%r",
+                stdout[:200], stderr[:200],
+            )
             raise SupervisorError("Supervisor returned no output.")
 
     def _build_command(
@@ -409,22 +553,23 @@ class SupervisorAgent:
 
         arguments, _ = resolve_command_arguments(command_text, self._repo_root)
 
-        # Exec-style commands (Codex): append output file, schema, and prompt as args.
+        # Exec-style commands (Codex): append output file and schema args.
         is_exec_style = "exec" in arguments
         if is_exec_style:
             if "{output_file}" not in self._command and "-o" not in arguments:
                 arguments.extend(["-o", str(output_file)])
             if schema_file is not None and "--output-schema" not in arguments:
                 arguments.extend(["--output-schema", str(schema_file)])
-            # Prompt as final positional argument (Codex exec expects this).
-            arguments.append(prompt)
-            return arguments, None
 
-        # Non-exec commands (Claude CLI, etc.): pass prompt via stdin.
-        # On Windows, .cmd files mangle multi-line strings passed as CLI
-        # arguments — newlines are dropped, producing a truncated prompt.
-        # Piping via stdin bypasses this limitation entirely.
-        return arguments, prompt
+        # ALWAYS pass prompt as a positional argument, never via stdin.
+        # stdin delivery fails on Windows for multiple reasons:
+        #   - subprocess.run(input=) deadlocks on large prompts (pipe buffer)
+        #   - Popen.communicate(input=) same deadlock
+        #   - File-handle stdin not consumed by some CLIs
+        #   - Claude CLI injection detection flags piped role-assignment prompts
+        # Positional arg works universally. Windows limit is 32,767 chars.
+        arguments.append(prompt)
+        return arguments, None
 
     # ------------------------------------------------------------------
     # JSON schema for plan output
@@ -434,7 +579,7 @@ class SupervisorAgent:
         return (
             "{\n"
             '  "type": "object",\n'
-            '  "additionalProperties": false,\n'
+            '  "additionalProperties": true,\n'
             '  "required": ["tasks"],\n'
             '  "properties": {\n'
             '    "tasks": {\n'
@@ -454,7 +599,8 @@ class SupervisorAgent:
             '          "instruction": { "type": "string", "minLength": 1 },\n'
             '          "type": { "type": "string", "enum": ["create", "modify", "delete", "validate", "read", "investigate"] },\n'
             '          "must_exist": { "type": "array", "items": { "type": "string" } },\n'
-            '          "must_not_exist": { "type": "array", "items": { "type": "string" } }\n'
+            '          "must_not_exist": { "type": "array", "items": { "type": "string" } },\n'
+            '          "model": { "type": "string" }\n'
             "        }\n"
             "      }\n"
             "    }\n"

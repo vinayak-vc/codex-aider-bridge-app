@@ -291,7 +291,201 @@ function init() {
     if (e.key === 'Enter') startOllamaPull();
   });
 
+  // GPU
+  $('btn-refresh-gpu')?.addEventListener('click', loadGpuInfo);
+  $('btn-toggle-gpu-procs')?.addEventListener('click', toggleGpuProcs);
+  // Benchmark
+  $('btn-benchmark')?.addEventListener('click', async () => {
+    const btn = $('btn-benchmark');
+    if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
+    try {
+      const res = await fetch('/api/system/benchmark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+      if (res.error) { alert(res.error); return; }
+      const color = res.speed_tier === 'fast' ? 'var(--color-success)' : res.speed_tier === 'medium' ? 'var(--color-warning)' : 'var(--color-danger)';
+      const body = $('gpu-info-body');
+      if (body) {
+        const benchDiv = document.createElement('div');
+        benchDiv.style.cssText = `margin-top:12px;padding:10px 12px;border-radius:var(--radius-md);border:1px solid var(--color-border-muted);background:var(--color-surface)`;
+        benchDiv.innerHTML = `<div style="font-size:var(--font-size-xs);color:var(--color-text-subtle);margin-bottom:4px">Benchmark: ${esc(res.model)}</div>
+          <div style="display:flex;gap:16px;align-items:baseline">
+            <span style="font-size:var(--font-size-lg);font-weight:700;color:${color}">${res.tokens_per_second} tok/s</span>
+            <span style="font-size:var(--font-size-xs);color:var(--color-text-muted)">~${res.estimated_task_seconds}s per task</span>
+            <span style="font-size:11px;padding:2px 6px;border-radius:var(--radius-pill);background:${color};color:#000;font-weight:600">${res.speed_tier}</span>
+          </div>`;
+        body.appendChild(benchDiv);
+      }
+    } catch (e) { alert('Benchmark failed: ' + e.message); }
+    finally { if (btn) { btn.textContent = 'Test Speed'; btn.disabled = false; } }
+  });
+
+  $('btn-unload-model')?.addEventListener('click', async () => {
+    const btn = $('btn-unload-model');
+    if (btn) { btn.disabled = true; btn.textContent = 'Unloading...'; }
+    try {
+      const res = await fetch('/api/system/unload-model', { method: 'POST' }).then(r => r.json());
+      if (res.ok) {
+        if (btn) btn.textContent = 'Freed!';
+        setTimeout(() => { loadGpuInfo(); if (btn) { btn.textContent = 'Free VRAM'; btn.disabled = false; } }, 2000);
+      } else {
+        alert(res.error || 'Failed to unload model');
+        if (btn) { btn.textContent = 'Free VRAM'; btn.disabled = false; }
+      }
+    } catch (_) {
+      if (btn) { btn.textContent = 'Free VRAM'; btn.disabled = false; }
+    }
+  });
+
   runChecks();
+  loadGpuInfo();
+}
+
+// ── GPU ──────────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadGpuInfo() {
+  try {
+    const data = await fetch('/api/system/gpu-processes').then(r => r.json());
+    const gpu = data.gpu || {};
+    const procs = data.processes || [];
+    const body = $('gpu-info-body');
+    const title = $('gpu-card-title');
+    const countEl = $('gpu-proc-count');
+
+    if (countEl) countEl.textContent = procs.length;
+
+    if (!gpu.has_gpu) {
+      if (title) title.textContent = 'No GPU Detected';
+      if (body) body.innerHTML = `
+        <div style="padding:8px 0;color:var(--color-danger);font-size:var(--font-size-sm)">
+          <strong>No NVIDIA GPU found.</strong> Ollama will run on CPU which is extremely slow.
+          <br>For usable performance, an NVIDIA GPU with 6GB+ VRAM is required.
+        </div>`;
+      return;
+    }
+
+    if (title) title.textContent = gpu.gpu_name || 'GPU';
+
+    const vramPct = gpu.vram_total_gb > 0
+      ? Math.round((gpu.vram_used_gb / gpu.vram_total_gb) * 100) : 0;
+
+    const statusColor = gpu.status === 'gpu_active' ? 'var(--color-success)'
+      : gpu.status === 'gpu_available_not_used' ? 'var(--color-danger)'
+      : 'var(--color-text-muted)';
+    const statusLabel = gpu.status === 'gpu_active' ? 'Active (GPU)'
+      : gpu.status === 'gpu_available_not_used' ? 'WARNING: Using CPU!'
+      : gpu.status === 'gpu_ready' ? 'Ready'
+      : gpu.ollama_backend || '?';
+
+    let html = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-subtle)">VRAM Usage</div>
+          <div style="font-size:var(--font-size-lg);font-weight:700">${gpu.vram_used_gb} / ${gpu.vram_total_gb} GB</div>
+          <div style="height:6px;background:var(--color-surface-3);border-radius:3px;margin-top:4px;overflow:hidden">
+            <div style="height:100%;width:${vramPct}%;background:${vramPct > 80 ? 'var(--color-danger)' : 'var(--color-accent)'};border-radius:3px"></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-subtle)">Ollama Backend</div>
+          <div style="font-size:var(--font-size-lg);font-weight:700;color:${statusColor}">${esc(statusLabel)}</div>
+          <div style="font-size:11px;color:var(--color-text-subtle)">GPU Util: ${gpu.gpu_utilization}%</div>
+        </div>
+      </div>`;
+
+    if (gpu.hint) {
+      const isWarn = gpu.status === 'gpu_available_not_used' || gpu.status === 'cpu_only';
+      html += `<div style="padding:8px 12px;border-radius:var(--radius-md);font-size:var(--font-size-xs);line-height:1.6;
+        background:${isWarn ? 'color-mix(in srgb, var(--color-danger) 8%, transparent)' : 'var(--color-surface)'};
+        border:1px solid ${isWarn ? 'color-mix(in srgb, var(--color-danger) 25%, transparent)' : 'var(--color-border-muted)'};
+        color:var(--color-text-muted);white-space:pre-line">${esc(gpu.hint)}</div>`;
+    }
+
+    if (body) body.innerHTML = html;
+
+    // Render processes
+    renderGpuProcs(procs);
+  } catch (ex) {
+    const body = $('gpu-info-body');
+    if (body) body.innerHTML = '<div class="text-subtle" style="font-size:var(--font-size-xs)">Could not detect GPU.</div>';
+  }
+}
+
+function renderGpuProcs(procs) {
+  const list = $('gpu-proc-list');
+  if (!list) return;
+
+  if (!procs.length) {
+    list.innerHTML = '<div class="text-subtle" style="font-size:var(--font-size-xs);padding:8px 0;text-align:center">No GPU processes found.</div>';
+    return;
+  }
+
+  // Protected processes that shouldn't be killed
+  const protect = new Set(['explorer.exe', 'csrss.exe', 'dwm.exe', 'winlogon.exe',
+    'svchost.exe', 'system', 'searchhost.exe', 'shellexperiencehost.exe']);
+
+  list.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:var(--font-size-xs)">
+      <thead><tr style="color:var(--color-text-subtle);border-bottom:1px solid var(--color-border-muted)">
+        <th style="text-align:left;padding:4px 8px">Process</th>
+        <th style="text-align:right;padding:4px 8px">PID</th>
+        <th style="text-align:right;padding:4px 8px">VRAM (MB)</th>
+        <th style="text-align:center;padding:4px 8px;width:60px">Action</th>
+      </tr></thead>
+      <tbody>
+        ${procs.map(p => {
+          const isProtected = protect.has(p.name.toLowerCase());
+          const isOllama = p.name.toLowerCase().includes('ollama');
+          return `<tr style="border-bottom:1px solid var(--color-border-muted)">
+            <td style="padding:5px 8px;font-family:var(--font-mono);color:${isOllama ? 'var(--color-success)' : 'var(--color-text-muted)'}">
+              ${esc(p.name)} ${isOllama ? '<span class="badge badge--success" style="font-size:9px;margin-left:4px">ollama</span>' : ''}
+            </td>
+            <td style="text-align:right;padding:5px 8px;color:var(--color-text-subtle)">${p.pid}</td>
+            <td style="text-align:right;padding:5px 8px;font-variant-numeric:tabular-nums">${p.memory_mb || '?'}</td>
+            <td style="text-align:center;padding:5px 8px">
+              ${isProtected || isOllama
+                ? '<span style="color:var(--color-text-subtle);font-size:10px">protected</span>'
+                : `<button class="btn btn--danger btn--sm" style="padding:2px 8px;font-size:10px" data-kill-pid="${p.pid}" data-kill-name="${esc(p.name)}">Kill</button>`}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+
+  // Bind kill buttons
+  list.querySelectorAll('[data-kill-pid]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = parseInt(btn.dataset.killPid, 10);
+      const name = btn.dataset.killName;
+      if (!confirm(`Kill "${name}" (PID ${pid})? This will close the application.`)) return;
+      try {
+        const res = await fetch('/api/system/kill-process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pid }),
+        }).then(r => r.json());
+        if (res.ok) {
+          btn.textContent = 'Killed';
+          btn.disabled = true;
+          setTimeout(loadGpuInfo, 2000); // Refresh after kill
+        } else {
+          alert(res.error || 'Failed to kill process');
+        }
+      } catch (_) {}
+    });
+  });
+}
+
+function toggleGpuProcs() {
+  const list = $('gpu-proc-list');
+  const btn = $('btn-toggle-gpu-procs');
+  if (!list || !btn) return;
+  const show = list.style.display === 'none';
+  list.style.display = show ? '' : 'none';
+  btn.textContent = show ? 'Hide' : 'Show';
+  btn.setAttribute('aria-expanded', show ? 'true' : 'false');
 }
 
 init();

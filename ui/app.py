@@ -15,6 +15,15 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from . import setup_checker, state_store
 from .bridge_runner import get_run
 
+# Telemetry — local-only usage analytics
+try:
+    _root_path = Path(__file__).parent.parent
+    if str(_root_path) not in sys.path:
+        sys.path.insert(0, str(_root_path))
+    from utils.telemetry import get_collector as _get_telemetry
+except ImportError:
+    _get_telemetry = None
+
 # On Windows, prevent subprocess calls from opening visible CMD windows.
 _WIN_CREATE_FLAGS: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
@@ -38,9 +47,21 @@ _static_folder = (
 app = Flask(__name__, template_folder=_template_folder, static_folder=_static_folder)
 app.config["JSON_SORT_KEYS"] = False
 
-# Per-client SSE queue registry
-_sse_clients: list[queue.Queue] = []
-_sse_lock = threading.Lock()
+# Register blueprints — extracted API route groups
+from ui.api.git_routes import git_bp
+from ui.api.system_routes import system_bp
+from ui.api.firebase_routes import firebase_bp
+from ui.api.chat_routes import chat_bp
+from ui.api.relay_routes import relay_bp
+app.register_blueprint(git_bp)
+app.register_blueprint(system_bp)
+app.register_blueprint(firebase_bp)
+app.register_blueprint(chat_bp)
+app.register_blueprint(relay_bp)
+
+# SSE + shared state from app_state.py
+from ui.app_state import broadcast as _broadcast, build_chat_context as _build_chat_context
+from ui.app_state import _sse_clients, _sse_lock
 
 # Knowledge context cache: {repo_root: (context_str, timestamp)}
 _knowledge_cache: dict[str, tuple[str, float]] = {}
@@ -51,412 +72,9 @@ def _chat_project_key(repo_root: str) -> str:
     return str(repo_root or "").strip()
 
 
-def _relay_task_status_label(status: str) -> str:
-    mapping = {
-        "not_started": "Not started",
-        "skipped": "Skipped",
-        "running": "Running",
-        "waiting_review": "Waiting review",
-        "approved": "Done",
-        "success": "Done",
-        "failed": "Failed",
-        "failure": "Failed",
-        "rework": "Rework",
-        "retrying": "Retrying",
-        "stopped": "Stopped",
-        "dry-run": "Dry run",
-    }
-    return mapping.get(status, status.replace("_", " ").title())
+# Relay helpers — MOVED to ui/api/relay_routes.py
 
-
-def _relay_executable_task_count(tasks: list[dict]) -> int:
-    count = 0
-    for task in tasks:
-        status = str(task.get("status", "")).strip().lower()
-        if status == "skipped":
-            continue
-        count += 1
-    return count
-
-
-def _relay_current_session_id() -> str:
-    return str(state_store.load_relay_ui_state().get("relay_session_id") or "").strip()
-
-
-def _relay_task_matches_payload(task: dict, payload: dict) -> bool:
-    payload_instruction = str(payload.get("instruction", "")).strip()
-    payload_files = payload.get("files", [])
-    if not isinstance(payload_files, list):
-        return False
-
-    task_instruction = str(task.get("instruction", "")).strip()
-    task_files = [str(item) for item in task.get("files", [])]
-    return payload_instruction == task_instruction and [str(item) for item in payload_files] == task_files
-
-
-def _relay_matches_session(payload: dict, relay_session_id: str) -> bool:
-    if not relay_session_id:
-        return True
-    return str(payload.get("relay_session_id", "")).strip() == relay_session_id
-
-
-def _relay_request_file(repo_root: str, task_id: int, relay_session_id: str) -> Path:
-    req_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
-    if relay_session_id:
-        return req_dir / f"task_{task_id:04d}_{relay_session_id}_request.json"
-    return req_dir / f"task_{task_id:04d}_request.json"
-
-
-def _relay_decision_file(repo_root: str, task_id: int, relay_session_id: str) -> Path:
-    dec_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
-    if relay_session_id:
-        return dec_dir / f"task_{task_id:04d}_{relay_session_id}_decision.json"
-    return dec_dir / f"task_{task_id:04d}_decision.json"
-
-
-def _relay_task_statuses(repo_root: str, current_tasks: list[dict], relay_session_id: str) -> dict[int, dict]:
-    statuses: dict[int, dict] = {}
-    current_by_id: dict[int, dict] = {}
-    for task in current_tasks:
-        task_id = int(task.get("id", 0))
-        if task_id > 0:
-            current_by_id[task_id] = task
-
-    run = get_run()
-    for task_id, task in run.tasks.items():
-        task_status = str(task.get("status", "not_started")).strip() or "not_started"
-        statuses[int(task_id)] = {
-            "code": task_status,
-            "label": _relay_task_status_label(task_status),
-        }
-
-    if not repo_root:
-        return statuses
-
-    completed_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "completed"
-    if completed_dir.exists():
-        pattern = f"task_*_{relay_session_id}_completed.json" if relay_session_id else "task_*_completed.json"
-        for completed_file in sorted(completed_dir.glob(pattern)):
-            try:
-                payload = json.loads(completed_file.read_text(encoding="utf-8"))
-                task_id = int(payload.get("task_id", 0))
-                if task_id <= 0 or task_id in statuses:
-                    continue
-                if not _relay_matches_session(payload, relay_session_id):
-                    continue
-                current_task = current_by_id.get(task_id)
-                if current_task is None or not _relay_task_matches_payload(current_task, payload):
-                    continue
-                statuses[task_id] = {
-                    "code": "approved",
-                    "label": _relay_task_status_label("approved"),
-                }
-            except Exception:
-                pass
-
-    requests_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests"
-    if requests_dir.exists():
-        pattern = f"task_*_{relay_session_id}_request.json" if relay_session_id else "task_*_request.json"
-        for request_file in sorted(requests_dir.glob(pattern)):
-            try:
-                payload = json.loads(request_file.read_text(encoding="utf-8"))
-                task_id = int(payload.get("task_id", 0))
-                if task_id <= 0:
-                    continue
-                if not _relay_matches_session(payload, relay_session_id):
-                    continue
-                current_task = current_by_id.get(task_id)
-                if current_task is None or not _relay_task_matches_payload(current_task, payload):
-                    continue
-                if task_id not in statuses:
-                    statuses[task_id] = {
-                        "code": "waiting_review",
-                        "label": _relay_task_status_label("waiting_review"),
-                    }
-            except Exception:
-                pass
-
-    return statuses
-
-
-def _relay_state_payload() -> dict:
-    ui_state = state_store.load_relay_ui_state()
-    tasks = state_store.load_relay_tasks()
-    settings = state_store.load_settings()
-    repo_root = str(ui_state.get("repo_root") or settings.get("repo_root") or "").strip()
-    relay_session_id = str(ui_state.get("relay_session_id") or "").strip()
-    task_statuses = _relay_task_statuses(repo_root, tasks, relay_session_id)
-
-    decorated_tasks: list[dict] = []
-    completed = 0
-    for task in tasks:
-        task_copy = dict(task)
-        task_id = int(task_copy.get("id", 0))
-        saved_status = str(task_copy.get("status", "")).strip().lower()
-        if saved_status == "skipped":
-            status_info = {
-                "code": "skipped",
-                "label": _relay_task_status_label("skipped"),
-            }
-        else:
-            status_info = task_statuses.get(task_id, {
-                "code": "not_started",
-                "label": _relay_task_status_label("not_started"),
-            })
-        task_copy["status"] = status_info["code"]
-        task_copy["status_label"] = status_info["label"]
-        decorated_tasks.append(task_copy)
-        if status_info["code"] in ("approved", "success"):
-            completed += 1
-
-    run = get_run()
-    run_status = run.status
-    live_run_active = run.is_running or run_status in ("running", "waiting_review", "paused")
-    if decorated_tasks:
-        if live_run_active:
-            step = 3
-        else:
-            step = 2
-    else:
-        step = int(ui_state.get("step", 1) or 1)
-
-    current_review: dict | None = None
-    if live_run_active:
-        try:
-            manual_dir = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "requests" if repo_root else None
-            if manual_dir and manual_dir.exists():
-                pattern = f"task_*_{relay_session_id}_request.json" if relay_session_id else "task_*_request.json"
-                request_files = sorted(manual_dir.glob(pattern))
-                for request_file in request_files:
-                    payload = json.loads(request_file.read_text(encoding="utf-8"))
-                    if _relay_matches_session(payload, relay_session_id):
-                        current_review = payload
-                        break
-        except Exception:
-            current_review = None
-
-    return {
-        "step": step,
-        "goal": str(ui_state.get("goal") or settings.get("goal") or ""),
-        "repo_root": repo_root,
-        "aider_model": str(ui_state.get("aider_model") or settings.get("aider_model") or "ollama/qwen2.5-coder:14b"),
-        "max_task_attempts": int(ui_state.get("max_task_attempts") or settings.get("max_task_retries", 2) + 1),
-        "relay_session_id": relay_session_id,
-        "prompt_output": str(ui_state.get("prompt_output") or ""),
-        "plan_paste": str(ui_state.get("plan_paste") or ""),
-        "tasks": decorated_tasks,
-        "run_status": run_status,
-        "is_running": run.is_running,
-        "live_run_active": live_run_active,
-        "completed_tasks": completed if decorated_tasks else run.completed_tasks,
-        "total_tasks": _relay_executable_task_count(decorated_tasks),
-        "current_review": current_review,
-    }
-
-
-class _ChatRuntime:
-    def __init__(self) -> None:
-        self.is_generating = False
-        self.stop_event = threading.Event()
-        self.model = ""
-        self.error = ""
-        self.updated_at = time.time()
-
-
-_chat_runtime_lock = threading.Lock()
-_chat_runtimes: dict[str, _ChatRuntime] = {}
-
-
-def _sanitize_chat_messages(messages_raw: object) -> list[dict]:
-    if not isinstance(messages_raw, list):
-        return []
-
-    messages: list[dict] = []
-    for entry in messages_raw[-100:]:
-        if not isinstance(entry, dict):
-            continue
-        role = str(entry.get("role", "")).strip()
-        content = str(entry.get("content", ""))
-        if role not in ("user", "assistant"):
-            continue
-        messages.append({
-            "role": role,
-            "content": content,
-        })
-    return messages
-
-
-def _get_chat_runtime(repo_root: str) -> _ChatRuntime:
-    project_key = _chat_project_key(repo_root)
-    with _chat_runtime_lock:
-        runtime = _chat_runtimes.get(project_key)
-        if runtime is None:
-            runtime = _ChatRuntime()
-            _chat_runtimes[project_key] = runtime
-        return runtime
-
-
-def _set_chat_runtime_idle(repo_root: str, error: str = "") -> None:
-    runtime = _get_chat_runtime(repo_root)
-    runtime.is_generating = False
-    runtime.error = error
-    runtime.stop_event.clear()
-    runtime.updated_at = time.time()
-
-
-def _build_chat_context(repo_root: str) -> str:
-    knowledge_ctx = ""
-    if not repo_root:
-        return knowledge_ctx
-
-    cached = _knowledge_cache.get(repo_root)
-    if cached and (time.time() - cached[1]) < _KNOWLEDGE_CACHE_TTL:
-        return cached[0]
-
-    try:
-        _root = Path(__file__).parent.parent
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
-        from utils.project_knowledge import load_knowledge, to_context_text
-        knowledge = load_knowledge(Path(repo_root))
-        knowledge_ctx = to_context_text(knowledge)
-        _knowledge_cache[repo_root] = (knowledge_ctx, time.time())
-    except Exception:
-        pass
-
-    return knowledge_ctx
-
-
-def _build_chat_prompt_messages(
-    repo_root: str,
-    history: list[dict],
-    message: str,
-    raw_model: str,
-) -> list[dict]:
-    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
-    knowledge_ctx = _build_chat_context(repo_root)
-
-    system_prompt = f"""You are a helpful AI coding assistant integrated into the Codex-Aider Bridge tool.
-You help developers understand their codebase, plan features, debug issues, and discuss architecture.
-You are conversational, concise, and precise.
-
-IMPORTANT LIMITATIONS — disclose these when relevant:
-- You CANNOT edit files or run code directly. For actual code changes, use the Run tab.
-- Your project knowledge comes from a static scan and may not reflect the latest edits.
-- You have NO internet access.
-- Conversation history is saved per project and restored when that project is selected again.
-- You run on the locally-installed Ollama model: {ollama_model}
-
-{knowledge_ctx}
-
-When suggesting code changes, be specific: name the file, the function, and exactly what to change.
-When the user is ready to execute, suggest they go to the Run tab with a clear goal description."""
-
-    messages = [{"role": "system", "content": system_prompt}]
-    for item in history[-20:]:
-        if item.get("role") in ("user", "assistant") and item.get("content"):
-            messages.append({"role": item["role"], "content": item["content"]})
-    messages.append({"role": "user", "content": message})
-    return messages
-
-
-def _run_chat_completion(
-    repo_root: str,
-    history: list[dict],
-    message: str,
-    raw_model: str,
-) -> None:
-    import urllib.request
-    import urllib.error
-
-    runtime = _get_chat_runtime(repo_root)
-    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
-    messages = _build_chat_prompt_messages(repo_root, history, message, raw_model)
-
-    body = json.dumps({
-        "model": ollama_model,
-        "messages": messages,
-        "stream": True,
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        "http://localhost:11434/api/chat",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    final_content = ""
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            for raw_line in resp:
-                if runtime.stop_event.is_set():
-                    break
-
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                token = chunk.get("message", {}).get("content", "")
-                if token:
-                    final_content += token
-                    current = state_store.load_chat_history(_chat_project_key(repo_root))
-                    if current and current[-1].get("role") == "assistant":
-                        current[-1]["content"] = final_content
-                        state_store.save_chat_history(_chat_project_key(repo_root), current)
-                if chunk.get("done"):
-                    break
-
-        if runtime.stop_event.is_set():
-            current = state_store.load_chat_history(_chat_project_key(repo_root))
-            if current and current[-1].get("role") == "assistant" and not str(current[-1].get("content", "")).strip():
-                current.pop()
-                state_store.save_chat_history(_chat_project_key(repo_root), current)
-            _set_chat_runtime_idle(repo_root)
-            return
-
-        _set_chat_runtime_idle(repo_root)
-    except urllib.error.HTTPError as exc:
-        try:
-            body_json = json.loads(exc.read().decode("utf-8", errors="replace"))
-            detail = body_json.get("error") or f"HTTP {exc.code}"
-        except Exception:
-            detail = f"HTTP {exc.code}: {exc.reason}"
-        history_now = state_store.load_chat_history(_chat_project_key(repo_root))
-        if history_now and history_now[-1].get("role") == "assistant":
-            history_now[-1]["content"] = f"Ollama error: {detail}"
-            state_store.save_chat_history(_chat_project_key(repo_root), history_now)
-        _set_chat_runtime_idle(repo_root, f"Ollama error: {detail}")
-    except urllib.error.URLError as exc:
-        reason = getattr(exc, "reason", str(exc))
-        detail = f"Ollama not reachable: {reason}. Is Ollama running?"
-        history_now = state_store.load_chat_history(_chat_project_key(repo_root))
-        if history_now and history_now[-1].get("role") == "assistant":
-            history_now[-1]["content"] = detail
-            state_store.save_chat_history(_chat_project_key(repo_root), history_now)
-        _set_chat_runtime_idle(repo_root, detail)
-    except Exception as exc:
-        detail = str(exc)
-        history_now = state_store.load_chat_history(_chat_project_key(repo_root))
-        if history_now and history_now[-1].get("role") == "assistant":
-            history_now[-1]["content"] = detail
-            state_store.save_chat_history(_chat_project_key(repo_root), history_now)
-        _set_chat_runtime_idle(repo_root, detail)
-
-
-def _broadcast(event_type: str, data: dict) -> None:
-    payload = json.dumps({"type": event_type, **data})
-    with _sse_lock:
-        for q in _sse_clients:
-            try:
-                q.put_nowait(payload)
-            except queue.Full:
-                pass
-
+# Chat runtime + helpers — MOVED to ui/api/chat_routes.py
 
 # ── Pages ──────────────────────────────────────────────────────────────────────
 
@@ -464,6 +82,17 @@ def _broadcast(event_type: str, data: dict) -> None:
 def index():
     from flask import redirect
     return redirect("/dashboard")
+
+
+# ── Telemetry: page view tracking ─────────────────────────────────────────────
+
+_TRACKED_PAGES = {"/dashboard", "/run", "/knowledge", "/history", "/tokens", "/git", "/setup"}
+
+@app.after_request
+def _track_page_view(response):
+    if _get_telemetry and request.path in _TRACKED_PAGES and response.status_code == 200:
+        _get_telemetry().page_viewed(request.path)
+    return response
 
 
 # ── Page routes ────────────────────────────────────────────────────────────────
@@ -476,6 +105,11 @@ def page_dashboard():
 @app.route("/run")
 def page_run():
     return render_template("run.html", active_page="run")
+
+
+@app.route("/cloud")
+def page_cloud():
+    return render_template("cloud.html", active_page="cloud")
 
 
 @app.route("/git")
@@ -496,6 +130,11 @@ def page_history():
 @app.route("/tokens")
 def page_tokens():
     return render_template("tokens.html", active_page="tokens")
+
+
+@app.route("/monitor")
+def page_monitor():
+    return render_template("monitor.html", active_page="monitor")
 
 
 @app.route("/setup")
@@ -567,7 +206,26 @@ def api_get_settings():
 
 @app.route("/api/settings", methods=["POST"])
 def api_save_settings():
-    state_store.save_settings(request.json or {})
+    settings = request.json or {}
+    state_store.save_settings(settings)
+    # Firebase sync: push settings to user's Firestore
+    try:
+        from utils.firebase_user_setup import get_user_setup
+        _fbu = get_user_setup()
+        if _fbu.is_configured() and _fbu.is_authenticated():
+            _safe_settings = {
+                "default_model": settings.get("aider_model", ""),
+                "default_supervisor": settings.get("supervisor", ""),
+                "auto_commit": (
+                    settings.get("auto_commit")
+                    if isinstance(settings.get("auto_commit"), bool)
+                    else True
+                ),
+                "task_timeout": settings.get("task_timeout", 600),
+            }
+            _fbu.write_to_user_firestore("settings/global", _safe_settings)
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
@@ -590,16 +248,24 @@ def api_browse_folder():
 
 @app.route("/api/browse/file")
 def api_browse_file():
+    filter_type = request.args.get("filter", "docs")
     try:
         import tkinter as tk
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
+
+        filters = {
+            "docs": ([("Markdown", "*.md"), ("Text", "*.txt"), ("All files", "*.*")], "Select idea / brief file"),
+            "json": ([("JSON files", "*.json"), ("All files", "*.*")], "Select plan file (JSON)"),
+        }
+        filetypes, title = filters.get(filter_type, filters["docs"])
+
         path = filedialog.askopenfilename(
             parent=root,
-            title="Select idea / brief file",
-            filetypes=[("Markdown", "*.md"), ("Text", "*.txt"), ("All files", "*.*")],
+            title=title,
+            filetypes=filetypes,
         )
         root.destroy()
         return jsonify({"path": path or ""})
@@ -607,7 +273,8 @@ def api_browse_file():
         return jsonify({"path": "", "error": str(ex)})
 
 
-# ── Git API ────────────────────────────────────────────────────────────────────
+# ── Git API — MOVED to ui/api/git_routes.py ──────────────────────────────────
+# Keeping _git() helper here as it's used by other parts of app.py.
 
 def _git(repo_root: str, *args: str, timeout: int = 15) -> subprocess.CompletedProcess:
     """Run a git command in repo_root. Returns CompletedProcess."""
@@ -623,241 +290,105 @@ def _git(repo_root: str, *args: str, timeout: int = 15) -> subprocess.CompletedP
     )
 
 
-@app.route("/api/git/status")
-def api_git_status():
-    repo = (request.args.get("repo_root") or "").strip()
-    if not repo:
-        settings = state_store.load_settings()
-        repo = settings.get("repo_root", "").strip()
-    if not repo:
-        return jsonify({"error": "repo_root not set"}), 400
-
-    try:
-        # Branch name
-        r = _git(repo, "branch", "--show-current")
-        branch = r.stdout.strip() or "(detached)"
-
-        # Status counts
-        r = _git(repo, "status", "--porcelain")
-        lines = [l for l in r.stdout.splitlines() if l.strip()]
-        staged = sum(1 for l in lines if l[0] in "MADRC")
-        unstaged = sum(1 for l in lines if len(l) > 1 and l[1] in "MADRC")
-        untracked = sum(1 for l in lines if l.startswith("??"))
-        is_clean = len(lines) == 0
-
-        return jsonify({
-            "branch": branch,
-            "is_clean": is_clean,
-            "staged": staged,
-            "unstaged": unstaged,
-            "untracked": untracked,
-        })
-    except FileNotFoundError:
-        return jsonify({"error": "git not found"}), 500
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "git command timed out"}), 500
-    except Exception as ex:
-        return jsonify({"error": str(ex)}), 500
-
-
-@app.route("/api/git/branches")
-def api_git_branches():
-    repo = (request.args.get("repo_root") or "").strip()
-    if not repo:
-        settings = state_store.load_settings()
-        repo = settings.get("repo_root", "").strip()
-    if not repo:
-        return jsonify({"error": "repo_root not set"}), 400
-
-    try:
-        r = _git(repo, "branch", "--no-color")
-        branches = []
-        current = ""
-        for line in r.stdout.splitlines():
-            name = line.lstrip("* ").strip()
-            if not name:
-                continue
-            branches.append(name)
-            if line.startswith("*"):
-                current = name
-        return jsonify({"current": current, "branches": branches})
-    except Exception as ex:
-        return jsonify({"error": str(ex)}), 500
-
-
-@app.route("/api/git/checkout", methods=["POST"])
-def api_git_checkout():
-    data = request.json or {}
-    repo = (data.get("repo_root") or "").strip()
-    branch = (data.get("branch") or "").strip()
-    create = data.get("create", False)
-
-    if not repo:
-        settings = state_store.load_settings()
-        repo = settings.get("repo_root", "").strip()
-    if not repo or not branch:
-        return jsonify({"error": "repo_root and branch are required"}), 400
-
-    # Sanitize branch name
-    if ".." in branch or branch.startswith("-"):
-        return jsonify({"error": "Invalid branch name"}), 400
-
-    try:
-        if create:
-            r = _git(repo, "checkout", "-b", branch)
-        else:
-            r = _git(repo, "checkout", branch)
-
-        if r.returncode != 0:
-            return jsonify({"error": r.stderr.strip() or f"Failed to checkout {branch}"}), 400
-
-        return jsonify({"ok": True, "branch": branch})
-    except Exception as ex:
-        return jsonify({"error": str(ex)}), 500
-
-
-@app.route("/api/git/log")
-def api_git_log():
-    repo = (request.args.get("repo_root") or "").strip()
-    limit = request.args.get("limit", 20, type=int)
-    if not repo:
-        settings = state_store.load_settings()
-        repo = settings.get("repo_root", "").strip()
-    if not repo:
-        return jsonify({"error": "repo_root not set"}), 400
-
-    try:
-        r = _git(repo, "log", f"--max-count={min(limit, 100)}",
-                 "--format=%H%n%h%n%s%n%an%n%aI", "--no-color")
-        if r.returncode != 0:
-            return jsonify({"commits": []})
-
-        lines = r.stdout.strip().splitlines()
-        commits = []
-        for i in range(0, len(lines), 5):
-            if i + 4 >= len(lines):
-                break
-            sha = lines[i]
-            short = lines[i + 1]
-            message = lines[i + 2]
-            author = lines[i + 3]
-            ts = lines[i + 4]
-            commits.append({
-                "sha": sha,
-                "short_sha": short,
-                "message": message,
-                "author": author,
-                "timestamp": ts,
-                "is_bridge_task": message.startswith("bridge: task"),
-            })
-
-        return jsonify({"commits": commits})
-    except Exception as ex:
-        return jsonify({"error": str(ex)}), 500
-
-
-@app.route("/api/git/diff")
-def api_git_diff():
-    repo = (request.args.get("repo_root") or "").strip()
-    sha = (request.args.get("sha") or "").strip()
-    staged = request.args.get("staged", "false").lower() == "true"
-    file_path = (request.args.get("file") or "").strip()
-
-    if not repo:
-        settings = state_store.load_settings()
-        repo = settings.get("repo_root", "").strip()
-    if not repo:
-        return jsonify({"error": "repo_root not set"}), 400
-
-    try:
-        if sha:
-            # Diff for a specific commit
-            r = _git(repo, "diff", f"{sha}~1..{sha}", "--stat")
-            stat = r.stdout.strip()
-            r = _git(repo, "diff", f"{sha}~1..{sha}", timeout=30)
-            diff_text = r.stdout[:8000]
-        elif staged:
-            r = _git(repo, "diff", "--cached", "--stat")
-            stat = r.stdout.strip()
-            r = _git(repo, "diff", "--cached")
-            diff_text = r.stdout[:8000]
-        elif file_path:
-            r = _git(repo, "diff", "--", file_path)
-            stat = ""
-            diff_text = r.stdout[:8000]
-        else:
-            # Working tree diff
-            r = _git(repo, "diff", "--stat")
-            stat = r.stdout.strip()
-            r = _git(repo, "diff")
-            diff_text = r.stdout[:8000]
-
-        # Parse stat into file list
-        files = []
-        for line in stat.splitlines():
-            parts = line.strip().split("|")
-            if len(parts) == 2:
-                fname = parts[0].strip()
-                changes = parts[1].strip()
-                ins = changes.count("+")
-                dels = changes.count("-")
-                files.append({"path": fname, "insertions": ins, "deletions": dels})
-
-        return jsonify({"diff": diff_text, "files": files, "stat": stat})
-    except Exception as ex:
-        return jsonify({"error": str(ex)}), 500
-
-
-# ── VS Code Integration ───────────────────────────────────────────────────────
-
-@app.route("/api/vscode/open", methods=["POST"])
-def api_vscode_open():
-    """Open a file or folder in VS Code."""
-    data = request.json or {}
-    target = (data.get("path") or "").strip()
-    repo_root = (data.get("repo_root") or "").strip()
-
-    if not target and not repo_root:
-        settings = state_store.load_settings()
-        repo_root = settings.get("repo_root", "").strip()
-
-    # Determine what to open
-    open_path = target or repo_root
-    if not open_path:
-        return jsonify({"error": "No path specified"}), 400
-
-    # If target is relative, make it absolute using repo_root
-    from pathlib import Path as _Path
-    p = _Path(open_path)
-    if not p.is_absolute() and repo_root:
-        p = _Path(repo_root) / p
-
-    try:
-        cmd = ["code"]
-        if p.is_file():
-            cmd.append("--goto")
-        cmd.append(str(p))
-        subprocess.Popen(cmd, creationflags=_WIN_CREATE_FLAGS)
-        return jsonify({"ok": True, "path": str(p)})
-    except FileNotFoundError:
-        return jsonify({"error": "VS Code ('code' command) not found. Install it or add to PATH."}), 404
-    except Exception as ex:
-        return jsonify({"error": str(ex)}), 500
+    # Git routes moved to ui/api/git_routes.py (git_bp blueprint)
+    # VS Code route moved to ui/api/git_routes.py (git_bp blueprint)
 
 
 # ── Supervisor Proxy Thread ────────────────────────────────────────────────────
 
-# CLI command templates for each supervisor type (mirrors run.js SUPERVISOR_CMDS)
-_SUPERVISOR_CLI_CMDS: dict[str, str] = {
-    "codex":    "codex.cmd exec --skip-git-repo-check --color never",
-    "claude":   "claude",
-    "cursor":   "cursor",
-    "windsurf": "windsurf",
-}
+# CLI supervisor commands — DEPRECATED. The bridge now uses only manual
+# supervisor mode (relay chatbot). These are kept as empty stubs so the
+# proxy thread doesn't crash if old settings reference them.
+_SUPERVISOR_CLI_CMDS: dict[str, str] = {}
 
 # Active proxy threads keyed by run_id
 _active_proxy_threads: dict[str, "SupervisorProxyThread"] = {}
 _proxy_lock = threading.Lock()
+
+
+class HealthWatchdog(threading.Thread):
+    """Monitors Ollama and GPU health during runs. Restarts Ollama if unresponsive."""
+
+    def __init__(self, interval: int = 15):
+        super().__init__(daemon=True, name="health-watchdog")
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._ollama_fail_count = 0
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            self._check_ollama()
+            self._check_gpu()
+            self._stop_event.wait(self._interval)
+
+    def _check_ollama(self):
+        try:
+            r = subprocess.run(
+                ["ollama", "ps"], capture_output=True, text=True, timeout=5,
+                creationflags=_WIN_CREATE_FLAGS,
+            )
+            if r.returncode != 0:
+                self._ollama_fail_count += 1
+            else:
+                self._ollama_fail_count = 0
+        except Exception:
+            self._ollama_fail_count += 1
+
+        if self._ollama_fail_count >= 2:
+            _broadcast("health_warning", {
+                "component": "ollama",
+                "message": "Ollama is unresponsive. Attempting restart...",
+            })
+            _broadcast("log", {"line": "[watchdog] Ollama unresponsive — attempting restart"})
+            self._restart_ollama()
+
+    def _restart_ollama(self):
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"],
+                               capture_output=True, timeout=5, creationflags=_WIN_CREATE_FLAGS)
+                subprocess.Popen(["ollama", "serve"], creationflags=_WIN_CREATE_FLAGS)
+            else:
+                subprocess.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
+                subprocess.Popen(["ollama", "serve"])
+            self._stop_event.wait(5)
+            # Re-check
+            try:
+                r = subprocess.run(["ollama", "ps"], capture_output=True, timeout=5,
+                                   creationflags=_WIN_CREATE_FLAGS)
+                if r.returncode == 0:
+                    _broadcast("log", {"line": "[watchdog] Ollama restarted successfully"})
+                    self._ollama_fail_count = 0
+                else:
+                    _broadcast("log", {"line": "[watchdog] Ollama restart may have failed"})
+            except Exception:
+                pass
+        except Exception as ex:
+            _broadcast("log", {"line": f"[watchdog] Ollama restart failed: {ex}"})
+
+    def _check_gpu(self):
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5, creationflags=_WIN_CREATE_FLAGS,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                parts = r.stdout.strip().split(",")
+                used = float(parts[0].strip())
+                total = float(parts[1].strip())
+                if total > 0 and used / total > 0.95:
+                    _broadcast("health_warning", {
+                        "component": "gpu",
+                        "message": f"GPU VRAM critically low: {int(used)}MB / {int(total)}MB",
+                    })
+        except Exception:
+            pass
+
+
+_health_watchdog: Optional[HealthWatchdog] = None
 
 
 class SupervisorProxyThread(threading.Thread):
@@ -902,14 +433,24 @@ class SupervisorProxyThread(threading.Thread):
         while not self._stop_event.is_set():
             if requests_dir.exists():
                 for req_file in sorted(requests_dir.glob("*.json")):
-                    if req_file.stem in self._seen:
+                    # Track by filename + mtime so rework rewrites are detected
+                    try:
+                        mtime = req_file.stat().st_mtime
+                    except OSError:
+                        continue
+                    seen_key = f"{req_file.stem}:{mtime}"
+                    if seen_key in self._seen:
                         continue
 
-                    # Check if a decision already exists for this request
+                    # Check if a decision already exists AND is newer than the request
                     dec_file = decisions_dir / req_file.name.replace("_request.json", "_decision.json")
                     if dec_file.exists():
-                        self._seen.add(req_file.stem)
-                        continue
+                        try:
+                            if dec_file.stat().st_mtime >= mtime:
+                                self._seen.add(seen_key)
+                                continue
+                        except OSError:
+                            pass
 
                     try:
                         req_data = json.loads(req_file.read_text(encoding="utf-8"))
@@ -922,7 +463,7 @@ class SupervisorProxyThread(threading.Thread):
                         if req_session and req_session != self._relay_session_id:
                             continue
 
-                    self._seen.add(req_file.stem)
+                    self._seen.add(seen_key)
                     supervisor = self.get_supervisor()
                     self._dispatch(supervisor, req_file, req_data, decisions_dir)
 
@@ -937,7 +478,7 @@ class SupervisorProxyThread(threading.Thread):
             packet = ""
             try:
                 from utils.relay_formatter import build_review_packet
-                tasks = state_store.load_relay_tasks()
+                tasks = state_store.load_relay_tasks(self._repo_root)
                 total = len(tasks)
                 task = next((t for t in tasks if str(t.get("id")) == str(task_id)), req_data)
                 diff = req_data.get("diff", "")
@@ -950,7 +491,7 @@ class SupervisorProxyThread(threading.Thread):
 
             _broadcast("reviewer_active", {
                 "task_index": task_id,
-                "task_total": len(state_store.load_relay_tasks()) or "?",
+                "task_total": len(state_store.load_relay_tasks(self._repo_root)) or "?",
                 "task_title": req_data.get("instruction", "")[:60],
             })
             _broadcast("supervisor_review_requested", {
@@ -1110,6 +651,16 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
     if repo_root:
         state_store.add_project(repo_root)
 
+    # Telemetry: record run start
+    if _get_telemetry:
+        t = _get_telemetry()
+        t.run_started(
+            supervisor=settings.get("supervisor", "?"),
+            model=settings.get("aider_model", "?"),
+            goal_len=len(settings.get("goal", "")),
+            task_count=0,
+        )
+
     history_payload = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "goal": settings.get("goal", ""),
@@ -1140,21 +691,83 @@ def _start_bridge_run(settings: dict, extra_history: dict = None) -> str:
             })
         if event_type in ("complete", "error", "stopped"):
             final = data.get("final") or {}
+            run_status = data.get("status", "failure") if event_type == "complete" else event_type
             state_store.update_history_entry(run_id, {
-                "status": data.get("status", "failure") if event_type == "complete" else event_type,
+                "status": run_status,
                 "tasks": final.get("tasks", len(run.tasks)),
                 "elapsed": data.get("elapsed", 0),
                 "log": run.log_lines[-state_store.MAX_LOG_LINES:],
                 "tasks_detail": list(run.tasks.values()),
             })
+            # Update generated plan status
+            import time as _t
+            _active_plan_id = settings.get("_active_plan_id", "")
+            if _active_plan_id:
+                _plan_status = "completed" if run_status == "success" else run_status
+                state_store.update_generated_plan(_active_plan_id, {
+                    "status": _plan_status,
+                    "last_run_at": _t.strftime("%Y-%m-%d %H:%M:%S"),
+                    "completed_tasks": run.completed_tasks,
+                    "failed_task_id": data.get("failed_task_id"),
+                })
             run.remove_listener(on_event)
+            # Telemetry: record run outcome
+            if _get_telemetry:
+                t = _get_telemetry()
+                if event_type == "complete" and data.get("status") == "success":
+                    t.run_completed(run.completed_tasks, run.total_tasks, data.get("elapsed", 0), 0)
+                elif event_type in ("error", "stopped"):
+                    t.run_failed(str(data.get("message", data.get("status", "?"))), elapsed=data.get("elapsed", 0))
+                else:
+                    t.run_failed("failure", elapsed=data.get("elapsed", 0))
+                # Auto-save telemetry
+                try:
+                    rr = settings.get("repo_root", "").strip()
+                    if rr:
+                        t.save(Path(rr))
+                except Exception:
+                    pass
+            # Stop health watchdog
+            if _health_watchdog:
+                _health_watchdog.stop()
             # Stop the supervisor proxy thread
             with _proxy_lock:
                 proxy = _active_proxy_threads.pop(run_id, None)
             if proxy:
                 proxy.stop()
 
+            # Run queue: auto-advance to next queued item on success
+            if event_type == "complete" and data.get("status") == "success":
+                next_item = state_store.pop_run_queue()
+                if next_item:
+                    _broadcast("log", {"line": "[queue] Starting next queued run..."})
+                    _broadcast("queue_advance", {"goal": next_item.get("goal", "")})
+                    try:
+                        _start_bridge_run(next_item)
+                    except Exception as qex:
+                        _broadcast("log", {"line": f"[queue] Failed to start next run: {qex}"})
+
     run.add_listener(on_event)
+
+    # Pre-warm: load model into VRAM before Aider's first task
+    _model = settings.get("aider_model", "").replace("ollama/", "")
+    if _model:
+        try:
+            import urllib.request as _ur
+            _body = json.dumps({"model": _model, "prompt": "hi", "keep_alive": "5m"}).encode()
+            _req = _ur.Request("http://localhost:11434/api/generate", data=_body,
+                               headers={"Content-Type": "application/json"}, method="POST")
+            with _ur.urlopen(_req, timeout=60) as _resp:
+                _resp.read()
+        except Exception:
+            pass  # Non-blocking — if Ollama isn't ready, Aider will handle it
+
+    # Start health watchdog
+    global _health_watchdog
+    if _health_watchdog:
+        _health_watchdog.stop()
+    _health_watchdog = HealthWatchdog()
+    _health_watchdog.start()
 
     # Start supervisor proxy thread
     supervisor = settings.get("supervisor", "codex")
@@ -1201,6 +814,20 @@ def api_start_run():
         }), 400
 
     state_store.save_settings(settings)
+    
+    # AI Relay Fix: if manual_supervisor is on (AI Relay mode) but no plan_file is set,
+    # it means the tasks are only in relay_tasks storage. 
+    # Bridge CLI (main.py) REQUIRES a physical file. We create one here.
+    if settings.get("manual_supervisor") and not settings.get("plan_file"):
+        tasks = state_store.load_relay_tasks(settings.get("repo_root"))
+        if tasks:
+            plan_dir = Path(settings["repo_root"]) / "bridge_progress"
+            plan_dir.mkdir(parents=True, exist_ok=True)
+            plan_path = plan_dir / "relay_plan.json"
+            plan_path.write_text(json.dumps({"tasks": tasks}, indent=2), encoding="utf-8")
+            settings["plan_file"] = str(plan_path)
+            # Update history_payload in _start_bridge_run with the new plan_file
+    
     run_id = _start_bridge_run(settings)
 
     return jsonify({"ok": True, "run_id": run_id})
@@ -1228,7 +855,14 @@ def api_run_nl_launch():
     
     brief     = state.get("brief", {})
     plan_file = state.get("plan_file", "")
-    
+
+    # Validate plan file exists — stale references cause Aider to hang on nonexistent files
+    if plan_file and not Path(plan_file).exists():
+        plan_file = ""
+
+    if not plan_file:
+        return jsonify({"error": "No confirmed plan file found. Click 'New Conversation', regenerate the plan, and confirm it."}), 400
+
     # Merge current global settings (model, supervisor) with NL-specific goal/plan
     settings = state_store.load_settings()
     run_settings = dict(settings)
@@ -1327,6 +961,445 @@ def api_run_tasks():
     })
 
 
+@app.route("/api/run/progress")
+def api_run_progress():
+    """Return persisted task progress from checkpoint + task_metrics.
+
+    This survives restarts — reads from bridge_progress/ on disk.
+    """
+    repo_root = (request.args.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"tasks": [], "completed": [], "total_tasks": 0, "can_resume": False, "plan_file": "", "failed_task_id": None, "last_status": ""})
+
+    progress_dir = Path(repo_root) / "bridge_progress"
+
+    # Load checkpoint (completed task IDs)
+    completed = []
+    checkpoint_file = progress_dir / "checkpoint.json"
+    if checkpoint_file.exists():
+        try:
+            data = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            completed = sorted(data.get("completed", []))
+        except Exception:
+            pass
+
+    # Load task metrics (full task details)
+    tasks = []
+    total_tasks = 0
+    failed_task_id = None
+    last_status = ""
+    metrics_file = progress_dir / "task_metrics.json"
+    if metrics_file.exists():
+        try:
+            data = json.loads(metrics_file.read_text(encoding="utf-8"))
+            total_tasks = data.get("planned_tasks", 0)
+            failed_task_id = data.get("failed_task_id")
+            last_status = data.get("status", "")
+            for t in data.get("tasks", []):
+                tid = t.get("id", 0)
+                status = "done" if t.get("completed") or tid in completed else "pending"
+                if tid == failed_task_id:
+                    status = "failed"
+                tasks.append({
+                    "id": tid,
+                    "type": t.get("type", ""),
+                    "files": t.get("files", []),
+                    "instruction": t.get("instruction", ""),
+                    "status": status,
+                    "commit_sha": t.get("commit_sha"),
+                })
+        except Exception:
+            pass
+
+    # Load plan file — try multiple sources (NL state, improvement_plan, taskJsons/)
+    plan_file = ""
+    try:
+        nl_state = state_store.load_run_nl_state(repo_root)
+        plan_file = nl_state.get("plan_file", "") if nl_state else ""
+    except Exception:
+        pass
+
+    # Fallback: check standard plan locations
+    if not plan_file or not Path(plan_file).exists():
+        for candidate in [
+            progress_dir / "improvement_plan.json",
+            *sorted(Path(repo_root, "taskJsons").glob("*.json"), reverse=True)[:1],
+        ]:
+            if candidate.exists():
+                plan_file = str(candidate)
+                break
+
+    # Enrich tasks with instructions from plan file (task_metrics doesn't store them)
+    if plan_file and Path(plan_file).exists() and tasks:
+        try:
+            plan_data = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+            plan_tasks = plan_data.get("tasks", [])
+            instr_map = {}
+            for pt in plan_tasks:
+                pid = pt.get("id", 0)
+                instr_map[pid] = pt.get("instruction", "")
+            for t in tasks:
+                if not t.get("instruction") and t["id"] in instr_map:
+                    t["instruction"] = instr_map[t["id"]]
+        except Exception:
+            pass
+
+    # If no tasks from metrics but plan file exists, load tasks from plan
+    if not tasks and plan_file and Path(plan_file).exists():
+        try:
+            plan_data = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+            plan_tasks = plan_data.get("tasks", [])
+            total_tasks = len(plan_tasks)
+            for pt in plan_tasks:
+                tid = pt.get("id", 0)
+                tasks.append({
+                    "id": tid,
+                    "type": pt.get("type", ""),
+                    "files": pt.get("files", []),
+                    "instruction": pt.get("instruction", ""),
+                    "status": "done" if tid in completed else "pending",
+                    "commit_sha": None,
+                })
+        except Exception:
+            pass
+
+    can_resume = bool(completed) and len(completed) < total_tasks and bool(plan_file)
+
+    return jsonify({
+        "total_tasks": total_tasks,
+        "completed": completed,
+        "failed_task_id": failed_task_id,
+        "last_status": last_status,
+        "tasks": tasks,
+        "plan_file": plan_file,
+        "can_resume": can_resume,
+    })
+
+
+@app.route("/api/telemetry", methods=["GET"])
+def api_telemetry():
+    """Export telemetry data for AI analysis."""
+    if not _get_telemetry:
+        return jsonify({"error": "Telemetry not available"}), 500
+    t = _get_telemetry()
+    return jsonify(t.build_report())
+
+
+@app.route("/api/telemetry/save", methods=["POST"])
+def api_telemetry_save():
+    """Save telemetry to disk."""
+    if not _get_telemetry:
+        return jsonify({"error": "Telemetry not available"}), 500
+    t = _get_telemetry()
+    data = request.json or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if repo_root:
+        path = t.save(Path(repo_root))
+    else:
+        path = t.save()
+    return jsonify({"ok": True, "path": str(path)})
+
+
+# Firebase/Auth/Sync routes — MOVED to ui/api/firebase_routes.py (firebase_bp)
+
+@app.route("/api/version")
+def api_version():
+    try:
+        from utils.version import get_version_info
+        return jsonify(get_version_info())
+    except Exception:
+        return jsonify({"version": "0.5.6", "commit": "", "branch": ""})
+
+
+@app.route("/api/projects/status")
+def api_projects_status():
+    """Return all projects with their last run status and task progress."""
+    projects = state_store.load_projects()
+    result = []
+    for p in projects:
+        path = p.get("path", "")
+        if not path:
+            continue
+        entry = {
+            "name": p.get("name") or Path(path).name,
+            "path": path,
+            "last_run_status": "",
+            "last_run_date": "",
+            "tasks_completed": 0,
+            "tasks_total": 0,
+        }
+        # Read task_metrics
+        metrics_file = Path(path) / "bridge_progress" / "task_metrics.json"
+        if metrics_file.exists():
+            try:
+                m = json.loads(metrics_file.read_text(encoding="utf-8"))
+                entry["last_run_status"] = m.get("status", "")
+                entry["tasks_total"] = m.get("planned_tasks", 0)
+                entry["tasks_completed"] = len(m.get("completed_task_ids", []))
+            except Exception:
+                pass
+        # Read checkpoint
+        cp_file = Path(path) / "bridge_progress" / "checkpoint.json"
+        if cp_file.exists():
+            try:
+                cp = json.loads(cp_file.read_text(encoding="utf-8"))
+                entry["tasks_completed"] = max(entry["tasks_completed"], len(cp.get("completed", [])))
+            except Exception:
+                pass
+        # Read last run from history
+        try:
+            history = state_store.load_history()
+            for h in history:
+                if h.get("repo_root") == path:
+                    entry["last_run_date"] = h.get("timestamp", "")
+                    if not entry["last_run_status"]:
+                        entry["last_run_status"] = h.get("status", "")
+                    break
+        except Exception:
+            pass
+        result.append(entry)
+    return jsonify({"projects": result})
+
+
+@app.route("/api/run/undo-task", methods=["POST"])
+def api_undo_task():
+    """Revert the git commit for a specific task."""
+    run = get_run()
+    if run.is_running:
+        return jsonify({"error": "Cannot undo while a run is active."}), 409
+
+    data = request.json or {}
+    task_id = data.get("task_id")
+    repo_root = (data.get("repo_root") or "").strip()
+    if not task_id or not repo_root:
+        return jsonify({"error": "task_id and repo_root required"}), 400
+
+    progress_dir = Path(repo_root) / "bridge_progress"
+    metrics_file = progress_dir / "task_metrics.json"
+    checkpoint_file = progress_dir / "checkpoint.json"
+
+    # Find the commit SHA
+    commit_sha = None
+    try:
+        if metrics_file.exists():
+            metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
+            for t in metrics.get("tasks", []):
+                if t.get("id") == task_id:
+                    commit_sha = t.get("commit_sha")
+                    break
+    except Exception:
+        pass
+
+    if not commit_sha:
+        return jsonify({"error": f"No commit SHA found for task {task_id}"}), 404
+
+    # Verify SHA exists
+    r = _git(repo_root, "cat-file", "-t", commit_sha)
+    if r.returncode != 0:
+        return jsonify({"error": f"Commit {commit_sha} not found in git history"}), 404
+
+    # Revert
+    r = _git(repo_root, "revert", "--no-edit", commit_sha, timeout=30)
+    if r.returncode != 0:
+        return jsonify({"error": f"Git revert failed: {r.stderr.strip()}"}), 500
+
+    # Update checkpoint — remove task_id
+    try:
+        if checkpoint_file.exists():
+            cp = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            completed = cp.get("completed", [])
+            if task_id in completed:
+                completed.remove(task_id)
+                checkpoint_file.write_text(json.dumps({"completed": sorted(completed)}, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    # Update task_metrics — mark task as not completed
+    try:
+        if metrics_file.exists():
+            metrics = json.loads(metrics_file.read_text(encoding="utf-8"))
+            for t in metrics.get("tasks", []):
+                if t.get("id") == task_id:
+                    t["completed"] = False
+                    t["commit_sha"] = None
+                    break
+            if task_id in metrics.get("completed_task_ids", []):
+                metrics["completed_task_ids"].remove(task_id)
+                metrics["completed_tasks"] = len(metrics["completed_task_ids"])
+            metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "task_id": task_id, "reverted_sha": commit_sha})
+
+
+@app.route("/api/plans/list")
+def api_plans_list():
+    return jsonify({
+        "plans": state_store.load_plan_favorites(),
+        "generated": state_store.load_generated_plans(),
+    })
+
+
+@app.route("/api/plans/save", methods=["POST"])
+def api_plans_save():
+    data = request.json or {}
+    name = (data.get("name") or "").strip()
+    tasks = data.get("tasks") or []
+    goal = (data.get("goal") or "").strip()
+    if not name or not tasks:
+        return jsonify({"error": "name and tasks required"}), 400
+    fav = {
+        "id": str(uuid.uuid4())[:8],
+        "name": name,
+        "goal": goal,
+        "tasks": tasks,
+        "task_count": len(tasks),
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    state_store.save_plan_favorite(fav)
+    return jsonify({"ok": True, "id": fav["id"]})
+
+
+@app.route("/api/plans/<plan_id>", methods=["DELETE"])
+def api_plans_delete(plan_id):
+    state_store.delete_plan_favorite(plan_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/plans/generated/<plan_id>/load", methods=["POST"])
+def api_plans_generated_load(plan_id):
+    """Load a generated plan for execution — returns tasks with checkpoint overlay."""
+    plan = state_store.get_generated_plan(plan_id)
+    if not plan:
+        return jsonify({"error": "Plan not found"}), 404
+
+    tasks = plan.get("tasks", [])
+    plan_file = plan.get("plan_file", "")
+    repo_root = plan.get("repo_root", "")
+
+    # Overlay checkpoint status if available
+    if repo_root:
+        from utils.checkpoint import load_checkpoint
+        completed = load_checkpoint(Path(repo_root))
+        for t in tasks:
+            t["status"] = "done" if t.get("id") in completed else "pending"
+
+    return jsonify({
+        "ok": True,
+        "plan_id": plan_id,
+        "plan_file": plan_file,
+        "tasks": tasks,
+        "goal": plan.get("goal", ""),
+    })
+
+
+@app.route("/api/plans/generated/<plan_id>", methods=["DELETE"])
+def api_plans_generated_delete(plan_id):
+    state_store.delete_generated_plan(plan_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/run/queue")
+def api_run_queue():
+    return jsonify({"queue": state_store.load_run_queue()})
+
+
+@app.route("/api/run/queue", methods=["POST"])
+def api_run_queue_add():
+    data = request.json or {}
+    data["queued_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state_store.append_run_queue(data)
+    return jsonify({"ok": True, "queue_size": len(state_store.load_run_queue())})
+
+
+@app.route("/api/run/queue/<int:index>", methods=["DELETE"])
+def api_run_queue_remove(index):
+    state_store.remove_from_queue(index)
+    return jsonify({"ok": True})
+
+
+    # /api/run/preflight moved to ui/api/system_routes.py (system_bp)
+
+
+    # System routes moved to ui/api/system_routes.py (system_bp blueprint):
+    # /api/system/gpu-processes, /api/system/kill-process,
+    # /api/system/unload-model, /api/system/benchmark, /api/system/recommend-model
+
+
+@app.route("/api/run/clear-checkpoint", methods=["POST"])
+def api_run_clear_checkpoint():
+    """Clear the checkpoint so all tasks run fresh on next launch."""
+    data = request.json or {}
+    repo_root = (data.get("repo_root") or "").strip()
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+    if not repo_root:
+        return jsonify({"error": "repo_root not set"}), 400
+    try:
+        from utils.checkpoint import clear_checkpoint
+        clear_checkpoint(Path(repo_root))
+        return jsonify({"ok": True, "message": "Checkpoint cleared — all tasks will run fresh"})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+
+@app.route("/api/run/import-plan", methods=["POST"])
+def api_run_import_plan():
+    """Read a plan JSON file and return tasks with checkpoint status overlay."""
+    data = request.json or {}
+    plan_file = (data.get("plan_file") or "").strip()
+    repo_root = (data.get("repo_root") or "").strip()
+
+    if not repo_root:
+        settings = state_store.load_settings()
+        repo_root = settings.get("repo_root", "").strip()
+
+    if not plan_file or not Path(plan_file).exists():
+        return jsonify({"error": "Plan file not found"}), 404
+
+    # Load checkpoint
+    completed = set()
+    if repo_root:
+        checkpoint_file = Path(repo_root) / "bridge_progress" / "checkpoint.json"
+        if checkpoint_file.exists():
+            try:
+                completed = set(json.loads(checkpoint_file.read_text(encoding="utf-8")).get("completed", []))
+            except Exception:
+                pass
+
+    # Read plan file
+    try:
+        plan_data = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+        plan_tasks = plan_data.get("tasks", [])
+    except Exception as ex:
+        return jsonify({"error": f"Failed to parse plan: {ex}"}), 400
+
+    tasks = []
+    for pt in plan_tasks:
+        tid = pt.get("id", 0)
+        tasks.append({
+            "id": tid,
+            "type": pt.get("type", ""),
+            "files": pt.get("files", []),
+            "instruction": pt.get("instruction", ""),
+            "status": "done" if tid in completed else "pending",
+        })
+
+    can_resume = bool(completed) and len(completed) < len(tasks)
+
+    return jsonify({
+        "tasks": tasks,
+        "total_tasks": len(tasks),
+        "completed": sorted(completed),
+        "can_resume": can_resume,
+    })
+
+
 @app.route("/api/run/pause", methods=["POST"])
 def api_pause_run():
     """Create the pause file so the bridge stops between tasks."""
@@ -1408,7 +1481,7 @@ def _classify_goal(goal: str) -> str:
     ]
     if any(kw in lower for kw in read_keywords):
         # But some "find" goals actually want fixes
-        fix_signals = ["fix", "repair", "resolve", "patch", "update", "change", "add", "create", "implement"]
+        fix_signals = ["fix", "repair", "resolve", "patch", "update", "change", "add", "create", "implement", "implemen", "build", "refactor", "develop", "write"]
         if not any(fs in lower for fs in fix_signals):
             return "read"
 
@@ -1422,7 +1495,8 @@ def api_run_brief():
     import urllib.error
 
     data = request.get_json(force=True) or {}
-    message = str(data.get("message", "")).strip()
+    # Accept both "message" and "goal" keys for backwards compatibility
+    message = str(data.get("message") or data.get("goal") or "").strip()
     repo_root = str(data.get("repo_root", "")).strip()
 
     if not message:
@@ -1479,6 +1553,7 @@ def api_run_brief():
         "model": ollama_model,
         "messages": messages,
         "stream": False,
+        "keep_alive": "30s",
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -1533,8 +1608,14 @@ def api_run_nl_plan():
     repo_root = str(data.get("repo_root", "")).strip()
     brief = data.get("brief") or {}
 
+    # Accept both full brief and simple {goal: "..."} format
     if not brief or not brief.get("goal"):
-        return jsonify({"error": "brief with goal is required"}), 400
+        # Fallback: check if goal is at top level
+        goal_direct = str(data.get("goal", "")).strip()
+        if goal_direct:
+            brief = {"goal": goal_direct}
+        else:
+            return jsonify({"error": "brief with goal is required"}), 400
 
     settings = state_store.load_settings()
     if not repo_root:
@@ -1553,9 +1634,21 @@ def api_run_nl_plan():
     # Smart goal routing: classify and add hint for the supervisor
     goal_category = _classify_goal(goal_text)
     if goal_category == "read":
-        goal_text += "\n\nNOTE: This is a read-only analysis request. Use task type 'read'. Do NOT create/modify any files."
+        goal_text += (
+            "\n\nCRITICAL: This is a READ-ONLY analysis request. "
+            "You MUST use task type 'read' (not 'validate', not 'create', not 'modify'). "
+            "The 'read' type reads the file and returns the answer — Aider is NOT invoked. "
+            "Do NOT create new files. Do NOT modify existing files. "
+            "Target the ACTUAL file that exists in the repo tree below — do NOT guess file names."
+        )
     elif goal_category == "investigate":
-        goal_text += "\n\nNOTE: This requires investigation/analysis. Use task type 'investigate' for analysis tasks. You may follow with 'create' or 'modify' tasks if fixes are needed."
+        goal_text += (
+            "\n\nCRITICAL: This requires investigation/analysis. "
+            "Use task type 'investigate' (not 'validate', not 'create'). "
+            "The 'investigate' type reads files and sends content to the supervisor for analysis — Aider is NOT invoked. "
+            "Target ACTUAL files that exist in the repo tree below. "
+            "You may follow with 'create' or 'modify' tasks if fixes are needed."
+        )
 
     knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
 
@@ -1565,61 +1658,15 @@ def api_run_nl_plan():
 
     # Determine which supervisor to use for plan generation
     supervisor_type = settings.get("supervisor", "codex")
-    cli_commands = {
-        "codex":    "codex.cmd exec --skip-git-repo-check --color never",
-        "claude":   "claude",
-        "cursor":   "cursor",
-        "windsurf": "windsurf",
-    }
-    supervisor_cmd = cli_commands.get(supervisor_type, "")
-    if supervisor_type == "custom":
-        supervisor_cmd = settings.get("supervisor_command", "").strip()
+    # NOTE: Claude CLI needs -p flag for non-interactive piped mode.
+    # CLI supervisor path removed — bridge now uses only manual/relay mode.
+    # Plan generation is done by the user pasting into an external AI via
+    # /api/relay/generate-prompt + /api/relay/import-plan.
+    # This endpoint is kept for backward compatibility but returns the
+    # relay prompt instead of calling a CLI subprocess.
+    supervisor_cmd = ""  # No CLI supervisor
 
-    # ── CLI supervisor path (Claude, Codex, etc.) ─────────────────────────
-    if supervisor_cmd:
-        try:
-            from supervisor.agent import SupervisorAgent
-            from context.repo_scanner import RepoScanner
-            from parser.task_parser import TaskParser
-
-            logger = logging.getLogger("bridge_app")
-            repo_path = Path(repo_root)
-            repo_tree = RepoScanner(repo_path).scan()
-
-            agent = SupervisorAgent(
-                repo_root=repo_path,
-                command=supervisor_cmd,
-                logger=logger,
-                timeout=int(settings.get("task_timeout", 300)),
-            )
-            plan_text = agent.generate_plan(
-                goal=goal_text,
-                repo_tree=repo_tree,
-                knowledge_context=knowledge_ctx or None,
-                workflow_profile=settings.get("workflow_profile", "standard"),
-            )
-
-            parser = TaskParser()
-            tasks_parsed = parser.parse(plan_text)
-
-            # Convert Task objects to dicts for JSON response
-            tasks = []
-            for t in tasks_parsed:
-                tasks.append({
-                    "id": t.id,
-                    "title": t.instruction[:60] if t.instruction else "",
-                    "type": t.type,
-                    "files": t.files,
-                    "instruction": t.instruction,
-                })
-
-            plan_summary = f"Generated by {supervisor_type} — {len(tasks)} tasks"
-            return jsonify({"plan_summary": plan_summary, "tasks": tasks, "goal_category": goal_category})
-
-        except Exception as exc:
-            return jsonify({"error": f"Supervisor plan generation failed: {exc}"}), 500
-
-    # ── Ollama fallback (Chatbot / Manual — no CLI supervisor) ────────────
+    # ── Plan generation via Ollama (relay mode) ────────────────────────────
     import urllib.request
     import urllib.error
     from utils.relay_formatter import build_plan_prompt, parse_plan
@@ -1638,6 +1685,7 @@ def api_run_nl_plan():
             {"role": "user",   "content": prompt},
         ],
         "stream": False,
+        "keep_alive": "30s",
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -1750,6 +1798,7 @@ def api_run_analyze():
         "model": ollama_model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
+        "keep_alive": "30s",
     }).encode("utf-8")
 
     try:
@@ -1763,6 +1812,48 @@ def api_run_analyze():
         return jsonify({"answer": answer, "source": "ollama"})
     except Exception as exc:
         return jsonify({"error": f"Analysis failed: {exc}"}), 500
+
+
+@app.route("/api/run/nl/plan/prompt", methods=["POST"])
+def api_run_nl_plan_prompt():
+    """Return the raw planning prompt for manual copy-paste into Claude."""
+    data = request.get_json(force=True) or {}
+    brief = data.get("brief") or {}
+    goal = str(brief.get("goal") or data.get("goal") or "").strip()
+    repo_root = str(data.get("repo_root", "")).strip()
+
+    if not goal:
+        return jsonify({"error": "goal is required"}), 400
+
+    settings = state_store.load_settings()
+    if not repo_root:
+        repo_root = settings.get("repo_root", "").strip()
+
+    try:
+        from supervisor.agent import SupervisorAgent
+        from context.repo_scanner import RepoScanner
+
+        repo_path = Path(repo_root)
+        repo_tree = RepoScanner(repo_path).scan()
+        knowledge_ctx = _build_chat_context(repo_root) if repo_root else ""
+
+        agent = SupervisorAgent(
+            repo_root=repo_path,
+            command="interactive",  # won't actually run
+            logger=logging.getLogger("bridge_app"),
+            timeout=30,
+        )
+        prompt = agent._build_plan_prompt(
+            goal=goal,
+            repo_tree=repo_tree,
+            idea_text=None,
+            feedback=None,
+            knowledge_context=knowledge_ctx or None,
+            workflow_profile=settings.get("workflow_profile", "standard"),
+        )
+        return jsonify({"prompt": prompt, "chars": len(prompt)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/run/nl/plan/confirm", methods=["POST"])
@@ -1807,7 +1898,18 @@ def api_run_nl_plan_confirm():
             "status":       "plan_confirmed",
         })
 
-    return jsonify({"ok": True, "plan_file": plan_file})
+    # Save to generated plans library (persists across restarts)
+    goal = str(brief.get("goal", "")).strip() if isinstance(brief, dict) else ""
+    plan_id = state_store.save_generated_plan({
+        "goal": goal or plan_summary,
+        "plan_summary": plan_summary,
+        "plan_file": plan_file,
+        "repo_root": repo_root,
+        "task_count": len(tasks),
+        "tasks": tasks,
+    })
+
+    return jsonify({"ok": True, "plan_file": plan_file, "plan_id": plan_id})
 
 
 @app.route("/api/run/nl/state", methods=["GET"])
@@ -1953,6 +2055,37 @@ def api_get_history():
     return jsonify(history)
 
 
+@app.route("/api/history", methods=["POST"])
+def api_add_history_entry():
+    """Log an activity entry — for direct edits, /build skill, or external tools.
+
+    Accepts any JSON with at least a 'goal' field. Automatically adds
+    timestamp and ID. This lets Claude Code log direct file edits so they
+    appear in the History page alongside bridge runs.
+    """
+    data = request.get_json(force=True) or {}
+    if not data.get("goal") and not data.get("action"):
+        return jsonify({"error": "goal or action is required"}), 400
+
+    import time
+    entry = {
+        "goal": data.get("goal", data.get("action", "")),
+        "repo_root": data.get("repo_root", ""),
+        "status": data.get("status", "success"),
+        "timestamp": data.get("timestamp", time.strftime("%Y-%m-%d %H:%M:%S")),
+        "performer": data.get("performer", "claude"),
+        "tasks": data.get("tasks", 0),
+        "tasks_detail": data.get("tasks_detail", []),
+        "files_changed": data.get("files_changed", []),
+        "elapsed": data.get("elapsed", 0),
+        "tokens_used": data.get("tokens_used", 0),
+        "source": data.get("source", "external"),  # external | bridge | build_skill
+    }
+
+    entry_id = state_store.add_history_entry(entry)
+    return jsonify({"ok": True, "id": entry_id})
+
+
 @app.route("/api/history/<entry_id>")
 def api_get_history_entry(entry_id: str):
     for entry in state_store.load_history():
@@ -1979,6 +2112,85 @@ def api_clear_history():
 def api_get_tokens():
     """Return the full persisted token log (all sessions + all-time totals)."""
     return jsonify(state_store.load_token_log())
+
+
+@app.route("/api/tokens", methods=["POST"])
+def api_add_token_session():
+    """Log a token session from external tools (Claude Code, /build skill).
+
+    Accepts a session dict matching the token_tracker.session_report() format.
+    Automatically recalculates all-time totals.
+    """
+    data = request.get_json(force=True) or {}
+    if not data.get("goal"):
+        return jsonify({"error": "goal is required"}), 400
+
+    import time as _t
+    from utils.token_tracker import estimate_cost
+
+    # Build a session entry compatible with token_tracker format
+    supervisor_in = data.get("supervisor_tokens_in", 0)
+    supervisor_out = data.get("supervisor_tokens_out", 0)
+    aider_tokens = data.get("aider_tokens", 0)
+    tasks_executed = data.get("tasks_executed", 0)
+
+    session = {
+        "session_id": data.get("session_id", str(__import__("uuid").uuid4())),
+        "timestamp": data.get("timestamp", _t.strftime("%Y-%m-%dT%H:%M:%S")),
+        "goal": data["goal"],
+        "repo_root": data.get("repo_root", ""),
+        "supervisor_command": data.get("performer", "claude"),
+        "supervisor": {
+            "plan_in": supervisor_in, "plan_out": supervisor_out,
+            "review_in": 0, "review_out": 0,
+            "subplan_in": 0, "subplan_out": 0,
+            "total_in": supervisor_in, "total_out": supervisor_out,
+            "total": supervisor_in + supervisor_out,
+        },
+        "session": {"tokens": 0, "is_estimate": True, "total_ai_tokens": supervisor_in + supervisor_out},
+        "aider": {
+            "tasks_executed": tasks_executed,
+            "tasks_skipped": 0,
+            "reworks": 0,
+            "subplans_generated": 0,
+            "estimated_tokens": aider_tokens,
+            "per_task": data.get("per_task", []),
+        },
+        "productivity": {"is_productive": tasks_executed > 0, "waste_reason": None},
+        "savings": {
+            "estimated_direct_tokens": tasks_executed * 5000,
+            "actual_supervisor_tokens": supervisor_in + supervisor_out,
+            "total_ai_tokens": supervisor_in + supervisor_out,
+            "tokens_saved": max(0, tasks_executed * 5000 - (supervisor_in + supervisor_out)),
+            "savings_percent": 0,
+            "note": f"External session: {data.get('performer', 'claude')}",
+        },
+        "cost": {
+            "bridge_cost_opus": round(estimate_cost(supervisor_in, supervisor_out, "claude-opus-4"), 4),
+            "bridge_cost_sonnet": round(estimate_cost(supervisor_in, supervisor_out, "claude-sonnet-4"), 4),
+            "direct_cost_opus": round(estimate_cost(tasks_executed * 3000, tasks_executed * 2000, "claude-opus-4"), 4),
+            "direct_cost_sonnet": round(estimate_cost(tasks_executed * 3000, tasks_executed * 2000, "claude-sonnet-4"), 4),
+            "ollama_cost": 0.0,
+            "ollama_tokens": aider_tokens,
+            "savings_dollar_opus": 0.0,
+            "savings_dollar_sonnet": 0.0,
+        },
+        "elapsed_seconds": data.get("elapsed", 0),
+    }
+    # Calculate savings percent
+    direct = session["savings"]["estimated_direct_tokens"]
+    if direct > 0:
+        session["savings"]["savings_percent"] = round(session["savings"]["tokens_saved"] / direct * 100, 1)
+    # Dollar savings
+    session["cost"]["savings_dollar_opus"] = round(max(0, session["cost"]["direct_cost_opus"] - session["cost"]["bridge_cost_opus"]), 4)
+    session["cost"]["savings_dollar_sonnet"] = round(max(0, session["cost"]["direct_cost_sonnet"] - session["cost"]["bridge_cost_sonnet"]), 4)
+
+    # Save to token log
+    from utils.token_tracker import save_session_to_log
+    log_path = state_store.TOKEN_LOG_FILE
+    save_session_to_log(session, log_path)
+
+    return jsonify({"ok": True, "session_id": session["session_id"]})
 
 
 @app.route("/api/tokens/current")
@@ -2194,6 +2406,25 @@ def api_knowledge_refresh():
             logger.warning("Could not regenerate AI_UNDERSTANDING.md: %s", _ue)
 
         files_count = len(knowledge.get("files", {}))
+
+        # Firebase sync: push project metadata to user's Firestore
+        try:
+            from utils.firebase_user_setup import get_user_setup
+            _fbu = get_user_setup()
+            if _fbu.is_configured() and _fbu.is_authenticated():
+                _meta = {
+                    "name": repo_path.name,
+                    "language": knowledge.get("project", {}).get("language", ""),
+                    "type": knowledge.get("project", {}).get("type", ""),
+                    "file_count": len(knowledge.get("files", {})),
+                    "patterns": knowledge.get("patterns", [])[:10],
+                    "features_done": knowledge.get("features_done", [])[:20],
+                    "last_refreshed": knowledge.get("project", {}).get("last_refreshed", ""),
+                }
+                _fbu.write_to_user_firestore(f"projects/{repo_path.name}/knowledge/latest", _meta)
+        except Exception:
+            pass
+
         return jsonify({
             "ok": True,
             "files_scanned": files_count,
@@ -2238,251 +2469,7 @@ def api_reports_understanding():
 
 # ── Chat ───────────────────────────────────────────────────────────────────────
 
-@app.route("/chat")
-def page_chat():
-    return render_template("chat.html", active_page="chat")
-
-
-@app.route("/api/chat", methods=["POST"])
-def api_chat():
-    """Stream a chat response from Ollama using project knowledge as context."""
-    import urllib.request
-    import urllib.error
-
-    data = request.json or {}
-    message = data.get("message", "").strip()
-    history = data.get("history", [])   # [{role, content}, ...]
-
-    if not message:
-        return jsonify({"error": "message is required"}), 400
-
-    settings = state_store.load_settings()
-    # Allow per-request model override from the chat model selector
-    request_model = (data.get("model") or "").strip()
-    if request_model and not request_model.startswith("ollama/"):
-        request_model = "ollama/" + request_model
-    raw_model = request_model or settings.get("aider_model", "ollama/qwen2.5-coder:14b")
-    # Ollama API wants the bare model name (no "ollama/" prefix)
-    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
-
-    repo_root = settings.get("repo_root", "").strip()
-    messages = _build_chat_prompt_messages(repo_root, history, message, raw_model)
-
-    def generate():
-        body = json.dumps({
-            "model": ollama_model,
-            "messages": messages,
-            "stream": True,
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            "http://localhost:11434/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                for raw_line in resp:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                        token = chunk.get("message", {}).get("content", "")
-                        if token:
-                            yield f"data: {json.dumps({'token': token})}\n\n"
-                        if chunk.get("done"):
-                            yield f"data: {json.dumps({'done': True})}\n\n"
-                    except json.JSONDecodeError:
-                        pass
-        except urllib.error.HTTPError as exc:
-            try:
-                body = json.loads(exc.read().decode("utf-8", errors="replace"))
-                detail = body.get("error") or f"HTTP {exc.code}"
-            except Exception:
-                detail = f"HTTP {exc.code}: {exc.reason}"
-            yield f"data: {json.dumps({'error': f'Ollama error: {detail}'})}\n\n"
-        except urllib.error.URLError as exc:
-            reason = getattr(exc, "reason", str(exc))
-            yield f"data: {json.dumps({'error': f'Ollama not reachable: {reason}. Is Ollama running?'})}\n\n"
-        except Exception as exc:
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
-
-    return Response(
-        stream_with_context(generate()),
-        content_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.route("/api/chat/start", methods=["POST"])
-def api_chat_start():
-    data = request.get_json(force=True) or {}
-    message = str(data.get("message", "")).strip()
-    history = _sanitize_chat_messages(data.get("history", []))
-    repo_root = str(data.get("repo_root", "")).strip()
-
-    if not message:
-        return jsonify({"error": "message is required"}), 400
-
-    if not repo_root:
-        settings = state_store.load_settings()
-        repo_root = str(settings.get("repo_root", "")).strip()
-
-    if not repo_root:
-        return jsonify({"error": "repo_root is required"}), 400
-
-    settings = state_store.load_settings()
-    request_model = str(data.get("model", "")).strip()
-    if request_model and not request_model.startswith("ollama/"):
-        request_model = "ollama/" + request_model
-    raw_model = request_model or settings.get("aider_model", "ollama/qwen2.5-coder:14b")
-    #if not raw_model.startswith("ollama/"):
-    #    return jsonify({"error": "Chat only works with local Ollama models."}), 400
-
-    runtime = _get_chat_runtime(repo_root)
-    if runtime.is_generating:
-        return jsonify({"error": "A chat response is already running for this project."}), 409
-
-    persisted = history + [
-        {"role": "user", "content": message},
-        {"role": "assistant", "content": ""},
-    ]
-    state_store.save_chat_history(_chat_project_key(repo_root), persisted)
-
-    runtime.is_generating = True
-    runtime.stop_event.clear()
-    runtime.model = raw_model
-    runtime.error = ""
-    runtime.updated_at = time.time()
-
-    worker = threading.Thread(
-        target=_run_chat_completion,
-        args=(repo_root, history, message, raw_model),
-        daemon=True,
-    )
-    worker.start()
-
-    return jsonify({"ok": True})
-
-
-@app.route("/api/chat/stop", methods=["POST"])
-def api_chat_stop():
-    data = request.get_json(force=True) or {}
-    repo_root = str(data.get("repo_root", "")).strip()
-    if not repo_root:
-        settings = state_store.load_settings()
-        repo_root = str(settings.get("repo_root", "")).strip()
-
-    if not repo_root:
-        return jsonify({"error": "repo_root is required"}), 400
-
-    runtime = _get_chat_runtime(repo_root)
-    runtime.stop_event.set()
-    runtime.updated_at = time.time()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/chat/state", methods=["GET"])
-def api_chat_state():
-    repo_root = (request.args.get("repo_root") or "").strip()
-    if not repo_root:
-        settings = state_store.load_settings()
-        repo_root = str(settings.get("repo_root", "")).strip()
-
-    runtime = _get_chat_runtime(repo_root)
-    return jsonify({
-        "repo_root": repo_root,
-        "messages": state_store.load_chat_history(_chat_project_key(repo_root)),
-        "is_generating": runtime.is_generating,
-        "model": runtime.model,
-        "error": runtime.error,
-        "updated_at": runtime.updated_at,
-    })
-
-
-@app.route("/api/chat/history", methods=["GET"])
-def api_chat_history():
-    repo_root = (request.args.get("repo_root") or "").strip()
-    if not repo_root:
-        settings = state_store.load_settings()
-        repo_root = str(settings.get("repo_root", "")).strip()
-
-    return jsonify({
-        "repo_root": repo_root,
-        "messages": state_store.load_chat_history(_chat_project_key(repo_root)),
-    })
-
-
-@app.route("/api/chat/history", methods=["POST"])
-def api_chat_history_save():
-    data = request.get_json(force=True) or {}
-    repo_root = str(data.get("repo_root", "")).strip()
-    messages_raw = data.get("messages", [])
-
-    if not repo_root:
-        return jsonify({"error": "repo_root is required"}), 400
-    if not isinstance(messages_raw, list):
-        return jsonify({"error": "messages must be a list"}), 400
-
-    messages: list[dict] = []
-    for entry in messages_raw[-100:]:
-        if not isinstance(entry, dict):
-            continue
-        role = str(entry.get("role", "")).strip()
-        content = str(entry.get("content", ""))
-        if role not in ("user", "assistant"):
-            continue
-        messages.append({
-            "role": role,
-            "content": content,
-        })
-
-    state_store.save_chat_history(_chat_project_key(repo_root), messages)
-    return jsonify({"ok": True, "count": len(messages)})
-
-
-@app.route("/api/chat/history", methods=["DELETE"])
-def api_chat_history_delete():
-    repo_root = (request.args.get("repo_root") or "").strip()
-    if not repo_root:
-        settings = state_store.load_settings()
-        repo_root = str(settings.get("repo_root", "")).strip()
-
-    if not repo_root:
-        return jsonify({"error": "repo_root is required"}), 400
-
-    state_store.clear_chat_history(_chat_project_key(repo_root))
-    return jsonify({"ok": True})
-
-
-@app.route("/api/chat/status")
-def api_chat_status():
-    """Check if Ollama is running and the configured model is available."""
-    import urllib.request, urllib.error
-    settings = state_store.load_settings()
-    raw_model = settings.get("aider_model", "")
-    ollama_model = raw_model[7:] if raw_model.startswith("ollama/") else raw_model
-
-    result = {"ollama_running": False, "model_available": False, "model": ollama_model, "error": None}
-    try:
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            result["ollama_running"] = True
-            models = [m.get("name", "") for m in data.get("models", [])]
-            # Match if model name starts with the configured name (handles tags like :latest)
-            result["model_available"] = any(
-                m == ollama_model or m.startswith(ollama_model.split(":")[0])
-                for m in models
-            )
-            result["available_models"] = models
-    except urllib.error.URLError:
-        result["error"] = "Ollama is not running"
-    except Exception as exc:
-        result["error"] = str(exc)
-    return jsonify(result)
-
+# Chat routes — MOVED to ui/api/chat_routes.py (chat_bp)
 
 # ── Project routes ───────────────────────────────────────────────────────────
 
@@ -2533,256 +2520,4 @@ def api_projects_rename():
     return jsonify({"ok": True})
 
 
-# ── AI Relay routes ───────────────────────────────────────────────────────────
-
-@app.route("/relay")
-def relay_page():
-    # AI Relay is now inline on the Run page (Milestone B).
-    # Keep this route so old bookmarks / links don't 404.
-    from flask import redirect
-    return redirect("/run", code=302)
-
-
-@app.route("/api/relay/generate-prompt", methods=["POST"])
-def api_relay_generate_prompt():
-    """Return the plan prompt the user pastes into their web AI."""
-    from utils.relay_formatter import build_plan_prompt
-    from utils.project_knowledge import load_knowledge, to_context_text
-
-    data      = request.get_json(force=True) or {}
-    goal      = (data.get("goal") or "").strip()
-    repo_root = (data.get("repo_root") or "").strip()
-    if not goal:
-        return jsonify({"error": "goal is required"}), 400
-
-    knowledge_context = ""
-    if repo_root:
-        repo_path = Path(repo_root)
-        try:
-            knowledge = load_knowledge(repo_path)   # must receive a Path, not str
-            knowledge_context = to_context_text(knowledge)
-        except Exception:
-            pass
-
-        # Fallback: if the knowledge file hasn't been built yet (first use),
-        # include a compact file-tree scan so the web AI knows the project layout.
-        if not knowledge_context.strip():
-            try:
-                _root = Path(__file__).parent.parent
-                if str(_root) not in sys.path:
-                    sys.path.insert(0, str(_root))
-                from context.repo_scanner import RepoScanner
-                tree = RepoScanner(repo_path).scan()
-                knowledge_context = f"FILE TREE:\n{tree}"
-            except Exception:
-                pass
-
-    prompt = build_plan_prompt(goal, knowledge_context, repo_root)
-    return jsonify({"prompt": prompt})
-
-
-@app.route("/api/relay/import-plan", methods=["POST"])
-def api_relay_import_plan():
-    """Parse the web AI's plan response and persist the task list."""
-    from utils.relay_formatter import parse_plan
-
-    data     = request.get_json(force=True) or {}
-    raw_text = data.get("raw_text", "")
-    try:
-        tasks = parse_plan(raw_text)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 422
-
-    state_store.save_relay_tasks(tasks)
-    ui_state = state_store.load_relay_ui_state()
-    ui_state["step"] = 2
-    ui_state["relay_session_id"] = uuid.uuid4().hex[:12]
-    state_store.save_relay_ui_state(ui_state)
-    return jsonify({"tasks": tasks, "count": len(tasks), "relay_session_id": ui_state["relay_session_id"]})
-
-
-@app.route("/api/relay/tasks/skip", methods=["POST"])
-def api_relay_skip_task():
-    data = request.get_json(force=True) or {}
-    task_id = int(data.get("task_id", 0))
-    skip = bool(data.get("skip", True))
-
-    if task_id <= 0:
-        return jsonify({"error": "task_id is required"}), 400
-
-    run = get_run()
-    if run.is_running or run.status in ("running", "waiting_review", "paused"):
-        return jsonify({"error": "Stop or finish the active run before changing skipped tasks."}), 409
-
-    tasks = state_store.load_relay_tasks()
-    task = next((item for item in tasks if int(item.get("id", 0)) == task_id), None)
-    if task is None:
-        return jsonify({"error": f"Task {task_id} was not found."}), 404
-
-    current_status = str(task.get("status", "")).strip().lower()
-    ui_state = state_store.load_relay_ui_state()
-    known_statuses = _relay_task_statuses(
-        str(ui_state.get("repo_root", "") or ""),
-        tasks,
-        str(ui_state.get("relay_session_id", "") or ""),
-    )
-    effective_status = known_statuses.get(task_id, {}).get("code") or current_status or "not_started"
-
-    if skip:
-        if effective_status in ("running", "waiting_review", "approved", "success"):
-            return jsonify({"error": f"Task {task_id} cannot be skipped from its current status."}), 409
-        task["status"] = "skipped"
-    else:
-        if current_status == "skipped":
-            task.pop("status", None)
-
-    state_store.save_relay_tasks(tasks)
-    return jsonify(_relay_state_payload())
-
-
-@app.route("/api/relay/state", methods=["GET"])
-def api_relay_state():
-    return jsonify(_relay_state_payload())
-
-
-@app.route("/api/relay/state", methods=["DELETE"])
-def api_relay_state_clear():
-    state_store.clear_relay_ui_state()
-    state_store.clear_relay_tasks()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/relay/review-packet", methods=["GET"])
-def api_relay_review_packet():
-    """Build the review text for a completed task."""
-    from utils.relay_formatter import build_review_packet
-
-    task_id   = request.args.get("task_id", "")
-    repo_root = (request.args.get("repo_root") or "").strip()
-    goal      = (request.args.get("goal") or "").strip()
-    relay_session_id = (request.args.get("relay_session_id") or _relay_current_session_id()).strip()
-
-    if not task_id or not repo_root:
-        return jsonify({"error": "task_id and repo_root are required"}), 400
-
-    # Locate the request file written by bridge_runner
-    req_file = _relay_request_file(repo_root, int(task_id), relay_session_id)
-    if not req_file.exists():
-        return jsonify({"error": f"Request file not found: {req_file.name}"}), 404
-
-    try:
-        req_data = json.loads(req_file.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return jsonify({"error": f"Could not read request file: {exc}"}), 500
-
-    tasks      = state_store.load_relay_tasks()
-    total      = len(tasks)
-    task       = next((t for t in tasks if str(t.get("id")) == str(task_id)), req_data)
-    diff       = req_data.get("diff", "")
-    validation = req_data.get("validation_result", "not run")
-    attempt    = req_data.get("attempt", 1)
-    max_retries = req_data.get("max_retries", 2)
-
-    packet = build_review_packet(task, diff, validation, attempt, max_retries, total, goal)
-    return jsonify({"packet": packet})
-
-
-@app.route("/api/relay/submit-decision", methods=["POST"])
-def api_relay_submit_decision():
-    """Parse the web AI's review response and write the decision file."""
-    from utils.relay_formatter import parse_decision
-
-    data      = request.get_json(force=True) or {}
-    raw_text  = data.get("raw_text", "")
-    task_id   = data.get("task_id")
-    repo_root = (data.get("repo_root") or "").strip()
-    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id()).strip()
-
-    if not task_id or not repo_root:
-        return jsonify({"error": "task_id and repo_root are required"}), 400
-
-    parsed = parse_decision(raw_text)
-    if parsed["decision"] == "unparseable":
-        return jsonify({"error": "Could not parse a decision from the text.", "raw": parsed.get("raw", "")}), 422
-
-    # Map relay decision names → manual-supervisor decision names
-    decision_map = {"approved": "pass", "rework": "rework", "failed": "fail"}
-    ms_decision  = decision_map.get(parsed["decision"], parsed["decision"])
-
-    decision_payload: dict = {"task_id": int(task_id), "decision": ms_decision, "relay_session_id": relay_session_id}
-    if ms_decision == "rework" and "instruction" in parsed:
-        decision_payload["instruction"] = parsed["instruction"]
-    if ms_decision == "fail" and "reason" in parsed:
-        decision_payload["reason"] = parsed["reason"]
-
-    dec_dir  = Path(repo_root) / "bridge_progress" / "manual_supervisor" / "decisions"
-    dec_dir.mkdir(parents=True, exist_ok=True)
-    dec_file = _relay_decision_file(repo_root, int(task_id), relay_session_id)
-    dec_file.write_text(json.dumps(decision_payload, indent=2), encoding="utf-8")
-
-    return jsonify({"decision": ms_decision, "file": dec_file.name})
-
-
-@app.route("/api/relay/replan-prompt", methods=["POST"])
-def api_relay_replan_prompt():
-    """Build the replan prompt for a failed task."""
-    from utils.relay_formatter import build_replan_prompt
-
-    data          = request.get_json(force=True) or {}
-    task_id       = data.get("task_id")
-    failed_reason = (data.get("failed_reason") or "").strip()
-    repo_root     = (data.get("repo_root") or "").strip()
-    goal          = (data.get("goal") or "").strip()
-    relay_session_id = str(data.get("relay_session_id") or _relay_current_session_id()).strip()
-
-    if not task_id or not repo_root:
-        return jsonify({"error": "task_id and repo_root are required"}), 400
-
-    req_file = _relay_request_file(repo_root, int(task_id), relay_session_id)
-    diff     = ""
-    task     = {"id": task_id, "title": f"Task {task_id}", "instruction": ""}
-    if req_file.exists():
-        try:
-            req_data = json.loads(req_file.read_text(encoding="utf-8"))
-            diff     = req_data.get("diff", "")
-            tasks    = state_store.load_relay_tasks()
-            found    = next((t for t in tasks if str(t.get("id")) == str(task_id)), None)
-            if found:
-                task = found
-        except Exception:
-            pass
-
-    if not failed_reason:
-        failed_reason = "Task marked as failed by reviewer."
-
-    prompt = build_replan_prompt(task, failed_reason, diff, goal)
-    return jsonify({"prompt": prompt})
-
-
-@app.route("/api/relay/import-replan", methods=["POST"])
-def api_relay_import_replan():
-    """Parse replacement tasks from the web AI and splice them into the task list."""
-    from utils.relay_formatter import parse_plan
-
-    data     = request.get_json(force=True) or {}
-    raw_text = data.get("raw_text", "")
-    task_id  = data.get("task_id")
-
-    if not task_id:
-        return jsonify({"error": "task_id is required"}), 400
-
-    try:
-        replacement_tasks = parse_plan(raw_text)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 422
-
-    tasks = state_store.load_relay_tasks()
-    # Remove the failed task and everything after it, then splice in replacements
-    pivot = next((i for i, t in enumerate(tasks) if str(t.get("id")) == str(task_id)), None)
-    if pivot is not None:
-        tasks = tasks[:pivot] + replacement_tasks
-    else:
-        tasks = tasks + replacement_tasks
-
-    state_store.save_relay_tasks(tasks)
-    return jsonify({"tasks": tasks, "count": len(tasks)})
+# Relay routes — MOVED to ui/api/relay_routes.py (relay_bp)

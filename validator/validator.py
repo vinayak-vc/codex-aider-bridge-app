@@ -17,11 +17,11 @@ _WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" els
 
 from models.task import Task, ValidationResult
 
-# ── Unity MCP ─────────────────────────────────────────────────────────────────
-
-# URL of the Unity MCP HTTP server. Override via UNITY_MCP_URL env var.
-_UNITY_MCP_URL: str = os.getenv("UNITY_MCP_URL", "http://127.0.0.1:8080/mcp")
-_UNITY_MCP_HEALTH_URL: str = _UNITY_MCP_URL.replace("/mcp", "/health")
+# ── Unity MCP — delegated to validator/unity_checks.py ───────────────────────
+from validator.unity_checks import (
+    call_unity_mcp_tool as _call_unity_mcp_tool,
+    unity_mcp_available as _unity_mcp_available,
+)
 
 # Matches Unity compiler error lines, e.g.:
 #   Assets/Scripts/Foo.cs(12,5): error CS0103: ...
@@ -29,64 +29,6 @@ _UNITY_COMPILER_ERROR_RE = re.compile(
     r"error\s+CS\d+",
     re.IGNORECASE,
 )
-
-
-def _call_unity_mcp_tool(
-    tool_name: str,
-    arguments: dict,
-    timeout: int = 10,
-) -> Optional[dict]:
-    """Call a Unity MCP tool via HTTP.  Returns the result dict or None on failure.
-
-    Handles both plain JSON and SSE (text/event-stream) response formats.
-    """
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {"name": tool_name, "arguments": arguments},
-    }
-    try:
-        req = urllib.request.Request(
-            _UNITY_MCP_URL,
-            data=json.dumps(payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            body = resp.read().decode("utf-8", errors="replace")
-
-            if "text/event-stream" in content_type:
-                # SSE format: "data: <json>\n\n"
-                for line in body.splitlines():
-                    if line.startswith("data: "):
-                        chunk = line[6:].strip()
-                        if chunk in ("", "[DONE]"):
-                            continue
-                        parsed = json.loads(chunk)
-                        if "result" in parsed:
-                            return parsed["result"]
-            else:
-                parsed = json.loads(body)
-                if "result" in parsed:
-                    return parsed["result"]
-    except Exception:
-        return None
-    return None
-
-
-def _unity_mcp_available() -> bool:
-    """Return True if the Unity MCP server is reachable and healthy."""
-    try:
-        req = urllib.request.Request(_UNITY_MCP_HEALTH_URL, method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
 
 
 # Maximum seconds the CI gate command is allowed to run before being killed.

@@ -8,7 +8,9 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div class="git-page">
+
+<div class="page-header" style="flex-shrink:0">
   <div>
     <h1 class="page-title">Git</h1>
     <p class="page-subtitle">Branch management, commit history, and working tree</p>
@@ -36,12 +38,12 @@
   </div>
 </div>
 
-<!-- Two-column layout: commits | diff viewer -->
+<!-- Two-column layout: commits | changed files + diff -->
 <div class="git-main-layout">
 
-  <!-- Left: Commit history -->
+  <!-- Left: Commit history (scrollable) -->
   <div class="card git-commits-card">
-    <div class="section-header" style="margin-bottom:12px">
+    <div class="section-header" style="margin-bottom:10px;flex-shrink:0">
       <span class="section-title">Commit History</span>
       <span class="badge badge--muted" id="git-commit-count">0</span>
     </div>
@@ -50,21 +52,36 @@
     </div>
   </div>
 
-  <!-- Right: Diff viewer + changed files -->
+  <!-- Right: Changed files + diff viewer -->
   <div class="git-detail-col">
 
-    <!-- Changed files -->
-    <div class="card" id="git-changed-wrap" style="display:none">
-      <div class="section-header" style="margin-bottom:10px">
-        <span class="section-title">Changed Files</span>
-        <span class="badge badge--warning" id="git-changed-count">0</span>
+    <!-- Changed files (scrollable) -->
+    <div class="card git-changed-card" id="git-changed-wrap" style="display:none">
+      <div class="git-changed-header">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="section-title">Changed Files</span>
+          <span class="badge badge--warning" id="git-changed-count">0</span>
+        </div>
+        <div class="git-view-toggle">
+          <button class="btn btn--secondary btn--sm git-view-btn --active" id="btn-changed-list" title="List view">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="12" height="12">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125H5.625a1.125 1.125 0 0 1-1.125-1.125v-1.5c0-.621.504-1.125 1.125-1.125Z"/>
+            </svg>
+          </button>
+          <button class="btn btn--secondary btn--sm git-view-btn" id="btn-changed-tree" title="Tree view">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="12" height="12">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="git-changed-list" id="git-changed-list"></div>
+      <div class="git-tree" id="git-changed-tree" style="display:none"></div>
     </div>
 
-    <!-- Diff viewer -->
-    <div class="card" id="git-diff-card" style="display:none">
-      <div class="section-header" style="margin-bottom:10px">
+    <!-- Diff viewer (fills remaining space) -->
+    <div class="card git-diff-card" id="git-diff-card" style="display:none">
+      <div class="section-header" style="margin-bottom:8px;flex-shrink:0">
         <span class="section-title" id="git-diff-title">Diff</span>
         <button class="btn btn--secondary btn--sm" id="btn-git-close-diff" title="Close diff">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="12" height="12">
@@ -76,6 +93,8 @@
     </div>
 
   </div>
+</div>
+
 </div>
 {% endblock %}
 

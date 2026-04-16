@@ -1,0 +1,49 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "main.py",
+      "community": 0
+    },
+    {
+      "id": "supervisor_agent",
+      "label": "SupervisorAgent",
+      "file_type": "code",
+      "source_file": "supervisor/agent.py",
+      "community": 0
+    },
+    {
+      "id": "repo_scanner",
+      "label": "RepoScanner",
+      "file_type": "code",
+      "source_file": "context/repo_scanner.py",
+      "community": 1
+    },
+    {
+      "id": "readme_project",
+      "label": "Codex Aider Bridge App",
+      "file_type": "document",
+      "source_file": "README.md",
+      "community": 1
+    }
+  ],
+  "links": [
+    {
+      "source": "main_py",
+      "target": "supervisor_agent"
+    },
+    {
+      "source": "supervisor_agent",
+      "target": "repo_scanner"
+    },
+    {
+      "source": "repo_scanner",
+      "target": "readme_project"
+    }
+  ]
+}

@@ -40,7 +40,26 @@ class TaskParser:
             raise PlanParseError("Supervisor JSON root must be an object.")
 
         tasks_payload: Any = payload.get("tasks")
+
+        # If root is a dict but no "tasks" key, check if it looks like a
+        # single task or if the tasks are under a different key
+        if tasks_payload is None:
+            # Maybe Claude returned {"plan": {"tasks": [...]}} or similar nesting
+            for key, val in payload.items():
+                if isinstance(val, list) and val and isinstance(val[0], dict) and "instruction" in val[0]:
+                    tasks_payload = val
+                    break
+                if isinstance(val, dict) and "tasks" in val:
+                    tasks_payload = val["tasks"]
+                    break
+
+        # Maybe Claude returned a bare array [{...}, {...}] instead of {"tasks": [...]}
+        if tasks_payload is None and isinstance(payload, list):
+            tasks_payload = payload
+
         if not isinstance(tasks_payload, list) or not tasks_payload:
+            print(f"[PARSER] Cannot find tasks in response. Keys: {list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}", flush=True)
+            print(f"[PARSER] First 500 chars: {str(payload)[:500]}", flush=True)
             raise PlanParseError(
                 "Supervisor JSON must contain a non-empty 'tasks' array."
             )
@@ -50,7 +69,14 @@ class TaskParser:
     def _extract_json(self, raw_text: str) -> str:
         stripped = raw_text.strip()
 
-        # Strip markdown code fences (```json ... ``` or ``` ... ```)
+        # Strip markdown code fences anywhere in the text
+        # Handles: ```json\n{...}\n``` or prose before/after fences
+        import re as _re
+        fence_match = _re.search(r'```(?:json)?\s*\n(.*?)\n```', stripped, _re.DOTALL)
+        if fence_match:
+            stripped = fence_match.group(1).strip()
+
+        # Legacy: fences at the start only
         if stripped.startswith("```"):
             lines = stripped.splitlines()
             if len(lines) >= 3:
@@ -83,7 +109,7 @@ class TaskParser:
             raise PlanParseError("Each task entry must be a JSON object.")
 
         task_id: Any = item.get("id")
-        files: Any = item.get("files")
+        files: Any = item.get("files") or item.get("file")  # Claude sometimes uses singular "file"
         instruction: Any = item.get("instruction")
         task_type: Any = item.get("type")
         context_files: Any = item.get("context_files", [])
@@ -104,6 +130,12 @@ class TaskParser:
             else:
                 raise PlanParseError("Task 'id' must be an integer.")
 
+        # Coerce files: string → [string], None → []
+        if isinstance(files, str) and files.strip():
+            files = [files.strip()]
+        elif files is None:
+            files = []
+
         # Fix #6: allow empty files array — Aider will use repo-map to pick files.
         if not isinstance(files, list):
             raise PlanParseError(f"Task {task_id} 'files' must be an array.")
@@ -111,11 +143,22 @@ class TaskParser:
             raise PlanParseError(f"Task {task_id} contains an invalid file path.")
         if not isinstance(instruction, str) or not instruction.strip():
             raise PlanParseError(f"Task {task_id} must include a non-empty 'instruction'.")
-        if not isinstance(task_type, str) or task_type not in {"create", "modify", "delete", "validate", "read", "investigate"}:
-            raise PlanParseError(
-                f"Task {task_id} has an unsupported type {task_type!r}. "
-                "Must be one of: create, modify, delete, validate, read, investigate."
+        _valid_types = {"create", "modify", "delete", "validate", "read", "investigate"}
+        if task_type is None:
+            # Missing type field — infer from instruction context or default to "modify"
+            instr_lower = str(instruction).lower()
+            if any(kw in instr_lower for kw in ("create", "add a new", "write a new", "scaffold")):
+                task_type = "create"
+            else:
+                task_type = "modify"
+        elif not isinstance(task_type, str) or task_type not in _valid_types:
+            # Unrecognized string — warn and default rather than hard-fail
+            import sys
+            print(
+                f"[PARSER] Task {task_id}: unrecognized type {task_type!r}, defaulting to 'modify'",
+                file=sys.stderr, flush=True,
             )
+            task_type = "modify"
 
         normalized_files = [fp.strip() for fp in files]
         for fp in normalized_files:
@@ -164,6 +207,11 @@ class TaskParser:
             task_id, must_not_exist, "must_not_exist"
         )
 
+        # Optional model field — supervisor may recommend a specific model per task
+        task_model: Any = item.get("model")
+        if task_model is not None and not isinstance(task_model, str):
+            task_model = None  # ignore invalid model values silently
+
         return Task(
             id=task_id,
             files=normalized_files,
@@ -172,6 +220,7 @@ class TaskParser:
             context_files=normalized_context_files,
             must_exist=normalized_must_exist,
             must_not_exist=normalized_must_not_exist,
+            model=task_model,
         )
 
     def _normalize_relative_paths(

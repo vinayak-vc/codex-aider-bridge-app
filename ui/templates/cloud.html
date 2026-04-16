@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% set active_page = "cloud" %}
+
+{% block title %}Cloud{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/cloud.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Cloud Sync</h1>
+    <p class="page-subtitle">Sync your bridge data to your personal Firebase project</p>
+  </div>
+  <button class="btn btn--secondary btn--sm" id="btn-cloud-refresh">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+    </svg>
+    Refresh
+  </button>
+</div>
+
+<!-- ── Not configured state ── -->
+<div id="cloud-not-configured">
+  <div class="cloud-hero">
+    <div class="cloud-hero-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" width="64" height="64">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848 5.25 5.25 0 0 0-10.233 2.33A4.502 4.502 0 0 0 2.25 15Z"/>
+      </svg>
+    </div>
+    <h2>Sync your data to the cloud</h2>
+    <p class="cloud-hero-sub">
+      Set up your own Firebase project to access your bridge data from anywhere.
+      Your data stays in your Google account — no one else can see it.
+    </p>
+    <button class="btn btn--primary btn--lg" id="btn-start-setup">Set Up Cloud Sync</button>
+  </div>
+</div>
+
+<!-- ── Setup wizard ── -->
+<div id="cloud-setup" style="display:none">
+  <div class="cloud-wizard">
+    <h2 style="margin-bottom:16px">Setup Your Firebase Project</h2>
+
+    <div class="wizard-steps-guide">
+      <div class="setup-step">
+        <div class="setup-step-num">1</div>
+        <div class="setup-step-body">
+          <strong>Create a Firebase project</strong>
+          <p>Go to <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> and click "Add project"</p>
+        </div>
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-num">2</div>
+        <div class="setup-step-body">
+          <strong>Enable Authentication</strong>
+          <p>In your project: Authentication → Sign-in method → Google → Enable</p>
+        </div>
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-num">3</div>
+        <div class="setup-step-body">
+          <strong>Create Firestore Database</strong>
+          <p>Firestore Database → Create database → Start in Production mode</p>
+        </div>
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-num">4</div>
+        <div class="setup-step-body">
+          <strong>Get your web app config</strong>
+          <p>Project Settings → General → Your apps → Add web app → Copy the <code>firebaseConfig</code> object</p>
+        </div>
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-num">5</div>
+        <div class="setup-step-body">
+          <strong>Create OAuth credentials</strong>
+          <p>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a> → Create Credentials → OAuth client ID (Web application) → Copy Client ID and Secret</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:20px">
+      <label class="field-label">Paste your Firebase config JSON (including client_id and client_secret)</label>
+      <textarea id="cloud-config-input" class="input" rows="8"
+                placeholder='{
+  "apiKey": "AIza...",
+  "authDomain": "your-project.firebaseapp.com",
+  "projectId": "your-project",
+  "client_id": "123456-xxx.apps.googleusercontent.com",
+  "client_secret": "GOCSPX-xxx"
+}'
+                style="font-family:var(--font-mono);font-size:12px"></textarea>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn--primary" id="btn-validate-config" style="flex:1">Validate &amp; Connect</button>
+      <button class="btn btn--secondary" id="btn-cancel-setup">Cancel</button>
+    </div>
+
+    <div id="cloud-setup-msg" style="display:none;margin-top:12px;padding:10px 14px;border-radius:var(--radius-md);font-size:13px"></div>
+  </div>
+</div>
+
+<!-- ── Connected state ── -->
+<div id="cloud-connected" style="display:none">
+
+  <!-- Status card -->
+  <div class="cloud-status-card card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <span style="width:12px;height:12px;border-radius:50%;background:var(--color-success)"></span>
+      <div>
+        <div style="font-weight:600" id="cloud-user-email"></div>
+        <div style="font-size:12px;color:var(--color-text-subtle)">Project: <code id="cloud-project-id"></code></div>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn btn--secondary btn--sm" id="btn-cloud-logout">Logout</button>
+      <button class="btn btn--secondary btn--sm" id="btn-cloud-remove" style="color:var(--color-danger)">Remove</button>
+    </div>
+
+    <div class="cloud-actions">
+      <a href="/dashboard/cloud" target="_blank" class="btn btn--accent" style="flex:1;text-align:center;text-decoration:none">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+        </svg>
+        Open Cloud Dashboard
+      </a>
+      <button class="btn btn--secondary" id="btn-cloud-export" style="flex:1">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+        </svg>
+        Export Dashboard HTML
+      </button>
+      <button class="btn btn--secondary" id="btn-cloud-sync-now" style="flex:1">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+        </svg>
+        Sync Now
+      </button>
+    </div>
+  </div>
+
+  <!-- Info cards -->
+  <div class="cloud-info-grid">
+    <div class="card">
+      <div class="detail-section-title">What gets synced</div>
+      <ul class="cloud-list cloud-list--yes">
+        <li>Project names &amp; language</li>
+        <li>Run status &amp; task counts</li>
+        <li>Token usage &amp; savings</li>
+        <li>Settings (model, supervisor)</li>
+        <li>File count &amp; patterns</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="detail-section-title">What is NEVER synced</div>
+      <ul class="cloud-list cloud-list--no">
+        <li>Source code or file contents</li>
+        <li>Goals or task instructions</li>
+        <li>Diffs or code changes</li>
+        <li>API keys or credentials</li>
+        <li>File paths or error messages</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- GDPR -->
+  <div class="card" style="margin-top:12px">
+    <div class="detail-section-title">Your Data</div>
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px">
+      All data is stored in YOUR Firebase project. No one else — including the app developer — can access it.
+    </p>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn--secondary btn--sm" id="btn-cloud-export-data">Export My Data</button>
+      <button class="btn btn--danger btn--sm" id="btn-cloud-delete-data">Delete All Cloud Data</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block page_script %}
+<script type="module" src="{{ url_for('static', filename='js/pages/cloud.js') }}"></script>
+{% endblock %}

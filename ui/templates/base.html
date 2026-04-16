@@ -83,6 +83,15 @@
         <span class="nav-item-label">Git</span>
       </a>
 
+      <a href="/monitor" class="nav-item {% if active_page == 'monitor' %}--active{% endif %}" data-page="monitor">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6.75v6.75"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Monitor</span>
+      </a>
+
       <a href="/tokens" class="nav-item {% if active_page == 'tokens' %}--active{% endif %}" data-page="tokens">
         <span class="nav-item-icon">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -90,6 +99,15 @@
           </svg>
         </span>
         <span class="nav-item-label">Tokens</span>
+      </a>
+
+      <a href="/cloud" class="nav-item {% if active_page == 'cloud' %}--active{% endif %}" data-page="cloud">
+        <span class="nav-item-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848 5.25 5.25 0 0 0-10.233 2.33A4.502 4.502 0 0 0 2.25 15Z"/>
+          </svg>
+        </span>
+        <span class="nav-item-label">Cloud</span>
       </a>
 
       <a href="/setup" class="nav-item {% if active_page == 'setup' %}--active{% endif %}" data-page="setup">
@@ -200,6 +218,14 @@
       </label>
     </div>
     <div class="status-bar-right">
+      <span class="status-item" id="sb-cloud-status" style="display:none" title="Cloud sync status">
+        <span class="status-dot" id="sb-cloud-dot" data-status="idle"></span>
+        <span id="sb-cloud-label">Sync off</span>
+      </span>
+      <span class="status-item" id="sb-gpu-status" title="GPU status">
+        <span class="status-dot" id="sb-gpu-dot" data-status="unknown"></span>
+        <span id="sb-gpu-label">GPU: checking...</span>
+      </span>
       <button class="status-item status-item--vscode" id="sb-open-vscode" title="Open project in VS Code">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="13" height="13">
           <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"/>
@@ -211,7 +237,13 @@
         Idle
       </span>
       <span class="status-item" id="sb-tasks">0 tasks</span>
-      <span class="status-item status-item--muted">Bridge v0.1</span>
+      <button class="status-item status-item--muted" id="sb-download-log" title="Download action log for debugging">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="12" height="12">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+        </svg>
+        Log
+      </button>
+      <span class="status-item status-item--muted" id="sb-version" title="Loading version...">v...</span>
     </div>
   </footer>
 
@@ -333,6 +365,9 @@
   })();
 </script>
 
+<!-- Action logger + Firebase auth -->
+<script type="module" src="{{ url_for('static', filename='js/core/action-log.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/core/firebase-auth.js') }}"></script>
 {% block page_script %}{% endblock %}
 </body>
 </html>

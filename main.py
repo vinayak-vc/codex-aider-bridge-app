@@ -10,20 +10,20 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 from bridge_logging.logger import configure_logging
 from context.file_selector import FileSelector
 from context.idea_loader import IdeaLoader
+from context.project_context_service import ProjectContextService
 from context.project_understanding import ensure_project_understanding, understanding_file_path
-from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
-from models.task import AiderContext, BridgeConfig, Task, TaskReport
+from models.task import AiderContext, BridgeConfig, ExecutionResult, SubTask, Task, TaskReport
 from parser.task_parser import PlanParseError, TaskParser
 from supervisor.agent import SupervisorAgent, SupervisorError
 from utils.checkpoint import clear_checkpoint, load_checkpoint, save_checkpoint
-from models.task import SubTask
 from utils.manual_supervisor import ManualSupervisorError, ManualSupervisorSession
 from utils.token_tracker import TokenTracker, save_session_to_log
 from utils.report_generator import generate_run_report
@@ -31,11 +31,20 @@ from utils.run_diagnostics import RunDiagnostics
 from utils.project_knowledge import (
     load_knowledge,
     save_knowledge,
-    to_context_text,
     update_knowledge_from_run,
 )
 from utils.project_type_prompt import PROJECT_TYPES, describe, prompt_project_type
 from validator.validator import MechanicalValidator
+import memory.memory_client as memory_client
+
+
+def _is_allowed_empty_task_file(relative_path: str) -> bool:
+    rel = PurePosixPath(relative_path.replace("\\", "/"))
+    return (
+        rel.match("**/__init__.py")
+        or rel.match("**/.gitkeep")
+        or rel.match("**/.keep")
+    )
 
 
 def _write_json_file(path: Path, payload: dict) -> None:
@@ -270,8 +279,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-task-retries",
         type=int,
-        default=2,
-        help="Maximum supervisor-requested REWORK cycles per task.",
+        default=10,
+        help="Maximum retry attempts per task (escalating strategy: 1-3 standard, 4-6 simplified, 7 diagnostic, 8-9 informed, 10 takeover).",
     )
     parser.add_argument(
         "--validation-command",
@@ -332,8 +341,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--task-timeout",
         type=int,
-        default=300,
-        help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 300.",
+        default=600,
+        help="Max seconds any single subprocess call (Aider or supervisor) may run before being killed. Default: 600.",
     )
     parser.add_argument(
         "--confirm-plan",
@@ -342,6 +351,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "Show a preview of all tasks after planning and ask for confirmation "
             "before any Aider task runs. Useful when running interactively."
         ),
+    )
+    parser.add_argument(
+        "--model-lock",
+        action="store_true",
+        help="Lock the model to --aider-model for all tasks. Disables smart model routing.",
     )
     parser.add_argument(
         "--aider-no-map",
@@ -433,182 +447,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_plan_from_file(plan_file: Path, parser: TaskParser) -> list[Task]:
-    raw = plan_file.read_text(encoding="utf-8")
-    return parser.parse(raw)
+# ── Planning — delegated to planning/plan_manager.py ─────────────────────────
+from planning.plan_manager import (
+    load_plan_from_file,
+    auto_split_tasks,
+    get_installed_models_for_routing as _get_installed_models_for_routing,
+    build_model_roster_text as _build_model_roster_text,
+    build_feature_manifest as _build_feature_manifest,
+    obtain_plan,
+    show_plan_preview,
+    enforce_workflow_profile as _enforce_workflow_profile,
+)
 
 
-def auto_split_tasks(
-    tasks: list[Task],
-    threshold: int,
-    logger: logging.Logger,
-) -> list[Task]:
-    """Split tasks that target >= threshold files into individual single-file sub-tasks.
-
-    Each sub-task keeps the full original instruction (so Aider retains cross-file
-    context) plus a one-line focus directive at the top:
-
-        Focus ONLY on Assets/Scripts/Core/PlayerController.cs.
-        Do NOT create or modify any other file.
-
-        [original instruction follows]
-
-    This prevents small models (7B/13B) from editing the wrong file or producing
-    partial implementations across multiple files in a single Aider run.
-
-    Sub-task ID scheme: original_id * 1000 + 1-based index.
-    Example: task 5 with 3 files → sub-tasks 5001, 5002, 5003.
-
-    Tasks with fewer than threshold files are passed through unchanged.
-    context_files are preserved on every sub-task so read-only references
-    remain available.
-    """
-    if threshold <= 0:
-        return tasks
-
-    result: list[Task] = []
-    for task in tasks:
-        if len(task.files) < threshold:
-            result.append(task)
-            continue
-
-        logger.info(
-            "Auto-split: task %s has %d file(s) (threshold=%d) → %d single-file sub-tasks",
-            task.id,
-            len(task.files),
-            threshold,
-            len(task.files),
-        )
-        for index, file_path in enumerate(task.files, start=1):
-            focus_prefix = (
-                f"Focus ONLY on {file_path}.\n"
-                f"Do NOT create or modify any other file.\n\n"
-            )
-            result.append(
-                Task(
-                    id=task.id * 1000 + index,
-                    files=[file_path],
-                    instruction=focus_prefix + task.instruction,
-                    type=task.type,
-                    context_files=task.context_files,
-                    must_exist=task.must_exist,
-                    must_not_exist=task.must_not_exist,
-                )
-            )
-
-    return result
 
 
-def obtain_plan(
-    config: BridgeConfig,
-    supervisor: SupervisorAgent,
-    task_parser: TaskParser,
-    repo_tree: str,
-    logger: logging.Logger,
-    knowledge_context: Optional[str] = None,
-) -> list[Task]:
-    """Ask the supervisor to produce a valid JSON plan, retrying on failure.
-
-    No fallback planner exists. If the supervisor cannot produce a valid plan
-    after all attempts, the bridge raises and the user should supply --plan-file.
-    """
-    feedback: Optional[str] = None
-
-    for attempt in range(1, config.max_plan_attempts + 1):
-        logger.info("Requesting plan — attempt %s of %s", attempt, config.max_plan_attempts)
-        try:
-            plan_text = supervisor.generate_plan(
-                config.goal,
-                repo_tree,
-                config.idea_text,
-                feedback,
-                knowledge_context,
-                config.workflow_profile,
-            )
-            tasks = task_parser.parse(plan_text)
-
-            if config.plan_output_file is not None:
-                config.plan_output_file.parent.mkdir(parents=True, exist_ok=True)
-                config.plan_output_file.write_text(plan_text, encoding="utf-8")
-                logger.info("Saved plan to %s", config.plan_output_file)
-
-            logger.info("Supervisor produced %s task(s)", len(tasks))
-            return tasks
-
-        except (SupervisorError, PlanParseError) as ex:
-            feedback = str(ex)
-            logger.warning("Plan attempt %s failed: %s", attempt, ex)
-
-    raise RuntimeError(
-        "Supervisor failed to produce a valid plan after all attempts. "
-        "Use --plan-file to supply a plan manually."
-    )
-
-
-def show_plan_preview(tasks: list[Task], logger: logging.Logger) -> bool:
-    """Print the task plan and ask the user to confirm before execution.
-
-    Returns True if the user confirms, False if they cancel.
-    """
-    print("\n" + "=" * 60)
-    print(f"  PLAN PREVIEW — {len(tasks)} task(s)")
-    print("=" * 60)
-    for task in tasks:
-        files_display = ", ".join(task.files) if task.files else "(no specific files — Aider chooses)"
-        ctx_display = f"  [reads: {', '.join(task.context_files)}]" if task.context_files else ""
-        instruction_preview = task.instruction[:120].replace("\n", " ")
-        if len(task.instruction) > 120:
-            instruction_preview += "..."
-        print(f"\n  [{task.id}] {task.type.upper()}  {files_display}{ctx_display}")
-        print(f"       {instruction_preview}")
-    print("\n" + "=" * 60)
-
-    try:
-        answer = input("Proceed? [y]es / [n]o: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
-
-    if answer in {"y", "yes"}:
-        return True
-
-    logger.info("Run cancelled by user at plan preview.")
-    return False
-
-
-def _enforce_workflow_profile(tasks: list[Task], config: BridgeConfig) -> None:
-    if config.workflow_profile != "micro":
-        return
-
-    for task in tasks:
-        if len(task.files) != 1:
-            raise RuntimeError(
-                f"Micro-task profile requires exactly one file per task. "
-                f"Task {task.id} targets {len(task.files)} file(s)."
-            )
-
-        if task.type == "create":
-            if not task.must_exist:
-                raise RuntimeError(
-                    f"Micro-task profile requires must_exist for create tasks. Task {task.id} is missing it."
-                )
-            target_file = Path(task.files[0]).as_posix()
-            normalized_must_exist = [Path(file_path).as_posix() for file_path in task.must_exist]
-            if target_file not in normalized_must_exist:
-                raise RuntimeError(
-                    f"Micro-task create task {task.id} must assert its target file in must_exist."
-                )
-
-        if task.type == "delete" and not task.must_not_exist:
-            raise RuntimeError(
-                f"Micro-task profile requires must_not_exist for delete tasks. Task {task.id} is missing it."
-            )
-
-        if task.type == "modify" and not task.must_exist and not task.must_not_exist:
-            raise RuntimeError(
-                f"Micro-task profile requires an observable assertion on modify tasks. "
-                f"Task {task.id} must define must_exist or must_not_exist."
-            )
 
 
 _UNEXPECTED_FILE_IGNORE_PREFIXES: tuple[str, ...] = (
@@ -738,6 +591,8 @@ def execute_task_with_review(
     logger: logging.Logger,
     aider_context: Optional[AiderContext] = None,
     diagnostics: Optional[RunDiagnostics] = None,
+    token_tracker: Optional[TokenTracker] = None,
+    model_override: Optional[str] = None,
 ) -> str:
     """Run one task through the Aider → diff → mechanical check loop.
 
@@ -759,6 +614,7 @@ def execute_task_with_review(
     """
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
+    current_instruction = memory_client.enhance_prompt(current_instruction)
 
     if manual_supervisor is not None:
         resumed_diff = manual_supervisor.try_resume_completed_task(
@@ -779,7 +635,85 @@ def execute_task_with_review(
             )
             return resumed_diff
 
+    _failure_reasons: list[str] = []  # Accumulate failure reasons for escalation
+    _escalation_log: list[dict] = []  # Structured log for diagnostics/telemetry
+    _previous_rework_instructions: list[str] = []  # Track rework instructions for dedup
+    _retry_budget_seconds = 0.0  # Track cumulative time for retry budget
+    _MAX_RETRY_SECONDS = 1800  # 30 minute budget per task
+
     for attempt in range(config.max_task_retries + 1):
+
+        # Retry budget check
+        if attempt > 0 and _retry_budget_seconds > _MAX_RETRY_SECONDS:
+            logger.warning(
+                "Task %s: retry budget exhausted (%.0fs / %ds). Failing early.",
+                task.id, _retry_budget_seconds, _MAX_RETRY_SECONDS,
+            )
+            _escalation_log.append({"attempt": attempt + 1, "stage": "budget_exhausted", "seconds": round(_retry_budget_seconds)})
+            break
+
+        # ── Escalating retry strategy ────────────────────────────────────
+        # Attempts 1-3:  Original instruction (standard retries)
+        # Attempts 4-6:  Simplified instruction with failure context
+        # Attempt 7:     Supervisor diagnostic — analyzes all failures
+        # Attempts 8-9:  Diagnostic-informed instruction
+        # Attempt 10:    Supervisor takeover prompt (user chooses)
+        if attempt == 3 and _failure_reasons:
+            _escalation_log.append({"attempt": attempt + 1, "stage": "escalate_simplify", "failure_count": len(_failure_reasons)})
+            logger.info(
+                "Task %s: escalating — simplifying instruction after %d failures",
+                task.id, attempt,
+            )
+            _emit_structured({"type": "log", "line": f"[escalation] Task {task.id}: simplifying instruction after {attempt} failures"})
+            current_instruction = (
+                f"SIMPLIFIED INSTRUCTION (previous {attempt} attempts failed):\n"
+                f"{task.instruction}\n\n"
+                f"PREVIOUS FAILURE REASONS:\n" +
+                "\n".join(f"- {r}" for r in _failure_reasons[-3:]) +
+                "\n\nFocus on the core requirement. Keep it simple. Fix the issues above."
+            )
+
+        if attempt == 6 and supervisor is not None and _failure_reasons:
+            _escalation_log.append({"attempt": attempt + 1, "stage": "escalate_diagnostic", "failure_count": len(_failure_reasons)})
+            logger.info(
+                "Task %s: escalating — requesting supervisor diagnostic after %d failures",
+                task.id, attempt,
+            )
+            _emit_structured({"type": "log", "line": f"[escalation] Task {task.id}: supervisor analyzing {len(_failure_reasons)} failures"})
+            try:
+                diag_prompt = (
+                    f"A developer tool (Aider) has failed to complete this task {attempt} times.\n\n"
+                    f"TASK: {task.instruction}\n"
+                    f"FILES: {', '.join(task.files)}\n\n"
+                    f"FAILURE REASONS:\n" +
+                    "\n".join(f"  {i+1}. {r}" for i, r in enumerate(_failure_reasons)) +
+                    "\n\nAnalyze WHY the tool keeps failing and provide a REWRITTEN instruction "
+                    "that avoids all the issues above. Be extremely specific and concrete."
+                )
+                diag_response = supervisor._run(diag_prompt)
+                current_instruction = diag_response.strip()
+                logger.info("Task %s: supervisor rewrote instruction for attempts 8-9", task.id)
+            except Exception as diag_ex:
+                logger.warning("Task %s: supervisor diagnostic failed: %s", task.id, diag_ex)
+
+        if attempt == 9 and _failure_reasons:
+            logger.warning(
+                "Task %s: FINAL ATTEMPT — Aider failed %d times. Supervisor takeover available.",
+                task.id, attempt,
+            )
+            _emit_structured({
+                "type": "escalation_takeover",
+                "task_id": task.id,
+                "attempt": attempt + 1,
+                "failure_count": len(_failure_reasons),
+                "reasons": _failure_reasons[-5:],
+                "message": (
+                    f"Aider failed {attempt} times on task {task.id}. "
+                    "The supervisor can attempt this task directly (higher token cost). "
+                    "Check the log for failure reasons."
+                ),
+            })
+
         repo_before = _snapshot_repo_files(config.repo_root)
         current_task = Task(
             id=task.id,
@@ -839,7 +773,16 @@ def execute_task_with_review(
                     "Task %s: reused existing manual REWORK decision on rerun",
                     current_task.id,
                 )
-                current_instruction = review.new_instruction or current_instruction
+                _rework_instr = review.new_instruction or current_instruction
+                if _rework_instr in _previous_rework_instructions:
+                    _rework_instr = (
+                        f"{_rework_instr}\n\n"
+                        "NOTE: This exact instruction was tried before and failed. "
+                        f"Previous failure: {_failure_reasons[-1] if _failure_reasons else 'unknown'}. "
+                        "Try a DIFFERENT approach."
+                    )
+                _previous_rework_instructions.append(review.new_instruction or "")
+                current_instruction = _rework_instr
                 wait_seconds = min(2 ** attempt, 30)
                 time.sleep(wait_seconds)
                 continue
@@ -916,13 +859,12 @@ def execute_task_with_review(
             if manual_supervisor is not None:
                 # In manual-supervisor mode, write the analysis as a review request
                 # so the proxy thread or user can see it
-                from models.task import ExecutionResult, TaskReport
                 fake_result = ExecutionResult(
                     task_id=current_task.id, succeeded=True, exit_code=0,
                     stdout=combined_content[:2000], stderr="",
                     command=[], attempt_number=attempt + 1,
                 )
-                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:4000])
+                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:10000])
                 request_path = manual_supervisor.submit_review_request(
                     task_report, validation_message="Read-only analysis task — review the file content.",
                     unexpected_files=[],
@@ -957,22 +899,166 @@ def execute_task_with_review(
             _emit_structured({"type": "task_complete", "task_id": current_task.id, "diff": analysis_result[:1500]})
             return analysis_result
 
-        # ── Step 1: Execute via Aider ────────────────────────────────────────
-        if diagnostics:
-            diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
-        execution_result = runner.run(current_task, selected_files.all_paths, aider_context)
+        # ── Pre-check: validate target files exist for non-create tasks ─────
+        if current_task.type not in ("create",):
+            missing = [f for f in current_task.files if not (config.repo_root / f).exists()]
+            if missing and len(missing) == len(current_task.files):
+                # ALL target files are missing — this task will definitely fail
+                raise RuntimeError(
+                    f"Task {current_task.id} ({current_task.type}): none of the target files exist: "
+                    f"{', '.join(missing)}. Check the file paths in your plan — "
+                    f"the file may have a different name or location."
+                )
+            elif missing:
+                logger.warning(
+                    "Task %s (%s): some target files do not exist: %s",
+                    current_task.id, current_task.type, ", ".join(missing),
+                )
+
+        # ── Step 0.5: Task IR — validate + try deterministic execution ───────
+        _deterministic_result = None
+        try:
+            from executor.task_ir import task_to_ir, validate_task_ir, TaskIRValidationError
+            from executor.deterministic_executor import execute_deterministic
+
+            task_ir = task_to_ir(current_task, config.repo_root)
+            try:
+                ir_warnings = validate_task_ir(task_ir, config.repo_root)
+                for w in ir_warnings:
+                    logger.debug("Task %s IR warning: %s", current_task.id, w)
+            except TaskIRValidationError as val_err:
+                logger.warning("Task %s IR validation failed: %s", current_task.id, val_err)
+
+            # Try deterministic execution first (zero LLM tokens)
+            if task_ir.can_execute_deterministically:
+                logger.info(
+                    "Task %s: attempting deterministic execution (%d operations)",
+                    current_task.id, len(task_ir.operations),
+                )
+                _deterministic_result = execute_deterministic(task_ir, config.repo_root)
+                if _deterministic_result and _deterministic_result.succeeded:
+                    logger.info("Task %s: deterministic execution succeeded — 0 LLM tokens", current_task.id)
+                    if token_tracker:
+                        token_tracker.record_aider_task(
+                            task_id=current_task.id,
+                            instruction=current_instruction,
+                            input_file_chars=0,
+                            diff_chars=0,
+                            performer="deterministic",
+                        )
+        except Exception as ir_err:
+            logger.debug("Task %s: IR processing failed (non-fatal): %s", current_task.id, ir_err)
+
+        # ── Step 1: Execute via Aider (if deterministic didn't handle it) ────
+        if _deterministic_result and _deterministic_result.succeeded:
+            execution_result = _deterministic_result
+        else:
+            if diagnostics:
+                diagnostics.record_task_start(current_task.id, current_instruction, current_task.files, current_task.type)
+            execution_result = runner.run(
+                current_task, selected_files.all_paths, aider_context,
+                model_override=model_override,
+            )
 
         if execution_result.exit_code == -1:
-            raise RuntimeError(
-                f"Task {current_task.id}: Aider could not start. {execution_result.stderr}"
-            )
+            stderr = execution_result.stderr
+            # Aider couldn't start at all (not found, permissions, etc.)
+            # — but timeouts and stalls are now handled by the runner's auto-retry,
+            # so only raise immediately for non-recoverable launch failures.
+            if "timed out" not in stderr.lower() and "stalled" not in stderr.lower():
+                raise RuntimeError(
+                    f"Task {current_task.id}: Aider could not start. {stderr}"
+                )
+
+        _retry_budget_seconds += execution_result.duration_seconds
 
         if not execution_result.succeeded:
+            _fail_msg = f"Aider exit code {execution_result.exit_code}"
+            if execution_result.stderr:
+                _fail_msg += f": {execution_result.stderr[:150]}"
+            _failure_reasons.append(_fail_msg)
+            _escalation_log.append({
+                "attempt": attempt + 1,
+                "stage": "aider_failure",
+                "reason": _fail_msg,
+                "exit_code": execution_result.exit_code,
+                "duration": execution_result.duration_seconds,
+                "stdout_tail": execution_result.stdout[-300:] if execution_result.stdout else "",
+            })
             logger.warning(
-                "Task %s: Aider exited with code %s",
+                "Task %s: Aider failed (exit %s): %s",
                 current_task.id,
                 execution_result.exit_code,
+                _fail_msg[:200],
             )
+
+            # Record failure for diagnostics before retrying
+            if diagnostics:
+                diagnostics.record_aider_result(
+                    task_id=current_task.id,
+                    attempt=attempt + 1,
+                    exit_code=execution_result.exit_code,
+                    succeeded=False,
+                    stdout=execution_result.stdout,
+                    stderr=execution_result.stderr,
+                    duration_seconds=execution_result.duration_seconds,
+                )
+
+            # ── Failure feedback classification ───────────────────────────
+            _feedback = None
+            try:
+                from executor.failure_feedback import classify_failure, build_retry_instruction
+                _file_changed = execution_result.succeeded  # rough proxy
+                _feedback = classify_failure(
+                    exit_code=execution_result.exit_code,
+                    stdout=execution_result.stdout or "",
+                    stderr=execution_result.stderr or "",
+                    file_changed=_file_changed,
+                    instruction=current_instruction,
+                )
+                logger.info(
+                    "Task %s: failure classified as '%s' — %s",
+                    current_task.id, _feedback.failure_type, _feedback.suggested_action,
+                )
+                _escalation_log[-1]["failure_type"] = _feedback.failure_type
+                _escalation_log[-1]["suggested_action"] = _feedback.suggested_action
+
+                # Non-retryable failures (config errors) → stop immediately
+                if not _feedback.is_retryable:
+                    raise RuntimeError(
+                        f"Task {current_task.id}: non-retryable failure ({_feedback.failure_type}): {_feedback.reason}"
+                    )
+
+                # Adjust instruction for next retry based on feedback
+                current_instruction = build_retry_instruction(
+                    current_instruction, _feedback, attempt + 1,
+                )
+            except ImportError:
+                pass  # failure_feedback module not available — continue with existing logic
+
+            # ── Same-error detection ─────────────────────────────────────
+            if len(_failure_reasons) >= 2 and _failure_reasons[-1] == _failure_reasons[-2]:
+                logger.error(
+                    "Task %s: same error repeated %d times — aborting retries: %s",
+                    current_task.id, 2, _failure_reasons[-1],
+                )
+                raise RuntimeError(
+                    f"Task {current_task.id}: same error repeated — {_failure_reasons[-1]}"
+                )
+
+            if attempt >= config.max_task_retries:
+                raise RuntimeError(
+                    f"Task {current_task.id} failed after {attempt + 1} attempts: {_fail_msg}"
+                )
+
+            # ── Skip review, retry immediately ───────────────────────────
+            wait_seconds = min(2 ** attempt, 30)
+            logger.info(
+                "Task %s: backing off %ss before retry %s (skipping review — no useful output)",
+                current_task.id, wait_seconds, attempt + 2,
+            )
+            time.sleep(wait_seconds)
+            continue
 
         # Fix #4: catch 0-byte output files — Aider may exit 0 but leave files
         # empty if it was killed mid-write (timeout) or hit an encoding crash.
@@ -981,6 +1067,7 @@ def execute_task_with_review(
                 fp for fp in current_task.files
                 if (config.repo_root / fp).exists()
                 and (config.repo_root / fp).stat().st_size == 0
+                and not _is_allowed_empty_task_file(fp)
             ]
             if empty_files:
                 logger.warning(
@@ -1010,7 +1097,7 @@ def execute_task_with_review(
             )
 
         # ── Step 2: Collect diff ─────────────────────────────────────────────
-        diff = diff_collector.collect()
+        diff = diff_collector.collect(files=current_task.files)
         logger.debug("Task %s: diff collected (%s chars)", current_task.id, len(diff))
 
         # Track Aider token usage (estimated from task instruction + file sizes + diff)
@@ -1022,12 +1109,13 @@ def execute_task_with_review(
                     _input_file_chars += _fp.stat().st_size
                 except OSError:
                     pass
-        token_tracker.record_aider_task(
-            task_id=current_task.id,
-            instruction=current_instruction,
-            input_file_chars=_input_file_chars,
-            diff_chars=len(diff),
-        )
+        if token_tracker:
+            token_tracker.record_aider_task(
+                task_id=current_task.id,
+                instruction=current_instruction,
+                input_file_chars=_input_file_chars,
+                diff_chars=len(diff),
+            )
 
         repo_after = _snapshot_repo_files(config.repo_root)
         unexpected_files = _find_unexpected_files(
@@ -1065,6 +1153,12 @@ def execute_task_with_review(
             )
 
         if not validation_result.succeeded:
+            _failure_reasons.append(f"Validation: {validation_result.message[:150]}")
+            _escalation_log.append({
+                "attempt": attempt + 1,
+                "stage": "validation_failure",
+                "reason": validation_result.message[:200],
+            })
             logger.warning(
                 "Task %s: mechanical check failed — %s",
                 current_task.id,
@@ -1172,6 +1266,30 @@ def execute_task_with_review(
             time.sleep(wait_seconds)
             continue
 
+        # ── Skip review when nothing changed ─────────────────────────────────
+        # If Aider succeeded (exit 0) but produced an empty diff, there's
+        # nothing for the supervisor to review.  Skip straight to retry with a
+        # more explicit instruction — saves supervisor tokens.
+        if execution_result.succeeded and not diff.strip():
+            logger.info(
+                "Task %s: Aider exited 0 but produced no diff — skipping review, retrying",
+                current_task.id,
+            )
+            _failure_reasons.append("Aider exited 0 but no files changed (empty diff)")
+            _escalation_log.append({
+                "attempt": attempt + 1,
+                "stage": "empty_diff",
+                "reason": "Aider reported success but diff is empty",
+            })
+            if attempt >= config.max_task_retries:
+                raise RuntimeError(
+                    f"Task {current_task.id}: Aider reported success but never "
+                    f"modified any files after {attempt + 1} attempts"
+                )
+            wait_seconds = min(2 ** attempt, 30)
+            time.sleep(wait_seconds)
+            continue
+
         # ── Step 4: Review ────────────────────────────────────────────────────
         if manual_supervisor is not None:
             task_report = TaskReport(
@@ -1225,6 +1343,8 @@ def execute_task_with_review(
                 time.sleep(wait_seconds)
                 continue
 
+            _failure_reasons.append(f"Rework: {(review.new_instruction or '')[:150]}")
+            _escalation_log.append({"attempt": attempt + 1, "stage": "rework", "reason": (review.new_instruction or "")[:200], "source": "manual"})
             if diagnostics:
                 diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
             logger.warning(
@@ -1239,7 +1359,16 @@ def execute_task_with_review(
                 )
             wait_seconds = min(2 ** attempt, 30)
             time.sleep(wait_seconds)
-            current_instruction = review.new_instruction or current_instruction
+            _rework_instr = review.new_instruction or current_instruction
+            if _rework_instr in _previous_rework_instructions:
+                _rework_instr = (
+                    f"{_rework_instr}\n\n"
+                    "NOTE: This exact instruction was tried before and failed. "
+                    f"Previous failure: {_failure_reasons[-1] if _failure_reasons else 'unknown'}. "
+                    "Try a DIFFERENT approach."
+                )
+            _previous_rework_instructions.append(review.new_instruction or "")
+            current_instruction = _rework_instr
             continue
 
         if config.auto_approve or supervisor is None:
@@ -1273,6 +1402,8 @@ def execute_task_with_review(
             })
             return diff
 
+        _failure_reasons.append(f"Rework: {(review.new_instruction or '')[:150]}")
+        _escalation_log.append({"attempt": attempt + 1, "stage": "rework", "reason": (review.new_instruction or "")[:200], "source": "cli"})
         if diagnostics:
             diagnostics.record_review(current_task.id, attempt + 1, "rework", review.new_instruction or "")
         logger.warning(
@@ -1285,9 +1416,41 @@ def execute_task_with_review(
             )
         wait_seconds = min(2 ** attempt, 30)
         time.sleep(wait_seconds)
-        current_instruction = review.new_instruction  # type: ignore[assignment]
+        _rework_instr = review.new_instruction or current_instruction  # type: ignore[assignment]
+        if _rework_instr in _previous_rework_instructions:
+            _rework_instr = (
+                f"{_rework_instr}\n\n"
+                "NOTE: This exact instruction was tried before and failed. "
+                f"Previous failure: {_failure_reasons[-1] if _failure_reasons else 'unknown'}. "
+                "Try a DIFFERENT approach."
+            )
+        _previous_rework_instructions.append(review.new_instruction or "")
+        current_instruction = _rework_instr
 
-    raise RuntimeError(f"Task {task.id} exhausted all retries.")
+    # Emit escalation data for telemetry/diagnostics before raising
+    if _escalation_log:
+        _emit_structured({
+            "type": "escalation_report",
+            "task_id": task.id,
+            "total_attempts": config.max_task_retries + 1,
+            "failure_count": len(_failure_reasons),
+            "escalation_stages": list({e["stage"] for e in _escalation_log}),
+            "log": _escalation_log,
+        })
+    if diagnostics:
+        diagnostics.record_escalation(task.id, _escalation_log)
+        diagnostics.record_task_failure(
+            task.id,
+            f"Exhausted {config.max_task_retries + 1} attempts. "
+            f"Escalation stages: {', '.join(set(e.get('stage','?') for e in _escalation_log))}. "
+            f"Last reasons: {'; '.join(_failure_reasons[-3:])}"
+        )
+
+    reasons_summary = "; ".join(_failure_reasons[-5:]) if _failure_reasons else "unknown"
+    raise RuntimeError(
+        f"Task {task.id} exhausted all {config.max_task_retries + 1} attempts. "
+        f"Failure reasons: {reasons_summary}"
+    )
 
 
 _PAUSE_FILENAME = ".bridge_pause"
@@ -1474,228 +1637,23 @@ def estimate_session_tokens(
 _WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
-def _run_git_command(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git"] + args,
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        timeout=30,
-        creationflags=_WIN_NO_WINDOW,
-    )
+# ── Git operations — delegated to utils/git_manager.py ───────────────────────
+from utils.git_manager import (
+    run_git_command as _run_git_command,
+    is_git_repository as _is_git_repository,
+    has_git_head as _has_git_head,
+    get_git_branch_name as _get_git_branch_name,
+    collect_git_readiness as _collect_git_readiness,
+    log_git_readiness_preview as _log_git_readiness_preview,
+    prompt_for_git_repo_creation as _prompt_for_git_repo_creation,
+    ensure_git_repository_exists as _ensure_git_repository_exists,
+    ensure_git_baseline_commit as _ensure_git_baseline_commit,
+    auto_commit_task_changes as _auto_commit_task_changes,
+)
 
 
-def _is_git_repository(repo_root: Path) -> bool:
-    result = _run_git_command(repo_root, ["rev-parse", "--is-inside-work-tree"])
-    return result.returncode == 0 and result.stdout.strip().lower() == "true"
 
 
-def _has_git_head(repo_root: Path) -> bool:
-    result = _run_git_command(repo_root, ["rev-parse", "--verify", "HEAD"])
-    return result.returncode == 0
-
-
-def _get_git_branch_name(repo_root: Path) -> Optional[str]:
-    result = _run_git_command(repo_root, ["branch", "--show-current"])
-    if result.returncode != 0:
-        return None
-    branch = result.stdout.strip()
-    return branch or None
-
-
-def _collect_git_readiness(repo_root: Path) -> dict[str, object]:
-    is_git = _is_git_repository(repo_root)
-    has_head = _has_git_head(repo_root) if is_git else False
-    branch = _get_git_branch_name(repo_root) if is_git else None
-
-    staged_count = 0
-    unstaged_count = 0
-    untracked_count = 0
-    clean = False
-
-    if is_git:
-        status_result = _run_git_command(repo_root, ["status", "--porcelain"])
-        if status_result.returncode == 0:
-            lines = [line for line in status_result.stdout.splitlines() if line.strip()]
-            for line in lines:
-                if line.startswith("??"):
-                    untracked_count += 1
-                    continue
-                if len(line) >= 2:
-                    if line[0] != " ":
-                        staged_count += 1
-                    if line[1] != " ":
-                        unstaged_count += 1
-            clean = len(lines) == 0
-
-    next_action = "continue"
-    if not is_git:
-        next_action = "prompt_to_create_or_stop"
-    elif not has_head:
-        next_action = "create_baseline_commit"
-
-    return {
-        "is_git_repository": is_git,
-        "has_head": has_head,
-        "branch": branch,
-        "clean_worktree": clean,
-        "staged_changes": staged_count,
-        "unstaged_changes": unstaged_count,
-        "untracked_files": untracked_count,
-        "next_action": next_action,
-    }
-
-
-def _log_git_readiness_preview(repo_root: Path, logger: logging.Logger) -> dict[str, object]:
-    readiness = _collect_git_readiness(repo_root)
-    branch = readiness.get("branch") or "(none)"
-    logger.info(
-        "Git readiness — repo=%s, head=%s, branch=%s, clean=%s, staged=%s, unstaged=%s, untracked=%s, next=%s",
-        "yes" if readiness["is_git_repository"] else "no",
-        "yes" if readiness["has_head"] else "no",
-        branch,
-        "yes" if readiness["clean_worktree"] else "no",
-        readiness["staged_changes"],
-        readiness["unstaged_changes"],
-        readiness["untracked_files"],
-        readiness["next_action"],
-    )
-    return readiness
-
-
-def _prompt_for_git_repo_creation(repo_root: Path) -> bool:
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            f"Repo root is not a git repository: {repo_root}. "
-            "The bridge requires a git repository with at least one commit before it can run. "
-            "Create the repository yourself, or rerun interactively and let the bridge do it for you."
-        )
-
-    print()
-    print(f"Target project is not a git repository: {repo_root}")
-    print("The bridge will not run without git because diff-based review depends on it.")
-    print("Choose one:")
-    print("  [1] I will create the git repository myself and rerun the bridge")
-    print("  [2] Create a local git repository and baseline commit for me now")
-
-    while True:
-        try:
-            answer = input("Select 1 or 2: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            raise RuntimeError(
-                "Bridge cancelled. The target project must be a git repository before the run can continue."
-            )
-
-        if answer in {"1", "self", "manual"}:
-            raise RuntimeError(
-                "Bridge stopped. Create the git repository yourself and rerun when it is ready."
-            )
-        if answer in {"2", "bridge", "auto"}:
-            return True
-
-        print("Please enter 1 or 2.")
-
-
-def _ensure_git_repository_exists(repo_root: Path, logger: logging.Logger) -> None:
-    if _is_git_repository(repo_root):
-        return
-
-    logger.warning("Pre-flight: %s is not a git repository.", repo_root)
-    should_create = _prompt_for_git_repo_creation(repo_root)
-    if not should_create:
-        raise RuntimeError(
-            "Bridge stopped. The target project must be a git repository before the run can continue."
-        )
-
-    logger.info("Initialising local git repository at %s", repo_root)
-    init_result = _run_git_command(repo_root, ["init"])
-    if init_result.returncode != 0:
-        raise RuntimeError(
-            "Failed to initialise git repository at "
-            f"{repo_root}: {init_result.stderr.strip() or init_result.stdout.strip()}"
-        )
-
-    logger.info("Local git repository created at %s", repo_root)
-
-
-def _ensure_git_baseline_commit(repo_root: Path, logger: logging.Logger) -> None:
-    if _has_git_head(repo_root):
-        return
-
-    logger.info("Pre-flight: repository at %s has no commits yet. Creating baseline commit.", repo_root)
-
-    add_result = _run_git_command(repo_root, ["add", "-A"])
-    if add_result.returncode != 0:
-        raise RuntimeError(
-            "Failed to stage files for the initial git commit: "
-            f"{add_result.stderr.strip() or add_result.stdout.strip()}"
-        )
-
-    commit_result = _run_git_command(
-        repo_root,
-        ["commit", "--allow-empty", "-m", "Initial bridge baseline"],
-    )
-    if commit_result.returncode != 0:
-        output = commit_result.stderr.strip() or commit_result.stdout.strip()
-        raise RuntimeError(
-            "Failed to create the initial git commit required by the bridge: "
-            f"{output}"
-        )
-
-    logger.info("Created initial git baseline commit for %s", repo_root)
-
-
-def _auto_commit_task_changes(repo_root: Path, task: Task, logger: logging.Logger) -> Optional[str]:
-    file_args = list(task.files)
-    add_result = _run_git_command(repo_root, ["add", "-A", "--"] + file_args)
-    if add_result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to stage task {task.id} changes for auto-commit: "
-            f"{add_result.stderr.strip() or add_result.stdout.strip()}"
-        )
-
-    diff_result = _run_git_command(repo_root, ["diff", "--cached", "--name-only", "--"] + file_args)
-    if diff_result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to inspect staged changes for task {task.id}: "
-            f"{diff_result.stderr.strip() or diff_result.stdout.strip()}"
-        )
-
-    staged_files = [line.strip() for line in diff_result.stdout.splitlines() if line.strip()]
-    if not staged_files:
-        logger.info("Task %s: no staged file changes to auto-commit.", task.id)
-        return None
-
-    commit_message = f"bridge: task {task.id} {task.type} " + ", ".join(task.files[:2])
-    if len(task.files) > 2:
-        commit_message += " ..."
-
-    commit_result = _run_git_command(repo_root, ["commit", "-m", commit_message])
-    if commit_result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to auto-commit task {task.id}: "
-            f"{commit_result.stderr.strip() or commit_result.stdout.strip()}"
-        )
-
-    head_result = _run_git_command(repo_root, ["rev-parse", "--short", "HEAD"])
-    if head_result.returncode != 0:
-        raise RuntimeError(
-            f"Task {task.id} committed, but the new HEAD could not be resolved: "
-            f"{head_result.stderr.strip() or head_result.stdout.strip()}"
-        )
-
-    commit_sha = head_result.stdout.strip()
-    logger.info(
-        "Task %s: auto-committed %d file(s) at %s",
-        task.id,
-        len(staged_files),
-        commit_sha,
-    )
-    return commit_sha
 
 
 def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
@@ -1837,7 +1795,7 @@ def main() -> int:
     if _manual_supervisor_enabled:
         logger.info(
             "Bridge running in MANUAL-SUPERVISOR mode — review requests will be written to "
-            "bridge_progress/manual_supervisor/ and no external AI CLI will be invoked."
+            "bridge_progress/manual_supervisor/ and the UI proxy thread handles supervisor dispatch."
         )
     elif _auto_approve:
         logger.info(
@@ -1894,7 +1852,6 @@ def main() -> int:
         supervisor=config.supervisor_command or "manual",
         task_timeout=config.task_timeout_seconds,
     )
-    repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
 
@@ -1968,7 +1925,7 @@ def main() -> int:
             _understanding_err,
         )
 
-    knowledge_context = to_context_text(knowledge)
+    project_context = ProjectContextService(repo_root).load_for_planner()
     if knowledge.get("files"):
         logger.info(
             "Project knowledge loaded: %d files registered, %d features done",
@@ -1977,6 +1934,12 @@ def main() -> int:
         )
     else:
         logger.info("No project knowledge yet — will create after this run.")
+
+    logger.info(
+        "Planner context source: %s%s",
+        project_context.source,
+        " (graphify available)" if project_context.graphify.available else "",
+    )
 
     # Only create supervisor agent when needed (not in auto-approve mode).
     supervisor: Optional[SupervisorAgent] = None
@@ -2022,6 +1985,11 @@ def main() -> int:
     failed_task_id: Optional[int] = None
     resumed_completed_ids: set[int] = set()
 
+    # Smart model routing — initialized here so both plan-file and
+    # plan-generation paths have access in the task loop.
+    _model_lock = getattr(args, "model_lock", False)
+    _installed_models = _get_installed_models_for_routing(logger)
+
     try:
         if args.plan_file:
             tasks = load_plan_from_file(Path(args.plan_file).resolve(), task_parser)
@@ -2037,8 +2005,50 @@ def main() -> int:
                     "No plan file provided and no supervisor configured. "
                     "Either pass --plan-file or set BRIDGE_SUPERVISOR_COMMAND."
                 )
+            # ── Feature manifest: read spec files from folders referenced in goal ─
+            feature_specs = _build_feature_manifest(config.goal, repo_root, logger)
+            if feature_specs:
+                _emit_structured({
+                    "type": "bridge_status",
+                    "message": "Found feature specs — building manifest for planning",
+                })
+
+            # ── Smart model routing: detect installed models for supervisor ──
+            _model_lock = args.model_lock
+            _installed_models = _get_installed_models_for_routing(logger)
+            _model_roster: Optional[str] = None
+
+            if len(_installed_models) <= 1:
+                if _installed_models:
+                    logger.info("Model routing: only 1 model installed — using %s for all tasks",
+                                _installed_models[0]["name"])
+                # Suggest installing a second model for routing
+                if _installed_models and _installed_models[0].get("speed") == "slow":
+                    logger.info(
+                        "Tip: install a fast model (e.g. 'ollama pull qwen2.5-coder:7b') "
+                        "to enable smart model routing — fast model for simple tasks, "
+                        "current model for complex ones"
+                    )
+                    _emit_structured({
+                        "type": "bridge_status",
+                        "message": "Tip: install qwen2.5-coder:7b for smart model routing",
+                    })
+            elif _model_lock:
+                logger.info("Model routing: model locked to %s — skipping auto-selection",
+                            config.aider_model)
+            else:
+                _model_roster = _build_model_roster_text(_installed_models)
+                logger.info("Model routing: %d models available — supervisor will pick per-task",
+                            len(_installed_models))
+                _emit_structured({
+                    "type": "bridge_status",
+                    "message": f"Smart routing: {len(_installed_models)} models available",
+                })
+
             tasks = obtain_plan(
-                config, supervisor, task_parser, repo_tree, logger, knowledge_context
+                config, supervisor, task_parser, project_context, logger,
+                feature_specs=feature_specs,
+                model_roster=_model_roster,
             )
 
         # Auto-split multi-file tasks into single-file sub-tasks.
@@ -2062,20 +2072,96 @@ def main() -> int:
             if not show_plan_preview(tasks, logger):
                 return 0
 
-        completed_ids = load_checkpoint(repo_root)
+        # Compute a hash of the current plan so the checkpoint can detect
+        # when a NEW plan is loaded (different tasks, same sequential IDs).
+        import hashlib as _hashlib
+        _plan_signature = "|".join(
+            f"{t.id}:{t.type}:{','.join(t.files)}:{t.instruction[:80]}"
+            for t in tasks
+        )
+        _plan_hash = _hashlib.sha256(_plan_signature.encode()).hexdigest()[:16]
+        logger.info("Plan hash: %s (%d tasks)", _plan_hash, len(tasks))
+
+        completed_ids = load_checkpoint(repo_root, expected_plan_hash=_plan_hash)
         resumed_completed_ids = set(completed_ids)
+
+        # Circuit breaker: stop after N consecutive failures with same error category
+        _consecutive_failures = 0
+        _last_error_category = ""
+
+        # ── Model validation test ────────────────────────────────────────
+        # Send a 1-line test prompt through Aider to verify the full
+        # pipeline (Ollama running, model loaded, LiteLLM configured).
+        # Catches config errors before any real task runs.
+        if not args.dry_run:
+            logger.info("Running Aider connection test…")
+            _emit_structured({"type": "bridge_status", "message": "Testing Aider + LLM connection…"})
+            _test_task = Task(
+                id=0,
+                files=[],
+                instruction="Reply with OK. Do not modify any files.",
+                type="validate",
+            )
+            _test_result = runner.run(_test_task, [], None)
+            _test_stdout = (_test_result.stdout or "").lower()
+            _test_stderr = (_test_result.stderr or "").lower()
+            if not _test_result.succeeded or any(
+                err in _test_stdout or err in _test_stderr
+                for err in ["error", "exception", "traceback", "litellm"]
+            ):
+                _diag = _test_result.stderr or _test_result.stdout[:300]
+                logger.error("Aider connection test FAILED: %s", _diag)
+                _emit_structured({
+                    "type": "bridge_status",
+                    "status": "error",
+                    "message": f"Aider connection test failed: {_diag[:200]}",
+                })
+                raise RuntimeError(
+                    f"Aider connection test failed — fix the config before running tasks.\n{_diag}"
+                )
+            logger.info("Aider connection test passed ✓")
+            _emit_structured({"type": "bridge_status", "message": "Aider connection test passed ✓"})
 
         for task_index, task in enumerate(tasks):
             wait_if_paused(repo_root, logger)
 
             if task.id in completed_ids:
-                logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
-                completed_summaries.append(
-                    f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
-                    + (" ..." if len(task.files) > 2 else "")
-                )
-                skipped += 1
-                continue
+                # Verify the completed task's files still exist and have content.
+                # If a git reset reverted the changes, don't skip — re-run.
+                _files_reverted = False
+                if task.type == "create":
+                    # Create tasks: file should exist if task was done
+                    for fp in task.files:
+                        if not (repo_root / fp).exists():
+                            _files_reverted = True
+                            logger.warning(
+                                "Task %s: checkpoint says done but %s doesn't exist (reverted?) — will re-run",
+                                task.id, fp,
+                            )
+                            break
+                elif task.type == "modify":
+                    # Modify tasks: check if file has uncommitted changes vs checkpoint commit
+                    try:
+                        _diff_check = _run_git_command(repo_root, ["diff", "HEAD", "--name-only", "--"] + list(task.files))
+                        if _diff_check.returncode == 0 and not _diff_check.stdout.strip():
+                            # No diff = files match HEAD. Check if HEAD actually has the task changes
+                            # by looking at the commit message
+                            pass  # Can't verify content without storing hash — trust checkpoint
+                    except Exception:
+                        pass
+
+                if _files_reverted:
+                    completed_ids.discard(task.id)
+                    save_checkpoint(repo_root, completed_ids, plan_hash=_plan_hash)
+                    logger.info("Task %s: removed from checkpoint — will re-run", task.id)
+                else:
+                    logger.info("Task %s: skipping — already completed (checkpoint)", task.id)
+                    completed_summaries.append(
+                        f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
+                        + (" ..." if len(task.files) > 2 else "")
+                    )
+                    skipped += 1
+                    continue
 
             aider_context = AiderContext(
                 goal=config.goal,
@@ -2084,12 +2170,75 @@ def main() -> int:
                 completed_summaries=list(completed_summaries),
             )
 
-            task_diff = execute_task_with_review(
-                task, config, supervisor, manual_supervisor, selector,
-                runner, diff_collector, validator, logger,
-                aider_context=aider_context,
-                diagnostics=diagnostics,
-            )
+            # ── Per-task model override (smart routing) ────────────────────
+            _task_model_override: Optional[str] = None
+            if task.model and not _model_lock and len(_installed_models) > 1:
+                # Validate the supervisor's model pick exists
+                _valid_names = {m["name"] for m in _installed_models}
+                if task.model in _valid_names:
+                    _task_model_override = task.model
+                    logger.info("Task %s: using model %s (supervisor pick)", task.id, task.model)
+                else:
+                    logger.warning(
+                        "Task %s: supervisor picked '%s' but it's not installed — using default",
+                        task.id, task.model,
+                    )
+
+            # Record pre-task SHA for rollback on failure
+            _pre_task_sha = None
+            try:
+                _r = _run_git_command(repo_root, ["rev-parse", "HEAD"])
+                if _r.returncode == 0:
+                    _pre_task_sha = _r.stdout.strip()
+            except Exception:
+                pass
+
+            try:
+                task_diff = execute_task_with_review(
+                    task, config, supervisor, manual_supervisor, selector,
+                    runner, diff_collector, validator, logger,
+                    aider_context=aider_context,
+                    diagnostics=diagnostics,
+                    token_tracker=token_tracker,
+                    model_override=_task_model_override,
+                )
+                _consecutive_failures = 0  # Reset circuit breaker on success
+                memory_client.ingest_result(task.instruction, (task_diff or "")[:1000], "aider-bridge")
+            except RuntimeError as task_ex:
+                # Task-level rollback: revert to pre-task state
+                if _pre_task_sha:
+                    try:
+                        _run_git_command(repo_root, ["reset", "--hard", _pre_task_sha])
+                        logger.info("Task %s: rolled back to %s after failure", task.id, _pre_task_sha[:8])
+                    except Exception:
+                        pass
+
+                # Circuit breaker: classify error and check consecutive count
+                err_str = str(task_ex).lower()
+                if "timed out" in err_str:
+                    _error_cat = "timeout"
+                elif "validation" in err_str or "mechanical" in err_str:
+                    _error_cat = "validation"
+                elif "interactive" in err_str or "prompt" in err_str:
+                    _error_cat = "interactive_prompt"
+                else:
+                    _error_cat = "other"
+
+                if _error_cat == _last_error_category:
+                    _consecutive_failures += 1
+                else:
+                    _consecutive_failures = 1
+                    _last_error_category = _error_cat
+
+                if _consecutive_failures >= 3:
+                    raise RuntimeError(
+                        f"Circuit breaker: {_consecutive_failures} consecutive tasks failed with "
+                        f"'{_error_cat}'. Stopping run. Last error: {task_ex}"
+                    ) from task_ex
+
+                # Re-raise for normal failure handling
+                raise
+
             failed_task_id = None
             commit_sha = None
             if config.auto_commit:
@@ -2099,7 +2248,7 @@ def main() -> int:
             if commit_sha:
                 task_commit_shas[task.id] = commit_sha
             completed_ids.add(task.id)
-            save_checkpoint(repo_root, completed_ids)
+            save_checkpoint(repo_root, completed_ids, plan_hash=_plan_hash)
             task_summary = (
                 f"[{task.id}] {task.type} {', '.join(task.files[:2])}"
                 + (" ..." if len(task.files) > 2 else "")
@@ -2209,6 +2358,52 @@ def main() -> int:
             logger.info("Run report written to %s", _progress_dir / "RUN_REPORT.md")
         except Exception as _rep_ex:
             logger.warning("Could not generate run report: %s", _rep_ex)
+
+        # Firebase cloud sync — dual destination (user's Firestore + admin metrics)
+        try:
+            from utils.firebase_user_setup import get_user_setup
+            _fbu = get_user_setup()
+            if _fbu.is_configured() and _fbu.is_authenticated():
+                _project_name = repo_root.name
+
+                # 1. Push to USER's Firestore (full run + token data)
+                _run_data = {
+                    "status": token_report.get("status", ""),
+                    "tasks_planned": token_report.get("aider", {}).get("tasks_executed", 0) + token_report.get("aider", {}).get("tasks_skipped", 0),
+                    "tasks_completed": token_report.get("aider", {}).get("tasks_executed", 0),
+                    "elapsed_seconds": token_report.get("elapsed_seconds", 0),
+                    "supervisor": token_report.get("supervisor_command", ""),
+                    "model": config.aider_model or "",
+                    "supervisor_tokens": token_report.get("supervisor", {}).get("total", 0),
+                    "aider_tokens": token_report.get("aider", {}).get("estimated_tokens", 0),
+                    "tokens_saved": token_report.get("savings", {}).get("tokens_saved", 0),
+                    "savings_percent": token_report.get("savings", {}).get("savings_percent", 0),
+                    "timestamp": token_report.get("timestamp", ""),
+                }
+                import uuid as _uuid
+                _run_id = token_report.get("session_id", str(_uuid.uuid4())[:8])
+                try:
+                    _fbu.write_to_user_firestore(f"projects/{_project_name}/runs/{_run_id}", _run_data)
+                except Exception:
+                    pass
+
+                # 2. Push anonymized metrics to ADMIN's Firebase
+                try:
+                    _fbu.push_admin_metrics({
+                        "project_names": [_project_name],
+                        "total_tasks": _run_data["tasks_completed"],
+                        "total_runs": 1,
+                        "total_supervisor_tokens": _run_data["supervisor_tokens"],
+                        "total_aider_tokens": _run_data["aider_tokens"],
+                        "total_tokens_saved": _run_data["tokens_saved"],
+                        "avg_savings_percent": _run_data["savings_percent"],
+                    })
+                except Exception:
+                    pass
+
+                logger.info("Cloud sync: pushed to user's Firestore + admin metrics for %s", _project_name)
+        except Exception as _fb_ex:
+            logger.debug("Cloud sync skipped: %s", _fb_ex)
 
         # Write run diagnostics
         try:

@@ -27,13 +27,21 @@ a = Analysis(
     pathex=["."],
     binaries=[*_wv_bins],
     datas=[
-        # 🔥 include entire UI folder (CRITICAL FIX)
-        ("ui", "ui"),
+        # Include main.py and firebase config so bridge subprocess can find them
+        ("main.py", "."),
+        ("firebase_config.json", "."),
 
-        # Optional but safe (can keep or remove if above is used)
-        ("ui/templates", "ui/templates"),
-        ("ui/static", "ui/static"),   # add this if exists
-        ("ui/data", "ui/data"),
+        # Include all Python packages
+        ("ui", "ui"),
+        ("supervisor", "supervisor"),
+        ("executor", "executor"),
+        ("parser", "parser"),
+        ("validator", "validator"),
+        ("context", "context"),
+        ("models", "models"),
+        ("utils", "utils"),
+        ("bridge_logging", "bridge_logging"),
+        ("planner", "planner"),
 
         ("logs", "logs"),
         *_wv_datas,
@@ -50,6 +58,8 @@ a = Analysis(
         "click",
         "itsdangerous",
         "markupsafe",
+        # ── Bridge CLI (imported by launch_ui.py --_bridge-run) ──────────
+        "main",
         # ── UI package ───────────────────────────────────────────────────────
         "ui",
         "ui.app",
@@ -74,6 +84,20 @@ a = Analysis(
         "models.task",
         "utils",
         "utils.command_resolution",
+        "utils.token_tracker",
+        "utils.report_generator",
+        "utils.run_diagnostics",
+        "utils.onboarding_scanner",
+        "utils.project_knowledge",
+        "utils.relay_formatter",
+        "utils.manual_supervisor",
+        "utils.project_type_prompt",
+        "utils.checkpoint",
+        "utils.telemetry",
+        "utils.model_advisor",
+        "utils.firebase_sync",
+        "utils.firebase_user_setup",
+        "context.project_understanding",
         "bridge_logging",
         "bridge_logging.logger",
         "planner",

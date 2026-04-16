@@ -1,0 +1,67 @@
+/* pages/cloud.css */
+
+.cloud-hero {
+  text-align: center;
+  max-width: 500px;
+  margin: 40px auto;
+  padding: 40px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.cloud-hero-icon { color: var(--color-accent); margin-bottom: 16px; }
+.cloud-hero h2 { font-size: var(--font-size-xl); margin-bottom: 8px; }
+.cloud-hero-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-bottom: 24px; line-height: 1.6; }
+
+.cloud-wizard { max-width: 700px; margin: 0 auto; }
+
+.wizard-steps-guide { display: flex; flex-direction: column; gap: 12px; }
+.setup-step {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-md);
+}
+.setup-step-num {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #000;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px;
+  flex-shrink: 0;
+}
+.setup-step-body { flex: 1; }
+.setup-step-body strong { font-size: var(--font-size-sm); display: block; margin-bottom: 2px; }
+.setup-step-body p { font-size: 12px; color: var(--color-text-muted); line-height: 1.5; }
+.setup-step-body a { color: var(--color-accent); }
+
+.cloud-status-card { max-width: 700px; }
+
+.cloud-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .cloud-actions { flex-direction: column; }
+}
+
+.cloud-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+  max-width: 700px;
+}
+@media (max-width: 600px) {
+  .cloud-info-grid { grid-template-columns: 1fr; }
+}
+
+.cloud-list {
+  list-style: none; padding: 0; margin: 8px 0 0;
+  font-size: 12px; line-height: 1.8;
+}
+.cloud-list li { padding-left: 20px; position: relative; }
+.cloud-list li::before { position: absolute; left: 0; }
+.cloud-list--yes li::before { content: "✓"; color: var(--color-success); }
+.cloud-list--no li::before { content: "✗"; color: var(--color-danger); }

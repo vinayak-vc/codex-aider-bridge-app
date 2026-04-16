@@ -221,4 +221,21 @@
   overflow: hidden;
 }
 
-/* Git panel moved to dedicated /git page — see git.css */
+/* ── Project Cards ── */
+.project-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.project-card {
+  padding: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.project-card:hover {
+  border-color: var(--color-accent);
+  background: var(--color-surface-2);
+}

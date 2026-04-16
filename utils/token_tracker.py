@@ -33,6 +33,22 @@ from typing import Optional
 # directly (without Aider). Conservative mid-range estimate for a typical task.
 _DIRECT_TOKENS_PER_TASK: int = 5_000
 
+# Cloud AI pricing per million tokens (USD)
+PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4": {"input": 15.0, "output": 75.0},
+    "claude-sonnet-4": {"input": 3.0, "output": 15.0},
+    "claude-haiku": {"input": 0.25, "output": 1.25},
+    "gpt-4o": {"input": 2.50, "output": 10.0},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "default": {"input": 3.0, "output": 15.0},  # Sonnet pricing as default
+}
+
+
+def estimate_cost(input_tokens: int, output_tokens: int, model: str = "default") -> float:
+    """Estimate USD cost for a given token count and model."""
+    prices = PRICING.get(model, PRICING["default"])
+    return (input_tokens * prices["input"] + output_tokens * prices["output"]) / 1_000_000
+
 
 def _estimate(text: str) -> int:
     """Estimate token count from character length (1 token ≈ 4 chars)."""
@@ -121,17 +137,26 @@ class TokenTracker:
         instruction: str,
         input_file_chars: int,
         diff_chars: int,
+        performer: str = "ollama",
     ) -> None:
         """Estimate Aider/Ollama token usage for one task.
 
         Aider calls Ollama internally so we cannot intercept the API response.
         We estimate from: instruction length + input file sizes + output diff.
+
+        performer: who executed this task:
+          "ollama"   — local LLM via Aider (default)
+          "claude"   — Claude edited directly (tiny task)
+          "direct"   — bridge wrote file from instruction (no LLM)
         """
         estimated = _estimate(instruction) + max(1, input_file_chars // 4) + max(1, diff_chars // 4)
+        if performer != "ollama":
+            estimated = 0  # no local LLM tokens used
         self._aider_total += estimated
         self._aider_per_task.append({
             "task_id": task_id,
             "estimated_tokens": estimated,
+            "performer": performer,
         })
 
     # ── Live snapshot ─────────────────────────────────────────────────────────
@@ -250,8 +275,23 @@ class TokenTracker:
                 "savings_percent": savings_pct,
                 "note": note,
             },
+            "cost": {
+                "bridge_cost_opus": round(estimate_cost(snap["total_in"], snap["total_out"], "claude-opus-4"), 4),
+                "bridge_cost_sonnet": round(estimate_cost(snap["total_in"], snap["total_out"], "claude-sonnet-4"), 4),
+                "direct_cost_opus": round(estimate_cost(estimated_direct * 0.6, estimated_direct * 0.4, "claude-opus-4"), 4),
+                "direct_cost_sonnet": round(estimate_cost(estimated_direct * 0.6, estimated_direct * 0.4, "claude-sonnet-4"), 4),
+                "ollama_cost": 0.0,
+                "ollama_tokens": self._aider_total,
+                "savings_dollar_opus": 0.0,
+                "savings_dollar_sonnet": 0.0,
+            },
             "elapsed_seconds": round(elapsed_seconds, 1),
         }
+        # Calculate dollar savings
+        c = report["cost"]
+        c["savings_dollar_opus"] = round(max(0, c["direct_cost_opus"] - c["bridge_cost_opus"]), 4)
+        c["savings_dollar_sonnet"] = round(max(0, c["direct_cost_sonnet"] - c["bridge_cost_sonnet"]), 4)
+        return report
 
 
 # ── Persistence ───────────────────────────────────────────────────────────────
@@ -302,6 +342,12 @@ def save_session_to_log(session: dict, log_path: Path) -> None:
 
     total_aider = sum(s.get("aider", {}).get("estimated_tokens", 0) for s in sessions)
 
+    # Aggregate dollar costs
+    total_cost_opus = sum(s.get("cost", {}).get("bridge_cost_opus", 0) for s in sessions)
+    total_cost_sonnet = sum(s.get("cost", {}).get("bridge_cost_sonnet", 0) for s in sessions)
+    total_direct_opus = sum(s.get("cost", {}).get("direct_cost_opus", 0) for s in sessions)
+    total_direct_sonnet = sum(s.get("cost", {}).get("direct_cost_sonnet", 0) for s in sessions)
+
     data["totals"] = {
         "sessions_count": len(sessions),
         "tasks_executed_total": total_tasks,
@@ -316,6 +362,15 @@ def save_session_to_log(session: dict, log_path: Path) -> None:
         "wasted_tokens_total": wasted_tokens_total,
         "wasted_sessions_count": len(zero_progress_sessions),
         "waste_reason_counts": waste_reason_counts,
+        "cost_total": {
+            "bridge_opus": round(total_cost_opus, 4),
+            "bridge_sonnet": round(total_cost_sonnet, 4),
+            "direct_opus": round(total_direct_opus, 4),
+            "direct_sonnet": round(total_direct_sonnet, 4),
+            "ollama": 0.0,
+            "savings_opus": round(max(0, total_direct_opus - total_cost_opus), 4),
+            "savings_sonnet": round(max(0, total_direct_sonnet - total_cost_sonnet), 4),
+        },
         "last_updated": datetime.now().isoformat(timespec="seconds"),
     }
 

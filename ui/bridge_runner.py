@@ -119,7 +119,9 @@ class BridgeRun:
             cmd.extend(["--plan-file", settings["plan_file"].strip()])
         if settings.get("dry_run"):
             cmd.append("--dry-run")
-        if not settings.get("auto_commit", True):
+        if settings.get("model_lock"):
+            cmd.append("--model-lock")
+        if settings.get("auto_commit") is False:
             cmd.append("--no-auto-commit")
         if settings.get("task_timeout"):
             cmd.extend(["--task-timeout", str(int(settings["task_timeout"]))])
@@ -385,6 +387,14 @@ class BridgeRun:
                 proc.terminate()
             except Exception:
                 pass
+            # Escalate: wait 5s then force kill if still running
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         with self._lock:
             self.is_running = False
             self.status = "stopped"
@@ -411,3 +421,16 @@ _run = BridgeRun()
 
 def get_run() -> BridgeRun:
     return _run
+
+
+# Kill orphaned subprocess on Flask shutdown
+import atexit
+
+def _cleanup():
+    if _run._process and _run._process.poll() is None:
+        try:
+            _run._process.kill()
+        except Exception:
+            pass
+
+atexit.register(_cleanup)

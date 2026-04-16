@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Bridge Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --subtle: #484f58;
+      --accent: #f97316; --success: #22c55e; --danger: #ef4444;
+      --radius: 8px; --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); padding: 24px; max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 20px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .stat-value { font-size: 24px; font-weight: 700; }
+    .stat-value.--green { color: var(--success); }
+    .stat-value.--orange { color: var(--accent); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    td { padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+    .badge.--success { background: rgba(34,197,94,.15); color: var(--success); }
+    .badge.--fail { background: rgba(239,68,68,.15); color: var(--danger); }
+    .login-wrap { text-align: center; padding: 60px 20px; }
+    .login-btn { padding: 12px 24px; background: var(--accent); color: #000; border: none; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; }
+    #app { display: none; }
+    .empty { color: var(--subtle); font-size: 13px; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div id="login-wrap" class="login-wrap">
+  <h1>My Bridge Dashboard</h1>
+  <p style="color:var(--muted);margin:12px 0 20px">Sign in to view your project data</p>
+  <button class="login-btn" onclick="doLogin()">Login with Google</button>
+</div>
+
+<div id="app">
+  <h1>My Bridge Dashboard</h1>
+  <p class="sub" id="user-email"></p>
+
+  <div class="stats" id="stats-row"></div>
+
+  <div class="card">
+    <div class="card-title">Projects</div>
+    <div id="projects-list"><div class="empty">Loading...</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Recent Runs</div>
+    <div id="runs-list"><div class="empty">Loading...</div></div>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+  import { getFirestore, collection, getDocs, query, orderBy, limit, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+  // Config injected by the bridge app
+  const config = window.__FIREBASE_CONFIG__ || {};
+
+  if (!config.apiKey) {
+    document.getElementById('login-wrap').innerHTML = '<h2>Not configured</h2><p style="color:var(--muted)">Open this page from the bridge app settings.</p>';
+  }
+
+  const app = initializeApp(config);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const fmt = n => n == null ? '-' : Number(n).toLocaleString();
+
+  window.doLogin = async () => {
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch(e) { alert(e.message); }
+  };
+
+  onAuthStateChanged(auth, async user => {
+    if (!user) {
+      document.getElementById('login-wrap').style.display = '';
+      document.getElementById('app').style.display = 'none';
+      return;
+    }
+    document.getElementById('login-wrap').style.display = 'none';
+    document.getElementById('app').style.display = '';
+    document.getElementById('user-email').textContent = user.email || '';
+    await loadData();
+  });
+
+  async function loadData() {
+    // Load projects
+    let totalTasks = 0, totalRuns = 0, totalSaved = 0;
+    const projSnap = await getDocs(collection(db, 'projects'));
+    const projects = [];
+    projSnap.forEach(d => { projects.push({ id: d.id, ...d.data() }); });
+
+    // Load runs from each project
+    const allRuns = [];
+    for (const p of projects) {
+      try {
+        const runsSnap = await getDocs(query(collection(db, `projects/${p.id}/runs`), orderBy('timestamp', 'desc'), limit(10)));
+        runsSnap.forEach(d => {
+          const run = d.data();
+          allRuns.push({ project: p.id, ...run });
+          totalTasks += run.tasks_completed || 0;
+          totalRuns++;
+          totalSaved += run.tokens_saved || 0;
+        });
+      } catch(_) {}
+    }
+
+    // Stats
+    const statsRow = document.getElementById('stats-row');
+    statsRow.innerHTML = `
+      <div class="stat"><div class="stat-label">Projects</div><div class="stat-value">${projects.length}</div></div>
+      <div class="stat"><div class="stat-label">Total Runs</div><div class="stat-value">${totalRuns}</div></div>
+      <div class="stat"><div class="stat-label">Tasks Done</div><div class="stat-value --orange">${fmt(totalTasks)}</div></div>
+      <div class="stat"><div class="stat-label">Tokens Saved</div><div class="stat-value --green">${fmt(totalSaved)}</div></div>
+    `;
+
+    // Projects list
+    const projList = document.getElementById('projects-list');
+    if (!projects.length) { projList.innerHTML = '<div class="empty">No projects synced yet.</div>'; }
+    else {
+      projList.innerHTML = `<table><thead><tr><th>Project</th><th>Language</th><th>Files</th><th>Last Run</th></tr></thead><tbody>
+        ${projects.map(p => `<tr>
+          <td><strong>${esc(p.name || p.id)}</strong></td>
+          <td>${esc(p.language || '-')}</td>
+          <td>${p.file_count || '-'}</td>
+          <td>${esc(p.last_run_at || '-')}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+    }
+
+    // Runs list
+    const runsList = document.getElementById('runs-list');
+    allRuns.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+    const recent = allRuns.slice(0, 20);
+    if (!recent.length) { runsList.innerHTML = '<div class="empty">No runs synced yet.</div>'; }
+    else {
+      runsList.innerHTML = `<table><thead><tr><th>Project</th><th>Status</th><th>Tasks</th><th>Tokens Saved</th><th>Savings</th><th>When</th></tr></thead><tbody>
+        ${recent.map(r => `<tr>
+          <td>${esc(r.project)}</td>
+          <td><span class="badge ${r.status === 'success' ? '--success' : '--fail'}">${esc(r.status || '?')}</span></td>
+          <td>${r.tasks_completed || 0}/${r.tasks_planned || '?'}</td>
+          <td>${fmt(r.tokens_saved)}</td>
+          <td>${r.savings_percent ? r.savings_percent.toFixed(1) + '%' : '-'}</td>
+          <td style="color:var(--muted)">${esc((r.timestamp || '').split('T')[0])}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+    }
+  }
+
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>

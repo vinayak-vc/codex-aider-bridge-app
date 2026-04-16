@@ -108,35 +108,181 @@ async function loadCommits(repo) {
   } catch (_) {}
 }
 
+let _changedFiles = [];
+let _changedView = 'list'; // 'list' | 'tree'
+
 async function loadChanged(repo) {
   try {
     const data = await fetch(`/api/git/diff?repo_root=${encodeURIComponent(repo)}`).then(r => r.json());
     const wrap = $('git-changed-wrap');
-    const clist = $('git-changed-list');
     const countEl = $('git-changed-count');
-    if (!wrap || !clist) return;
+    if (!wrap) return;
 
-    const files = data.files || [];
-    if (countEl) countEl.textContent = files.length;
+    _changedFiles = data.files || [];
+    if (countEl) countEl.textContent = _changedFiles.length;
 
-    if (!files.length) {
+    if (!_changedFiles.length) {
       wrap.style.display = 'none';
       return;
     }
 
-    clist.innerHTML = files.map(f =>
-      `<div class="git-changed-file" data-file="${esc(f.path)}" title="Click to view diff">
-         <span class="git-file-path">${esc(f.path)}</span>
-         <span class="git-file-stat">+${f.insertions} -${f.deletions}</span>
-       </div>`
-    ).join('');
     wrap.style.display = '';
+    _renderChangedView();
+  } catch (_) {}
+}
 
-    clist.querySelectorAll('.git-changed-file').forEach(el => {
-      el.addEventListener('click', () => {
-        showDiff(null, el.dataset.file, el.dataset.file);
-      });
+function _renderChangedView() {
+  if (_changedView === 'tree') {
+    _renderChangedTree();
+  } else {
+    _renderChangedList();
+  }
+  const listEl = $('git-changed-list');
+  const treeEl = $('git-changed-tree');
+  if (listEl) listEl.style.display = _changedView === 'list' ? '' : 'none';
+  if (treeEl) treeEl.style.display = _changedView === 'tree' ? '' : 'none';
+}
+
+function _renderChangedList() {
+  const clist = $('git-changed-list');
+  if (!clist) return;
+
+  clist.innerHTML = _changedFiles.map(f =>
+    `<div class="git-changed-file" data-file="${esc(f.path)}">
+       <span class="git-file-path" title="${esc(f.path)}">${esc(f.path)}</span>
+       <span class="git-file-stat">+${f.insertions} -${f.deletions}</span>
+       <span class="git-file-actions">
+         <button class="git-file-action-btn" data-action="ignore" data-path="${esc(f.path)}" title="Add to .gitignore">
+           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="12" height="12">
+             <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/>
+           </svg>
+         </button>
+       </span>
+     </div>`
+  ).join('');
+
+  _bindChangedFileEvents(clist);
+}
+
+function _renderChangedTree() {
+  const treeEl = $('git-changed-tree');
+  if (!treeEl) return;
+
+  // Build tree structure
+  const root = {};
+  for (const f of _changedFiles) {
+    const parts = f.path.replace(/\\/g, '/').split('/');
+    let node = root;
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i];
+      if (i === parts.length - 1) {
+        node[name] = { __file: true, __data: f };
+      } else {
+        if (!node[name] || node[name].__file) node[name] = {};
+        node = node[name];
+      }
+    }
+  }
+
+  treeEl.innerHTML = _renderTreeNodes(root, 0, '');
+  _bindTreeEvents(treeEl);
+}
+
+function _renderTreeNodes(node, depth, parentPath) {
+  const keys = Object.keys(node).sort((a, b) => {
+    const aDir = !node[a].__file;
+    const bDir = !node[b].__file;
+    if (aDir !== bDir) return aDir ? -1 : 1;
+    return a.localeCompare(b);
+  });
+
+  return keys.map(name => {
+    const child = node[name];
+    const fullPath = parentPath ? `${parentPath}/${name}` : name;
+    const indent = depth * 14;
+
+    if (child.__file) {
+      const f = child.__data;
+      return `<div class="git-tree-file" data-file="${esc(f.path)}" style="padding-left:${indent + 16}px" title="${esc(f.path)}">
+        ${esc(name)}
+        <span class="git-tree-stat">+${f.insertions} -${f.deletions}</span>
+        <button class="git-file-action-btn" data-action="ignore" data-path="${esc(f.path)}" title="Add to .gitignore" style="margin-left:4px">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="11" height="11">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/>
+          </svg>
+        </button>
+      </div>`;
+    }
+
+    const children = _renderTreeNodes(child, depth + 1, fullPath);
+    return `<div class="git-tree-dir">
+      <div class="git-tree-dir-label" style="padding-left:${indent}px" data-expanded="true" data-dir="${esc(fullPath)}">
+        <svg class="git-tree-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="11" height="11">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+        </svg>
+        ${esc(name)}/
+        <button class="git-file-action-btn" data-action="ignore-dir" data-path="${esc(fullPath + '/')}" title="Add folder to .gitignore" style="margin-left:auto">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="11" height="11">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/>
+          </svg>
+        </button>
+      </div>
+      <div class="git-tree-children">${children}</div>
+    </div>`;
+  }).join('');
+}
+
+function _bindChangedFileEvents(container) {
+  container.querySelectorAll('.git-changed-file').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.closest('.git-file-action-btn')) return; // don't trigger diff on action click
+      showDiff(null, el.dataset.file, el.dataset.file);
     });
+  });
+  container.querySelectorAll('[data-action="ignore"]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      _addToGitignore(btn.dataset.path);
+    });
+  });
+}
+
+function _bindTreeEvents(container) {
+  container.querySelectorAll('.git-tree-dir-label').forEach(label => {
+    label.addEventListener('click', e => {
+      if (e.target.closest('.git-file-action-btn')) return;
+      const expanded = label.dataset.expanded === 'true';
+      label.dataset.expanded = expanded ? 'false' : 'true';
+      const children = label.nextElementSibling;
+      if (children) children.style.display = expanded ? 'none' : '';
+      label.querySelector('.git-tree-chevron')?.classList.toggle('--collapsed', expanded);
+    });
+  });
+  container.querySelectorAll('.git-tree-file').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.closest('.git-file-action-btn')) return;
+      showDiff(null, el.dataset.file, el.dataset.file);
+    });
+  });
+  container.querySelectorAll('[data-action="ignore"], [data-action="ignore-dir"]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      _addToGitignore(btn.dataset.path);
+    });
+  });
+}
+
+async function _addToGitignore(pattern) {
+  if (!confirm(`Add "${pattern}" to .gitignore?`)) return;
+  const repo = await getRepo();
+  if (!repo) return;
+  try {
+    await fetch('/api/git/gitignore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_root: repo, pattern }),
+    });
+    await loadAll(); // Refresh to show updated status
   } catch (_) {}
 }
 
@@ -214,6 +360,20 @@ function bindControls() {
         alert(res.error || 'Failed to create branch');
       }
     } catch (_) {}
+  });
+
+  // Changed files view toggle
+  $('btn-changed-list')?.addEventListener('click', () => {
+    _changedView = 'list';
+    $('btn-changed-list')?.classList.add('--active');
+    $('btn-changed-tree')?.classList.remove('--active');
+    _renderChangedView();
+  });
+  $('btn-changed-tree')?.addEventListener('click', () => {
+    _changedView = 'tree';
+    $('btn-changed-tree')?.classList.add('--active');
+    $('btn-changed-list')?.classList.remove('--active');
+    _renderChangedView();
   });
 
   window.addEventListener('bridge:project-switched', e => {

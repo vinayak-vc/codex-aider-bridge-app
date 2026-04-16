@@ -254,6 +254,43 @@ async function refreshRunStatus() {
 // Refresh status bar periodically
 setInterval(refreshRunStatus, 3000);
 
+// ── GPU status ───────────────────────────────────────────────────────────────
+
+async function refreshGpuStatus() {
+  const dot = $('sb-gpu-dot');
+  const label = $('sb-gpu-label');
+  if (!dot || !label) return;
+
+  try {
+    const data = await fetch('/api/check').then(r => r.json());
+    const gpu = data.gpu;
+    if (!gpu) return;
+
+    if (gpu.status === 'gpu_active') {
+      dot.dataset.status = 'success';
+      label.textContent = `GPU: ${gpu.gpu_name || 'Active'}`;
+      label.title = `VRAM: ${gpu.vram_used_gb}/${gpu.vram_total_gb}GB, ${gpu.gpu_utilization}% util`;
+    } else if (gpu.status === 'gpu_available_not_used') {
+      dot.dataset.status = 'failure';
+      label.textContent = 'GPU idle (CPU mode!)';
+      label.title = gpu.hint || 'Ollama is using CPU despite GPU being available';
+    } else if (gpu.status === 'cpu_only') {
+      dot.dataset.status = 'failure';
+      label.textContent = 'CPU only';
+      label.title = gpu.hint || 'No GPU detected';
+    } else if (gpu.status === 'gpu_ready') {
+      dot.dataset.status = 'idle';
+      label.textContent = `GPU: ${gpu.gpu_name || 'Ready'}`;
+      label.title = 'GPU available, waiting for model load';
+    } else {
+      dot.dataset.status = 'idle';
+      label.textContent = `GPU: ${gpu.gpu_name || '?'}`;
+    }
+  } catch (_) {
+    label.textContent = 'GPU: ?';
+  }
+}
+
 // ── Global model selector ─────────────────────────────────────────────────────
 
 async function loadModels() {
@@ -297,6 +334,9 @@ async function saveModel(value) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
+    // Sync the Run page model input if it exists
+    const runInput = $('f-aider-model');
+    if (runInput) runInput.value = value;
   } catch (_) {}
 }
 
@@ -309,6 +349,18 @@ export async function initProjectBar() {
   loadModels();
   refreshGitStatus();
   refreshRunStatus();
+  refreshGpuStatus();
+
+  // Load version info into status bar
+  try {
+    const ver = await fetch('/api/version').then(r => r.json());
+    const el = $('sb-version');
+    if (el) {
+      el.textContent = `v${ver.version}`;
+      el.title = `Version: ${ver.version}\nCommit: ${ver.commit_short || '?'}\nBranch: ${ver.branch || '?'}\nBuild: ${ver.build_date || '?'}\nFull SHA: ${ver.commit || '?'}`;
+    }
+  } catch (_) {}
+  setInterval(refreshGpuStatus, 15000); // Refresh GPU status every 15s
 
   // Switcher button toggles dropdown
   $('project-switcher')?.addEventListener('click', e => {
@@ -361,6 +413,11 @@ export async function initProjectBar() {
       } catch (_) {}
     });
   }
+
+  // Download action log
+  $('sb-download-log')?.addEventListener('click', () => {
+    if (window.__bridgeActionLog) window.__bridgeActionLog.downloadLog();
+  });
 
   // VS Code button in status bar
   $('sb-open-vscode')?.addEventListener('click', async () => {

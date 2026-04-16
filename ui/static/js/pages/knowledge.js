@@ -1,6 +1,8 @@
 // pages/knowledge.js — Knowledge page controller
+// Uses its own advanced markdown renderer (handles lists, blockquotes, HR)
+// unlike the simpler core/markdown.js used by chat.
 
-// ── Minimal markdown renderer (~80 lines, no library) ─────────────────────────
+// ── Markdown renderer ─────────────────────────────────────────────────────────
 
 function renderMarkdown(raw) {
   if (!raw) return '';

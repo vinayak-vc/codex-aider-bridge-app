@@ -30,29 +30,49 @@ RELAY_TASKS_FILE = DATA_DIR / "relay_tasks.json"
 RELAY_UI_STATE_FILE = DATA_DIR / "relay_ui_state.json"
 CHAT_SESSIONS_FILE   = DATA_DIR / "chat_sessions.json"
 RUN_NL_STATES_FILE   = DATA_DIR / "run_nl_states.json"
+PLAN_FAVORITES_FILE  = DATA_DIR / "plan_favorites.json"
+GENERATED_PLANS_FILE = DATA_DIR / "generated_plans.json"
 MAX_HISTORY = 50
+MAX_GENERATED_PLANS = 50
 MAX_LOG_LINES = 500
 
 DEFAULT_SETTINGS: dict = {
     "goal": "",
     "repo_root": "",
     "idea_file": "",
-    "aider_model": "ollama/mistral",
-    "supervisor": "codex",
-    "supervisor_command": "codex.cmd exec --skip-git-repo-check --color never",
-    "manual_supervisor": False,
+    "aider_model": "ollama/qwen2.5-coder:7b",
+    "supervisor": "manual",
+    "supervisor_command": "",
+    "manual_supervisor": True,
     "manual_review_poll_seconds": 2,
     "workflow_profile": "standard",
     "validation_command": "",
     "max_plan_attempts": 3,
-    "max_task_retries": 2,
-    "task_timeout": 300,
+    "max_task_retries": 10,
+    "task_timeout": 600,
     "plan_output_file": "",
     "plan_file": "",
     "dry_run": False,
     "auto_commit": True,
+    "model_lock": False,  # True = always use aider_model, skip smart routing
     "clarifications": [],
 }
+
+
+def _normalize_auto_commit(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return True
 
 
 def _ensure() -> None:
@@ -66,7 +86,9 @@ def load_settings() -> dict:
     if SETTINGS_FILE.exists():
         try:
             saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            return {**DEFAULT_SETTINGS, **saved}
+            merged = {**DEFAULT_SETTINGS, **saved}
+            merged["auto_commit"] = _normalize_auto_commit(merged.get("auto_commit"))
+            return merged
         except Exception:
             pass
     return dict(DEFAULT_SETTINGS)
@@ -76,6 +98,7 @@ def save_settings(settings: dict) -> None:
     _ensure()
     # Only persist known keys so stale keys don't pile up
     cleaned = {k: settings[k] for k in DEFAULT_SETTINGS if k in settings}
+    cleaned["auto_commit"] = _normalize_auto_commit(cleaned.get("auto_commit"))
     SETTINGS_FILE.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
 
 
@@ -147,45 +170,75 @@ def _empty_token_totals() -> dict:
     }
 
 
-# ── Relay tasks ───────────────────────────────────────────────────────────────
+# ── Relay tasks (Project-Scoped) ──────────────────────────────────────────────
 
-def load_relay_tasks() -> list[dict]:
-    """Return the currently imported relay task list (empty list if none)."""
-    _ensure()
-    if RELAY_TASKS_FILE.exists():
+def _relay_state_file(repo_root: str) -> Path:
+    """Return the absolute path to the relay state file for a project."""
+    return Path(repo_root) / "bridge_progress" / "relay_state.json"
+
+
+def load_relay_tasks(repo_root: str) -> list[dict]:
+    """Return the currently imported relay task list for a project."""
+    if not repo_root:
+        return []
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
         try:
-            return json.loads(RELAY_TASKS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            return data.get("tasks", [])
         except Exception:
             pass
     return []
 
 
-def save_relay_tasks(tasks: list[dict]) -> None:
-    """Persist the relay task list."""
-    _ensure()
-    RELAY_TASKS_FILE.write_text(json.dumps(tasks, indent=2), encoding="utf-8")
+def save_relay_tasks(repo_root: str, tasks: list[dict]) -> None:
+    """Persist the relay task list for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Load current UI state to preserve it
+    current_state = load_relay_ui_state(repo_root)
+    payload = {"tasks": tasks, "ui_state": current_state}
+    state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def clear_relay_tasks() -> None:
-    """Remove any previously imported relay tasks."""
-    _ensure()
-    if RELAY_TASKS_FILE.exists():
-        RELAY_TASKS_FILE.unlink()
-
-
-def load_relay_ui_state() -> dict:
-    _ensure()
-    if RELAY_UI_STATE_FILE.exists():
+def clear_relay_tasks(repo_root: str) -> None:
+    """Remove any previously imported relay tasks for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
         try:
-            raw = json.loads(RELAY_UI_STATE_FILE.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            data["tasks"] = []
+            state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def load_relay_ui_state(repo_root: str) -> dict:
+    """Return the persisted relay UI state for a project."""
+    if not repo_root:
+        return {}
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            return data.get("ui_state", {})
         except Exception:
             pass
     return {}
 
 
-def save_relay_ui_state(state: dict) -> None:
-    _ensure()
+def save_relay_ui_state(repo_root: str, state: dict) -> None:
+    """Persist the relay UI state for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
     allowed = {
         "step",
         "goal",
@@ -197,13 +250,25 @@ def save_relay_ui_state(state: dict) -> None:
         "plan_paste",
     }
     cleaned = {key: state.get(key) for key in allowed if key in state}
-    RELAY_UI_STATE_FILE.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
+    
+    # Load current tasks to preserve them
+    current_tasks = load_relay_tasks(repo_root)
+    payload = {"tasks": current_tasks, "ui_state": cleaned}
+    state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def clear_relay_ui_state() -> None:
-    _ensure()
-    if RELAY_UI_STATE_FILE.exists():
-        RELAY_UI_STATE_FILE.unlink()
+def clear_relay_ui_state(repo_root: str) -> None:
+    """Remove any previously imported relay UI state for a project."""
+    if not repo_root:
+        return
+    state_file = _relay_state_file(repo_root)
+    if state_file.exists():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            data["ui_state"] = {}
+            state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
 
 # Chat sessions
@@ -357,3 +422,122 @@ def clear_run_nl_state(project_key: str) -> None:
     if project_key in states:
         del states[project_key]
         _save_run_nl_states(states)
+
+
+# ── Plan Favorites ────────────────────────────────────────────────────────────
+
+def load_plan_favorites() -> list[dict]:
+    if PLAN_FAVORITES_FILE.exists():
+        try:
+            return json.loads(PLAN_FAVORITES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def save_plan_favorite(fav: dict) -> None:
+    favs = load_plan_favorites()
+    favs.insert(0, fav)
+    if len(favs) > 50:
+        favs = favs[:50]
+    PLAN_FAVORITES_FILE.write_text(json.dumps(favs, indent=2), encoding="utf-8")
+
+
+def delete_plan_favorite(fav_id: str) -> None:
+    favs = load_plan_favorites()
+    favs = [f for f in favs if f.get("id") != fav_id]
+    PLAN_FAVORITES_FILE.write_text(json.dumps(favs, indent=2), encoding="utf-8")
+
+
+# ── Generated Plans Library ──────────────────────────────────────────────────
+
+def load_generated_plans() -> list[dict]:
+    _ensure()
+    if GENERATED_PLANS_FILE.exists():
+        try:
+            return json.loads(GENERATED_PLANS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_generated_plans(plans: list[dict]) -> None:
+    _ensure()
+    GENERATED_PLANS_FILE.write_text(json.dumps(plans, indent=2), encoding="utf-8")
+
+
+def save_generated_plan(plan: dict) -> str:
+    """Save a newly generated plan to the library. Returns the plan ID."""
+    import time as _time
+    plans = load_generated_plans()
+    plan_id = str(uuid.uuid4())[:8]
+    plan["id"] = plan_id
+    plan.setdefault("status", "generated")
+    plan.setdefault("generated_at", _time.strftime("%Y-%m-%d %H:%M:%S"))
+    plan.setdefault("last_run_at", None)
+    plan.setdefault("completed_tasks", 0)
+    plan.setdefault("failed_task_id", None)
+    plans.insert(0, plan)
+    if len(plans) > MAX_GENERATED_PLANS:
+        plans = plans[:MAX_GENERATED_PLANS]
+    _save_generated_plans(plans)
+    return plan_id
+
+
+def update_generated_plan(plan_id: str, updates: dict) -> None:
+    """Update fields on an existing generated plan (status, last_run_at, etc.)."""
+    plans = load_generated_plans()
+    for plan in plans:
+        if plan.get("id") == plan_id:
+            plan.update(updates)
+            break
+    _save_generated_plans(plans)
+
+
+def delete_generated_plan(plan_id: str) -> None:
+    plans = load_generated_plans()
+    plans = [p for p in plans if p.get("id") != plan_id]
+    _save_generated_plans(plans)
+
+
+def get_generated_plan(plan_id: str) -> dict | None:
+    for plan in load_generated_plans():
+        if plan.get("id") == plan_id:
+            return plan
+    return None
+
+
+# ── Run Queue ─────────────────────────────────────────────────────────────────
+
+RUN_QUEUE_FILE = DATA_DIR / "run_queue.json"
+
+
+def load_run_queue() -> list[dict]:
+    if RUN_QUEUE_FILE.exists():
+        try:
+            return json.loads(RUN_QUEUE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def append_run_queue(item: dict) -> None:
+    q = load_run_queue()
+    q.append(item)
+    RUN_QUEUE_FILE.write_text(json.dumps(q, indent=2), encoding="utf-8")
+
+
+def pop_run_queue() -> dict | None:
+    q = load_run_queue()
+    if not q:
+        return None
+    item = q.pop(0)
+    RUN_QUEUE_FILE.write_text(json.dumps(q, indent=2), encoding="utf-8")
+    return item
+
+
+def remove_from_queue(index: int) -> None:
+    q = load_run_queue()
+    if 0 <= index < len(q):
+        q.pop(index)
+        RUN_QUEUE_FILE.write_text(json.dumps(q, indent=2), encoding="utf-8")

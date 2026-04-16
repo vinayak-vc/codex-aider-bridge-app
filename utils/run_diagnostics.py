@@ -171,6 +171,11 @@ class RunDiagnostics:
         elif decision == "rework":
             self._tasks[task_id]["outcome"] = "rework"
 
+    def record_escalation(self, task_id: int, escalation_log: list[dict]) -> None:
+        """Record the escalation history for a task."""
+        t = self._ensure_task(task_id)
+        t["escalation_log"] = escalation_log
+
     def record_task_failure(self, task_id: int, reason: str) -> None:
         t = self._ensure_task(task_id)
         t["outcome"] = "failed"

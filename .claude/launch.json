@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bridge-ui",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["launch_ui.py"],
+      "port": 7823
+    }
+  ]
+}

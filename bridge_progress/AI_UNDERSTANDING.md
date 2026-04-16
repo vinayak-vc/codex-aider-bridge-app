@@ -6,15 +6,15 @@ Type: `python` | Language: `Python`
 
 ## Summary
 
-Python project (Python), 89 source files scanned. Patterns: Multiple classes inherit Exception (3 found), Framework: Flask, Framework: unittest.
+# Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON fil
 
 ## Important Docs
 
 - `README.md`: # Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON files instead of calling another AI process For the most accurate low-token workflow, use: a pre-written That profile is designed for: Codex supervises, Aider implements, bridge validates. It ships with a **web UI** you can launch by double-clicking , and a CLI you can drive directly from the terminal.
-- `AGENTIC_AI_ONBOARDING.md`: # AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge — Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next — all in one prompt. --- ## ⛔ HARD STOP — READ THIS FIRST **You are the Technical Supervisor.
+- `AGENTIC_AI_ONBOARDING.md`: # AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge — Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next — all in one prompt. The **Codex-Aider Bridge** is a local Flask web application that separates **AI planning/review** (expensive cloud AI like you) from **code execution** (cheap local Ollama LLM via Aider).
 - `AGENT_CONTEXT.md`: # AGENT_CONTEXT ## Architecture Summary The bridge is a local CLI orchestrator with a strict two-role separation: The loop is strictly sequential and acknowledgement-gated: the supervisor must approve each task before the next one starts. A **web UI** ( ) provides a browser-based front end over the same bridge, enabling setup detection, live task progress, and run history without any terminal interaction. --- ## Module Responsibilities ### Core bridge (CLI) Orchestrates repo scanning, plan acquisition, the sequential task-review loop, logging, git-readiness pre-flight, per-task auto-commit, and CLI argument handling.
-- `AI Relay Supervisor.md`: ## AI Relay Supervisor — Implementation Spec --- ### Concept Summary A new supervisor mode called **"AI Relay"** where you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini, Grok — anything) as the brain via copy-paste, with no API key. The bridge formats everything as ready-to-paste prompts and parses the AI's responses. --- ### Architecture Overview --- ### Files to Create / Modify | File | Change | |---|---| | | NEW — generates all prompts and parses AI responses | | | NEW — dedicated relay page | | | NEW | | | NEW — relay coordinator | | | ADD 6 new routes | | | ADD Relay nav item | | | ADD supervisor support | --- ### Phase 1 — This is the core utility.
-- `AI_RELAY_PLAN.md`: # AI Relay Supervisor — Implementation Plan **Status:** PENDING — ready to implement **Branch:** **Start from:** **Spec reference:** — read before starting **Resumption rule:** Read this file, check git log for latest milestone commit, continue from next milestone. --- ## What We Are Building A new supervisor mode called **AI Relay** that lets you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok — any subscription) as the planning and review brain with **no API key required**. The bridge formats everything as ready-to-paste prompts and parses the AI's responses when pasted back.
+- `AI_SUPERVISOR_PROMPT.md`: # AI Supervisor Reference This document explains how an agentic AI should behave when supervising Aider through this bridge. The recommended operating mode is no longer “spawn another AI CLI and hope it plans well”. The recommended mode is: the active AI session creates the task plan the bridge runs Aider the bridge validates and records results the active AI session reviews each task the bridge resumes from the AI’s decision the bridge keeps a structured project memory under --- ## The Supervisor Role The supervisor is the **technical lead**.
+- `CASE_STUDY.md`: # Case Study: Codex-Aider Bridge — Separating AI Thinking from AI Coding **Date:** April 2026 **Duration:** 2 months of active development **Team:** 1 human developer + Claude (Agentic AI supervisor) **Codebase:** ~16,000 lines Python + ~14,000 lines JS/CSS/HTML --- ## 1. The Problem Cloud AI models (Claude, GPT-4) are excellent at planning and reasoning but expensive at scale. A single day of active coding with Claude Opus costs $15-50 in API tokens.
 
 ## Key Files
 
@@ -44,19 +44,19 @@ This is the compact context summary that can be reused in later bridge sessions.
 ```text
 PROJECT: codex-aider-bridge-app (python/Python)
 (roles inferred by static scan — not task-authored)
-SUMMARY: Python project (Python), 89 source files scanned. Patterns: Multiple classes inherit Exception (3 found), Framework: Flask, Framework: unittest.
+SUMMARY: # Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON fil
 
 DOCUMENTATION SIGNALS:
   README.md
     -> # Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON files instead of calling another AI process For the most accurate low-token workflow, use: a pre-written That profile is designed for: Codex supervises, Aider implements, bridge validates. It ships with a **web UI** you can launch by double-clicking , and a CLI you can drive directly from the terminal.
   AGENTIC_AI_ONBOARDING.md
-    -> # AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge — Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next — all in one prompt. --- ## ⛔ HARD STOP — READ THIS FIRST **You are the Technical Supervisor.
+    -> # AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge — Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next — all in one prompt. The **Codex-Aider Bridge** is a local Flask web application that separates **AI planning/review** (expensive cloud AI like you) from **code execution** (cheap local Ollama LLM via Aider).
   AGENT_CONTEXT.md
     -> # AGENT_CONTEXT ## Architecture Summary The bridge is a local CLI orchestrator with a strict two-role separation: The loop is strictly sequential and acknowledgement-gated: the supervisor must approve each task before the next one starts. A **web UI** ( ) provides a browser-based front end over the same bridge, enabling setup detection, live task progress, and run history without any terminal interaction. --- ## Module Responsibilities ### Core bridge (CLI) Orchestrates repo scanning, plan acquisition, the sequential task-review loop, logging, git-readiness pre-flight, per-task auto-commit, and CLI argument handling.
-  AI Relay Supervisor.md
-    -> ## AI Relay Supervisor — Implementation Spec --- ### Concept Summary A new supervisor mode called **"AI Relay"** where you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini, Grok — anything) as the brain via copy-paste, with no API key. The bridge formats everything as ready-to-paste prompts and parses the AI's responses. --- ### Architecture Overview --- ### Files to Create / Modify | File | Change | |---|---| | | NEW — generates all prompts and parses AI responses | | | NEW — dedicated relay page | | | NEW | | | NEW — relay coordinator | | | ADD 6 new routes | | | ADD Relay nav item | | | ADD supervisor support | --- ### Phase 1 — This is the core utility.
-  AI_RELAY_PLAN.md
-    -> # AI Relay Supervisor — Implementation Plan **Status:** PENDING — ready to implement **Branch:** **Start from:** **Spec reference:** — read before starting **Resumption rule:** Read this file, check git log for latest milestone commit, continue from next milestone. --- ## What We Are Building A new supervisor mode called **AI Relay** that lets you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok — any subscription) as the planning and review brain with **no API key required**. The bridge formats everything as ready-to-paste prompts and parses the AI's responses when pasted back.
+  AI_SUPERVISOR_PROMPT.md
+    -> # AI Supervisor Reference This document explains how an agentic AI should behave when supervising Aider through this bridge. The recommended operating mode is no longer “spawn another AI CLI and hope it plans well”. The recommended mode is: the active AI session creates the task plan the bridge runs Aider the bridge validates and records results the active AI session reviews each task the bridge resumes from the AI’s decision the bridge keeps a structured project memory under --- ## The Supervisor Role The supervisor is the **technical lead**.
+  CASE_STUDY.md
+    -> # Case Study: Codex-Aider Bridge — Separating AI Thinking from AI Coding **Date:** April 2026 **Duration:** 2 months of active development **Team:** 1 human developer + Claude (Agentic AI supervisor) **Codebase:** ~16,000 lines Python + ~14,000 lines JS/CSS/HTML --- ## 1. The Problem Cloud AI models (Claude, GPT-4) are excellent at planning and reasoning but expensive at scale. A single day of active coding with Claude Opus costs $15-50 in API tokens.
 
 FILE REGISTRY (what each file does):
   AGENTIC_AI_ONBOARDING.md
@@ -123,6 +123,8 @@ FILE REGISTRY (what each file does):
     -> launch_ui
   main.py
     -> exposes build_argument_parser, load_plan_from_file, auto_split_tasks, obtain_plan, show_plan_preview
+  memory/memory_client.py
+    -> Import os, logging, urllib.request, urllib.error, json.
   models/__init__.py
     -> Typed models used across the bridge app
   models/task.py
@@ -174,7 +176,7 @@ FILE REGISTRY (what each file does):
   ui/static/css/pages/dashboard.css
     -> .dashboard-stats {
   ui/static/css/pages/git.css
-    -> .git-top-row {
+    -> .git-page {
   ui/static/css/pages/history.css
     -> .history-toolbar {
   ui/static/js/core/api.js
@@ -243,4 +245,8 @@ CODE PATTERNS:
   -Framework: Flask
   -Framework: unittest
   -Multiple classes inherit Exception (3 found)
+
+ALREADY IMPLEMENTED: memory_client, main
+
+LAST RUN: 2026-04-12 | 0 tasks | "Build a logging system feature"
 ```
