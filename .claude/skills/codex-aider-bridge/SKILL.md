@@ -92,12 +92,31 @@ du -sh <REPO_ROOT>/.venv 2>/dev/null
 
 If any are larger than ~100MB → add `aider_no_map: true` in Stage 3.
 
-### CS-4: Run code-review-graph (mandatory on cold start)
+### CS-4: Verify code-review-graph, then run it (mandatory on cold start)
 
-Invoke the `code-review-graph` skill on `REPO_ROOT` automatically. Tell the user:
+First confirm the MCP server is reachable by calling:
+```
+mcp__code-review-graph__list_graph_stats_tool()
+```
+
+**If the call errors (server not installed):**
+> *"code-review-graph MCP server is not installed. Install it now:"*
+> ```bash
+> npx @tirth8205/code-review-graph install
+> ```
+> *"After install, restart Claude Code, then re-run this session."*
+> **STOP — do not continue until the server is installed and Claude Code is restarted.**
+
+**If the call succeeds:**
+Tell the user:
 > *"Cold start — running code-review-graph to map the codebase before planning."*
 
-Use graph output as primary repo context in Stage 2. Fall back to `git ls-files` if graph fails.
+Call:
+```
+mcp__code-review-graph__build_or_update_graph_tool(repo_path="<REPO_ROOT>")
+```
+
+Use its output as primary repo context in Stage 2. This is not optional — a cold start without graph context produces low-quality plans.
 
 ### CS-5: Check working tree
 
@@ -147,9 +166,32 @@ bridge_health()
 > *"Memory service is down — bridge will run without context enhancement. To start it: `cd H:/Ai_Project/memory/bridge-memory-service && npm run dev`"*
 Do not block — continue to Stage 1.5.
 
-**If claude-mem is not running:**
-> *"claude-mem is not installed — each session starts cold with no memory of past runs. To install (one-time): `npx claude-mem install`, then restart Claude Code."*
-Do not block — continue.
+**Check code-review-graph MCP server — HARD STOP if missing:**
+
+Call:
+```
+mcp__code-review-graph__list_graph_stats_tool()
+```
+
+If it errors → **STOP**. Tell the user:
+> *"code-review-graph MCP server is not installed. It is required — without it every plan is built blind with no symbol locations or dependency edges."*
+> ```bash
+> npx @tirth8205/code-review-graph install
+> ```
+> *"Restart Claude Code after install, then re-run the session."*
+
+Do not continue until the tool responds successfully.
+
+**Check claude-mem — HARD STOP if missing:**
+
+Attempt to use the `claude-mem:mem-search` skill. If it is unavailable → **STOP**. Tell the user:
+> *"claude-mem is not installed. It tracks run history across sessions — without it every session starts cold with no knowledge of past failures, working models, or repo quirks. This compounds over time."*
+> ```bash
+> npx claude-mem install
+> ```
+> *"Restart Claude Code after install, then re-run the session."*
+
+Do not continue until both tools are confirmed available.
 
 ---
 
@@ -196,14 +238,19 @@ Also call **`bridge_get_project_knowledge`** to load prior file summaries and ru
 
 ## Stage 1.6 — Run Code-Review-Graph (Every Session Start, Except Cold Start)
 
-**Skip if cold start** — CS-4 already ran it.
+**Skip if cold start** — CS-4 already ran a full build.
 
-Invoke `code-review-graph` on `REPO_ROOT` automatically:
+Call:
+```
+mcp__code-review-graph__build_or_update_graph_tool(repo_path="<REPO_ROOT>")
+```
+
+Tell the user:
 > *"Indexing `<REPO_ROOT>` with code-review-graph..."*
 
-Use graph output as primary repo context in Stage 2. Fall back to `git ls-files` if unavailable.
+Use its output as primary repo context in Stage 2.
 
-The graph is a session-start snapshot — do not re-run mid-session.
+**Note on freshness:** From Stage 4 onward, the graph is incrementally updated after every PASS decision (via `detect_changes_tool`). This means by the time you reach Stage 5, the graph already reflects every committed change from this run — no stale line numbers, no re-indexing penalty at the next session start.
 
 ---
 
@@ -380,6 +427,19 @@ Write your decision:
 
 The bridge picks up the decision file and continues.
 
+### After every PASS — refresh the graph
+
+Immediately after writing a PASS decision, call:
+```
+mcp__code-review-graph__detect_changes_tool(repo_path="<REPO_ROOT>")
+```
+
+This is an **incremental** scan — it only re-indexes files that changed in the last commit (~2-3 seconds). It does not do a full rebuild.
+
+**Why:** The PASS decision triggers a git commit. The committed changes shift line numbers and add/remove symbols. If the next task needs a REWORK instruction, you need the current line numbers — not the ones from session start. The incremental scan keeps the graph live throughout the run.
+
+**Do not run this after REWORK** — a REWORK does not commit, so the graph is still correct.
+
 ### Mid-session REWORK learning
 
 Every time you write a REWORK, immediately call **`memory_save`** (do not wait for Stage 5):
@@ -426,6 +486,20 @@ cat "<REPO_ROOT>/bridge_progress/RUN_REPORT.md"
 cat "<REPO_ROOT>/bridge_progress/RUN_DIAGNOSTICS.json"
 cat "<REPO_ROOT>/bridge_progress/token_log.json"
 ```
+
+### Step 5-A-G: Full graph rebuild
+
+After reading all bridge_progress files, do a full graph rebuild:
+
+```
+mcp__code-review-graph__build_or_update_graph_tool(repo_path="<REPO_ROOT>")
+```
+
+This is a **full rebuild**, not incremental. It picks up every structural change made during the run — new files, deleted files, renamed functions, shifted imports. It takes 10-30s depending on repo size.
+
+**Why here and not just relying on Stage 4 incremental updates:** The incremental `detect_changes_tool` only rescans changed files. A full rebuild re-resolves all cross-file dependency edges. After a multi-task run where several files changed, some edges may be stale. The full rebuild at Stage 5 guarantees the next session opens with a completely accurate graph — no manual re-indexing ever needed.
+
+Run this in the background while reading the report files — it does not block anything.
 
 ### Step 5-B: Confirm git commits
 
