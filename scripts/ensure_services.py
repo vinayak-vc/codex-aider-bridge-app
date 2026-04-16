@@ -151,12 +151,15 @@ def ensure_memory_service():
         log("       Run: git submodule update --init --recursive")
         return
 
+    # Use npm.cmd on Windows, npm elsewhere
+    npm = ["npm.cmd"] if IS_WIN else ["npm"]
+
     # npm install if node_modules missing
     nm = MEMORY_SVC_DIR / "node_modules"
     if not nm.exists():
         log("Running npm install in services/memory-service …")
         result = subprocess.run(
-            ["npm", "install"], cwd=str(MEMORY_SVC_DIR),
+            npm + ["install"], cwd=str(MEMORY_SVC_DIR),
             capture_output=True, text=True, timeout=120
         )
         if result.returncode != 0:
@@ -169,7 +172,7 @@ def ensure_memory_service():
     if not dist.exists():
         log("Building memory service (npm run build) …")
         result = subprocess.run(
-            ["npm", "run", "build"], cwd=str(MEMORY_SVC_DIR),
+            npm + ["run", "build"], cwd=str(MEMORY_SVC_DIR),
             capture_output=True, text=True, timeout=60
         )
         if result.returncode != 0:
@@ -187,8 +190,7 @@ def ensure_memory_service():
         env_file.write_text(env_content)
 
     log("Starting bridge-memory-service …")
-    npm_cmd = ["npm.cmd", "start"] if IS_WIN else ["npm", "start"]
-    run_bg(npm_cmd, cwd=MEMORY_SVC_DIR, log_file=MEMORY_LOG)
+    run_bg(npm + ["start"], cwd=MEMORY_SVC_DIR, log_file=MEMORY_LOG)
 
     if wait_for_port(3000, timeout=30):
         log("Memory service started on :3000")
