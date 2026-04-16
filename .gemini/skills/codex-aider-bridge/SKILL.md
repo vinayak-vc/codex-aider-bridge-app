@@ -19,12 +19,11 @@ You are the **Tech Supervisor** in this pipeline. Your role is strictly:
 You NEVER write code yourself. You NEVER skip stages. You NEVER call Aider directly.
 
 **Antigravity-specific tools:**
-- Use `view_file` to read files
-- Use `replace_file_content` / `write_to_file` to write decision files
-- Use `run_command` to execute bridge commands and poll for requests
-- Use `grep_search` to find symbols and patterns
+- Use the MCP tools `bridge_health`, `bridge_dry_run`, `bridge_run_plan` to control the bridge
+- Use the MCP tools `memory_search`, `memory_save` to persist memory across sessions
 - Use MCP `code-review-graph` tools directly (no external skill needed)
-- Use Knowledge Items (KIs) instead of claude-mem for session memory
+- Use `view_file` / `write_to_file` to read/write files when an MCP tool isn't available
+- Use `run_command` with PowerShell if you need shell execution
 
 ---
 
@@ -55,51 +54,22 @@ If it exists → normal flow, skip Stage 0-CS entirely.
 
 ## Stage 0-CS — Cold Start Protocol
 
-A cold repo has none of the bridge's infrastructure. Everything must be built from scratch before the first run. Work through this checklist in order — do not skip steps.
-
 ### CS-1: Confirm the repo is a git repository
 
 ```powershell
 git -C "<REPO_ROOT>" rev-parse --git-dir
 ```
 
-If this fails → stop. Tell the user:
-> *"The bridge requires a git repository. Please run `git init` in `<REPO_ROOT>` and make an initial commit before continuing."*
+If this fails → stop. Tell the user to run `git init` and make an initial commit first.
 
 ### CS-2: Detect project type
 
-Check for these markers in order:
-
-| Marker found | Project type to use |
-|---|---|
-| `*.sln` or `*.csproj` + `Assets/` directory | `unity` |
-| `*.sln` or `*.csproj` (no Assets/) | `csharp` |
-| `project.godot` | `godot` |
-| `*.uproject` | `unreal` |
-| `pubspec.yaml` | `flutter` |
-| `Cargo.toml` | `rust` |
-| `go.mod` | `go` |
-| `package.json` + `.ts`/`.tsx` files | `typescript` |
-| `package.json` (no TypeScript) | `javascript` |
-| `requirements.txt` or `pyproject.toml` or `setup.py` | `python` |
-| None of the above | `other` — ask the user |
-
-Tell the user what you detected:
-> *"Detected project type: `python`. I'll use this to pick the right validator and plan hints."*
+Check for markers (`*.sln`, `package.json`, `Cargo.toml`, `requirements.txt`, etc.).
+Tell the user what you detected.
 
 ### CS-2b: Auto-detect validation command
 
-After detecting the project type, scan for a validation command to pass as `--validation-command`. Check in this order:
-
-| Project type | Files to check | Command to use |
-|---|---|---|
-| `python` | `pytest.ini`, `pyproject.toml` (`[tool.pytest]`), `setup.cfg` (`[tool:pytest]`) | `pytest --tb=short -q` |
-| `python` | `pyproject.toml` (`[tool.ruff]`) | `ruff check .` |
-| `javascript` / `typescript` | `package.json` → `scripts.test` key | `npm test` |
-| `rust` | `Cargo.toml` present | `cargo check` |
-| `go` | `go.mod` present | `go build ./...` |
-| `csharp` | `*.sln` present | `dotnet build` |
-
+Scan for a validation command (e.g. `pytest --tb=short -q`, `npm test`, `cargo check`).
 Store the detected command — it will be appended automatically to the Stage 3 invocation.
 
 ### CS-3: Check for large non-code directories
@@ -110,16 +80,14 @@ Get-ChildItem "<REPO_ROOT>/Library" -ErrorAction SilentlyContinue | Measure-Obje
 Get-ChildItem "<REPO_ROOT>/.venv" -ErrorAction SilentlyContinue | Measure-Object
 ```
 
-If any of these exist and are large → **add `--aider-no-map` to Stage 3 invocation automatically**.
+If any are large → add `aider_no_map: true` in Stage 3.
 
 ### CS-4: Run code-review-graph (mandatory on cold start)
 
-On a cold repo you have zero prior knowledge. Use the MCP `code-review-graph` tools directly:
-
-1. `mcp_code-review-graph_build_or_update_graph_tool` with `full_rebuild=True` and `repo_root=<REPO_ROOT>`
-2. `mcp_code-review-graph_get_architecture_overview_tool`
-3. `mcp_code-review-graph_get_hub_nodes_tool`
-
+Use the MCP `code-review-graph` tools directly:
+```
+mcp_code-review-graph_build_or_update_graph_tool(repo_root="<REPO_ROOT>")
+```
 Use the graph output as the primary repo context in Stage 2.
 
 ### CS-5: Check working tree is clean
@@ -130,271 +98,231 @@ git -C "<REPO_ROOT>" status --porcelain
 
 If dirty → stop and tell the user to commit or stash first.
 
-### CS-6: Determine `--auto-split-threshold`
+### CS-6: Determine auto-split threshold
 
 Ask which Aider model will be used:
-- 7B model → note `--auto-split-threshold 3`
+- 7B model → note `auto_split_threshold: 3`
 - 14B+ model → no split threshold needed
-- Not sure → default to `--auto-split-threshold 3`
 
 ---
 
 ## Stage 1 — Setup Checks
 
-Run these checks before any planning. If any fail, stop and help the user fix them.
+Call the MCP tool **`bridge_health`** — one call replaces all individual checks:
 
-See `references/flags.md` → **Setup Checks** section for the exact commands.
+```
+bridge_health()
+```
 
-| Check | Command | Pass condition |
-|---|---|---|
-| Python available | `python --version` | Python 3.9+ |
-| Aider installed | `aider --version` | exits 0 |
-| Ollama running | `ollama list` | exits 0, shows at least one model |
-| main.py exists | `Test-Path main.py` | file present in cwd |
+**Expected result:** `overall_up: true` with all services reporting `up: true`.
 
-`bridge_root` = **current working directory (`cwd`)**. The skill always runs from inside the bridge repo. All bridge commands use `python main.py`.
+| Field | If failing |
+|---|---|
+| `services.aider.up` | Tell user to `pip install aider-chat` |
+| `services.ollama.up` | Tell user to start ollama and pull their model |
+| `services.memory_service.up` | Non-blocking (degrades silently) |
+| `main_py_found` | User must start agent inside the bridge repo |
+
+**Check code-review-graph — HARD STOP if missing:**
+Call `mcp_code-review-graph_list_graph_stats_tool()`. It is built-in so it should succeed.
+
+Unlike Claude Code, Antigravity uses the Memory MCP server directly via `memory_search` and `memory_save`. 
 
 ---
 
-## Stage 1.5 — Knowledge Retrieval (Antigravity KIs)
+## Stage 1.5 — Memory Retrieval
 
-This stage runs automatically — no user decision needed. Inform the user with a single line:
+Call the MCP tool **`memory_search`** twice. Inform the user first:
+> *"Checking session memory for past runs on this project..."*
 
-> *"Checking Knowledge Items for past runs on this project..."*
+**Query 1 — Past runs:**
+```
+memory_search(query="bridge run <REPO_ROOT basename> task failures rework", limit=10)
+```
 
-Check for existing KIs about this project by listing the KI directory and reading relevant metadata.
+**Query 2 — Known patterns:**
+```
+memory_search(query="aider model failure pattern <REPO_ROOT basename>", limit=10)
+```
 
-**What to do with the results:**
+**What to do with results:**
+- Reuse instruction styles from successful plans
+- Pre-split previously failed files
+- Apply working models and flags
 
-| What KIs return | How to use it in Stage 2 |
-|---|---|
-| Previous task plans that succeeded | Reuse their instruction style and task structure |
-| Known failure types for specific files | Pre-split those tasks more aggressively |
-| Models that performed well on this repo | Set as preferred `--aider-model` in Stage 3 |
-| Files that repeatedly needed REWORK | Flag them in the plan with a note |
-| Repo-specific quirks (e.g. "always use --aider-no-map") | Apply those flags automatically in Stage 3 |
+### Warm Repo, Cold User Check
 
-If no KIs found (first run), silently continue — Stage 2 proceeds on graph + `project_knowledge.json` alone.
+If `memory_search` returned zero results AND `bridge_progress/` exists → call **`bridge_get_status`**:
+```
+bridge_get_status(repo_root="<REPO_ROOT>")
+```
+Brief the user. Also call **`bridge_get_project_knowledge(repo_root="<REPO_ROOT>")`** to load prior context.
 
 ---
 
 ## Stage 1.6 — Run Code-Review-Graph (Every Session Start)
 
-**Skip this stage if this is a cold start** — CS-4 already ran the graph.
+**Skip this stage if this is a cold start.**
 
-For all other sessions, use the MCP code-review-graph tools:
-
+For all other sessions:
 ```
-mcp_code-review-graph_build_or_update_graph_tool (incremental update)
-mcp_code-review-graph_get_minimal_context_tool
+mcp_code-review-graph_build_or_update_graph_tool(repo_root="<REPO_ROOT>")
 ```
-
 > *"Indexing `<REPO_ROOT>` with code-review-graph..."*
 
 Use the graph output as the primary repo context in Stage 2.
-
-**Important:** The graph is a session-start snapshot. Do not re-run between tasks mid-session.
 
 ---
 
 ## Stage 2 — Simulate Planning (Supervisor Role)
 
-Before invoking the real executor, YOU produce the task plan.
+You produce the task plan before invoking the executor.
 
-### How to produce the plan
-
-1. Get repo context, layered in priority order:
-   - **Highest:** `code-review-graph` MCP output from Stage 1.6
-   - **Then:** Knowledge Items from Stage 1.5
-   - **Then:** `bridge_progress/project_knowledge.json` in `REPO_ROOT` if present
-   - **Fallback:** `git -C "<REPO_ROOT>" ls-files` (all tracked files, cap at 300 lines)
-2. Produce a JSON plan following the **exact schema** in `references/pipeline.md` → **Task Schema**
-3. Apply the MICRO-TASK PROFILE rules (one file per task, surgical instructions, explicit assertions)
-4. When `code-review-graph` context is available:
-   - Include exact `file:line` locations in every instruction
-   - **Auto-populate `context_files` using dependency edges:** use `mcp_code-review-graph_query_graph_tool` with `pattern=imports_of` for each target file
-5. Set per-task `"model"` field based on complexity:
-   - `"model": "ollama/qwen2.5-coder:7b"` — single-class utility, no complex imports
-   - `"model": "ollama/qwen2.5-coder:14b"` — multi-import orchestration, complex logic
-   - `"model": null` — inherit bridge default
-6. Show the plan to the user as a numbered list and ask: *"Does this plan look right before I hand it to the executor?"*
-7. Once confirmed, save the plan to `TASK_PLAN_active.json` (in cwd = bridge_root). **Always include `"goal"` at root level** — `{ "goal": "...", "tasks": [...] }`
+1. Gather repo context: `code-review-graph` > `memory_search` > `bridge_get_project_knowledge` > file listing.
+2. Produce a JSON plan following the schema in `references/pipeline.md` → **Task Schema**
+3. Include exact `file:line` locations and set `"model"` per-task (e.g. `ollama/qwen2.5-coder:7b` for simple, `14b` for complex).
+4. Show the plan as a numbered list and ask: *"Does this plan look right before I hand it to the executor?"*
+5. Save the plan to `TASK_PLAN_active.json` at `bridge_root`. Always include `"goal"` at the root.
 
 ---
 
-## Stage 2.5 — Plan Self-Check (MICRO-TASK Validation)
+## Stage 2.5 — Plan Self-Check
 
-Before saving, run this checklist against **every task**:
-
-| Rule | Check | Auto-fix |
-|---|---|---|
-| **One file per task** | `files[]` must have exactly 1 entry | Split into separate tasks |
-| **Word count** | `instruction` must be ≥ 15 words and ≤ 120 words | Expand or trim |
-| **No banned verbs** | Must NOT start with: "Refactor", "Clean up", "Improve", "Update", "Fix" (alone) | Rewrite with precise imperative |
-| **Exact location** | If graph context available: every instruction must name at least one `file:line` or function name | Inject from graph output |
-| **`must_exist` for create tasks** | If task creates a file: `must_exist[]` must list it | Add the expected path |
-| **File exists for modify tasks** | Confirm the file appears in git or graph output | Flag to user if not found |
-| **No "and" in instructions** | Must not describe two independent actions joined by "and" | Split into two tasks |
-
-Report:
-> **Plan self-check:** 7 tasks checked — 2 split, 1 instruction rewritten, 0 blockers. Ready to save.
+Check every task:
+- Exactly 1 file per task (`files[]`)
+- `instruction` between 15 and 120 words
+- No banned generic verbs (Refactor/Improve/Fix alone)
+- Exact location injected
+- Target files actually exist or are listed in `must_exist`
+- No "and" in instructions (one action per task)
 
 ---
 
 ## Stage 3 — Executor Handoff
 
-**`bridge_root` = cwd.** All `python main.py` commands run from the current working directory.
+### Step 3-A: Dry Run
 
-### Step 3-A: Dry run
-
-```powershell
-python main.py --repo-root "<REPO_ROOT>" --plan-file "TASK_PLAN_active.json" --dry-run
+Call **`bridge_dry_run`**:
 ```
-
-If dry run fails → fix the plan and re-run. Do not proceed until it exits 0.
-
-### Step 3-B: Real run
-
-```powershell
-python main.py --repo-root "<REPO_ROOT>" --plan-file "TASK_PLAN_active.json" --manual-supervisor --workflow-profile micro --session-tokens <N>
+bridge_dry_run(
+  plan_file = "<bridge_root>/TASK_PLAN_active.json",
+  repo_root = "<REPO_ROOT>",
+  ...
+)
 ```
+If `valid: false`, fix the plan and retry.
 
-**Do NOT add `--auto-approve`.** The bridge writes review request files and waits for your decision files.
+### Step 3-B: Real Run
+
+Call **`bridge_run_plan`** in the background:
+```
+bridge_run_plan(
+  plan_file         = "<bridge_root>/TASK_PLAN_active.json",
+  repo_root         = "<REPO_ROOT>",
+  goal              = "<goal>",
+  manual_supervisor = true,
+  ...
+)
+```
+**Do NOT omit `manual_supervisor: true`.** The bridge runs in the background.
 
 ---
 
 ## Stage 4 — Manual Review Loop
 
-With `--manual-supervisor`, the bridge pauses after each task and writes a review request file. Run the bridge in the background using `run_command`.
+The bridge pauses after each task, writes a review request file, and polls for your decision file every 2 seconds.
 
-### Step 1 — Start bridge in background
+Monitor the run with **`bridge_get_run_output`**:
+```
+bridge_get_run_output(lines=40)
+```
 
-Use `run_command` with a long `WaitMsBeforeAsync` (500ms) to run the bridge as a background process.
-
-### Step 2 — Poll for review requests
-
+Poll for new request files via `list_dir` or PowerShell:
 ```powershell
 Get-ChildItem "<REPO_ROOT>/bridge_progress/manual_supervisor/requests/" -ErrorAction SilentlyContinue
 ```
 
-### Step 3 — Read the review request
+When a request appears, read it via `view_file` and inspect the diff against the criteria in `references/pipeline.md`.
 
-Use `view_file` to read the request JSON containing `task_id`, `instruction`, `diff`, `execution`, `validation`, `files`.
-
-### Step 4 — Inspect the diff against the task instruction using Review Criteria from `references/pipeline.md`.
-
-### Step 5 — Write decision file
-
-Use `write_to_file` to create:
+Write your decision using `write_to_file`:
 ```
 <REPO_ROOT>/bridge_progress/manual_supervisor/decisions/task_XXXX_decision.json
 ```
+- **PASS:** `{ "decision": "pass" }`
+- **REWORK:** `{ "decision": "rework", "instruction": "exact symbol/line that is wrong and what to do instead" }`
 
-PASS:
-```json
-{ "decision": "pass" }
+### After every PASS — refresh the graph
+Call:
 ```
-
-REWORK:
-```json
-{ "decision": "rework", "instruction": "specific actionable instruction" }
+mcp_code-review-graph_detect_changes_tool(repo_root="<REPO_ROOT>")
 ```
+This keeps the logic graph up-to-date with live commits.
 
-SUBPLAN:
-```json
-{
-  "decision": "subplan",
-  "sub_tasks": [
-    { "instruction": "create X at src/x.ts", "files": ["src/x.ts"], "type": "create" }
-  ]
-}
+### Mid-session REWORK learning
+Every time you write a REWORK, instantly log it:
+```
+memory_save(
+  content = "REWORK — <REPO_ROOT basename>\nFile: <file>\nTask: <id>\nFailed: <instruction 80 chars>\nReason: <why>\nPattern: <why pattern>",
+  type    = "procedural",
+  tags    = ["repo:<basename>", "rework", "<file>"]
+)
 ```
 
 ---
 
 ## Stage 5 — Checkpoint & Completion
 
-### Step 5-A: Read all generated files
+### Step 5-A: Read status
+```
+bridge_get_status(repo_root="<REPO_ROOT>")
+bridge_get_metrics(repo_root="<REPO_ROOT>")
+```
+Read `RUN_REPORT.md` (show verbatim), `RUN_DIAGNOSTICS.json`, `token_log.json`.
 
-Read these files from `<REPO_ROOT>/bridge_progress/` using `view_file`:
-1. `task_metrics.json` — verify status
-2. `RUN_REPORT.md` — show to user verbatim
-3. `RUN_DIAGNOSTICS.json` — check blocking patterns
-4. `last_run.json` — quick confirmation
-5. `token_log.json` — extract savings %
-6. `LATEST_REPORT.md` — status overview
+### Step 5-A-G: Full graph rebuild
+Do a full graph rebuild in background:
+```
+mcp_code-review-graph_build_or_update_graph_tool(repo_root="<REPO_ROOT>")
+```
 
 ### Step 5-B: Confirm git commits
-
 ```powershell
 git -C "<REPO_ROOT>" log --oneline -<N>
 ```
 
 ### Step 5-C: Cleanup
-
 ```powershell
 Remove-Item "<bridge_root>/TASK_PLAN_active.json" -Force -ErrorAction SilentlyContinue
 ```
 
-### Step 5-D: Present the run summary
+### Step 5-D: Present Summary
+Show the run summary with tokens, tasks, reworks, and savings.
 
+### Step 5-F: Save to memory
+Call **`memory_save`** with the full run record:
 ```
-Run complete — <REPO_ROOT basename>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Tasks:    <completed> / <planned> completed  (<skipped> skipped)
-Reworks:  <N> task(s) needed rework
-Commits:  <N> git commits made
-Duration: <elapsed_seconds>s
-
-Token usage (from RUN_REPORT.md):
-  Supervisor (plan + review):  <total> tokens
-  Aider / Ollama (local):      ~<estimated> tokens (free)
-  Total cloud AI:              <total_ai> tokens
-
-Savings vs doing this without the bridge:
-  Estimated direct cost:  <estimated_direct> tokens
-  Actual cost:            <total_ai> tokens
-  Saved:                  <tokens_saved> tokens (<savings_pct>%)
-
-Blocking patterns detected: <none / list>
-Reports written to: <REPO_ROOT>/bridge_progress/
+memory_save(
+  content = """Project: <REPO_ROOT basename> ... [full summary]""",
+  type = "episodic",
+  tags = ["repo:<basename>", "bridge-run", "status:<success|failure>"]
+)
 ```
+Do not skip this. It eliminates re-discovery across future sessions.
 
 ---
 
 ## Hard Rules
-
-These are non-negotiable:
-
-- **Never write or edit code directly** — all code changes go through Aider via the bridge. **Boilerplate exception:** you may write `package.json`, `tsconfig.json`, `.env.example`, `docker-compose.yml`, `AGENTS.md`, `.gitignore` directly — these are pure config with no imports. Every `.ts`, `.py`, `.js`, `.cs` source file must go through bridge.
-- **Always include `"goal"` at plan JSON root** — `{ "goal": "...", "tasks": [...] }`
-- **Never use `--auto-approve`** — it bypasses all review
-- **Never run main.py without `--manual-supervisor`** — without it, the bridge calls an external supervisor CLI and ignores you
-- **Never skip Stage 1 (setup checks)** — a broken Aider install will corrupt bridge_progress state
-- **Never skip Stage 2 (simulate plan)** — user must see and approve the task plan first
-- **If a task fails 3+ times** → pause and execute the failure escalation procedure below
+- **Never write or edit code directly** (except boilerplate configs like `package.json`).
+- **Always pass `manual_supervisor: true`** to `bridge_run_plan`.
+- **Never skip Stage 1 & 2**.
 
 ### Failure Escalation Procedure (3+ failures on same task)
-
-1. Read `bridge_progress/RUN_DIAGNOSTICS.json` → find the failing task
-2. Identify the failure type using `references/pipeline.md` → **Failure Taxonomy**
-3. Apply the escalation action:
-
-| Failure type | Escalation action |
-|---|---|
-| `interactive_prompt` | Add the file to `context_files` |
-| `timeout` | Split the task or increase `--task-timeout` |
-| `silent_failure` | Rewrite instruction with exact function/class/symbol |
-| `repeated_validation_failure` | Rewrite `must_exist` / `must_contain` |
-| `supervisor_rework_loop` | Clarify acceptance criteria |
-| `model_capability_gap` | Tell user: switch to a larger model |
-| `missing_dependency` | Add a preceding task for the dependency |
-
-4. Show revised instruction and ask user to approve or abort
+1. Call `bridge_get_run_output` or check diagnostics.
+2. Apply escalation action (e.g. timeout → split task, model gap → larger model, etc.).
+3. Save failure pattern via `memory_save` immediately.
 
 ---
 
 ## Reference Files
-
-- `references/pipeline.md` — Task JSON schema, MICRO-TASK rules, review criteria, failure taxonomy
-- `references/flags.md` — All `main.py` flags, standard invocations, situational variants
+- `references/pipeline.md` — Task JSON schema, review criteria, failure taxonomy
+- `references/flags.md` — Command flags and usage patterns

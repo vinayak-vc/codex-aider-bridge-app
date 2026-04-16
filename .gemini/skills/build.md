@@ -28,7 +28,7 @@ Read from the **target project**:
 
 Read the actual target files that the goal mentions — use `view_file` to see exact code structure.
 
-Also check Knowledge Items (KIs) for any prior context about this project.
+Also check the Memory MCP (`memory_search`) for any prior context about this project.
 
 ## Step 3: Classify & Execute Each Task
 
@@ -74,15 +74,16 @@ After classifying all tasks:
 **If there are medium/large tasks:**
 1. Do the tiny tasks yourself first (edit tools)
 2. Write remaining tasks to `<project>/taskJsons/plan_<timestamp>.json`
-3. Launch bridge subprocess in background:
-   ```powershell
-   python main.py "<goal>" `
-     --repo-root "<project>" `
-     --plan-file "<project>/taskJsons/plan_<timestamp>.json" `
-     --manual-supervisor `
-     --aider-model "ollama/qwen2.5-coder:7b" `
-     --task-timeout 600 `
-     --max-task-retries 10
+3. Launch bridge via MCP tool:
+   ```
+   bridge_run_plan(
+     plan_file         = "<project>/taskJsons/plan_<timestamp>.json",
+     repo_root         = "<project>",
+     goal              = "<goal>",
+     manual_supervisor = true,
+     aider_model       = "ollama/qwen2.5-coder:7b",
+     ...
+   )
    ```
 4. Poll for review requests and write decisions:
    ```powershell
