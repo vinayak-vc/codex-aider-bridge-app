@@ -10,6 +10,7 @@ from typing import Optional
 
 _WIN_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+from context.project_context import ProjectContext
 from models.task import ReviewResult, SubTask, Task, TaskReport
 from utils.command_resolution import resolve_command_arguments
 from utils.token_tracker import TokenTracker
@@ -56,10 +57,9 @@ class SupervisorAgent:
     def generate_plan(
         self,
         goal: str,
-        repo_tree: str,
+        project_context: Optional[ProjectContext] = None,
         idea_text: Optional[str] = None,
         feedback: Optional[str] = None,
-        knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
         feature_specs: Optional[str] = None,
         model_roster: Optional[str] = None,
@@ -68,10 +68,9 @@ class SupervisorAgent:
         """Ask the supervisor to produce a JSON atomic task plan."""
         prompt = self._build_plan_prompt(
             goal,
-            repo_tree,
+            project_context,
             idea_text,
             feedback,
-            knowledge_context,
             workflow_profile,
             feature_specs=feature_specs,
             model_roster=model_roster,
@@ -128,14 +127,15 @@ class SupervisorAgent:
     def _build_plan_prompt(
         self,
         goal: str,
-        repo_tree: str,
+        project_context: Optional[ProjectContext],
         idea_text: Optional[str],
         feedback: Optional[str],
-        knowledge_context: Optional[str] = None,
         workflow_profile: str = "standard",
         feature_specs: Optional[str] = None,
         model_roster: Optional[str] = None,
     ) -> str:
+        repo_tree = project_context.repo_snapshot.tree if project_context is not None else ""
+        knowledge_context = project_context.planner_text if project_context is not None else None
         idea_block = ""
         if idea_text:
             trimmed = idea_text[:_IDEA_MAX_CHARS]

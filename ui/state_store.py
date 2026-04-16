@@ -59,6 +59,22 @@ DEFAULT_SETTINGS: dict = {
 }
 
 
+def _normalize_auto_commit(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return True
+
+
 def _ensure() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -70,7 +86,9 @@ def load_settings() -> dict:
     if SETTINGS_FILE.exists():
         try:
             saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            return {**DEFAULT_SETTINGS, **saved}
+            merged = {**DEFAULT_SETTINGS, **saved}
+            merged["auto_commit"] = _normalize_auto_commit(merged.get("auto_commit"))
+            return merged
         except Exception:
             pass
     return dict(DEFAULT_SETTINGS)
@@ -80,6 +98,7 @@ def save_settings(settings: dict) -> None:
     _ensure()
     # Only persist known keys so stale keys don't pile up
     cleaned = {k: settings[k] for k in DEFAULT_SETTINGS if k in settings}
+    cleaned["auto_commit"] = _normalize_auto_commit(cleaned.get("auto_commit"))
     SETTINGS_FILE.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
 
 

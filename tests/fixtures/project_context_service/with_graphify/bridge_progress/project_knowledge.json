@@ -1,0 +1,40 @@
+{
+  "project": {
+    "name": "with_graphify",
+    "type": "desktop",
+    "language": "python",
+    "summary": "Knowledge cache says this project coordinates desktop UI, relay flow, and Firebase sync."
+  },
+  "files": {
+    "ui/app.py": {
+      "role": "Flask app bootstrap and route registration."
+    }
+  },
+  "docs": [
+    {
+      "path": "README.md",
+      "title": "README",
+      "summary": "Setup and architecture overview.",
+      "score": 90
+    }
+  ],
+  "patterns": [
+    "Flask API routes",
+    "Supervisor review loop"
+  ],
+  "features_done": [
+    "Ship cloud dashboard"
+  ],
+  "suggested_next": [],
+  "clarifications": [
+    "Prefer existing Firebase auth flow."
+  ],
+  "runs": [
+    {
+      "date": "2026-04-14",
+      "goal": "Refresh context",
+      "tasks_completed": 2,
+      "status": "success"
+    }
+  ]
+}
