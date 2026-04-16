@@ -117,7 +117,14 @@ through MCP tools — no more curl calls or raw HTTP.
 **Replaces:** `claude-mem:mem-search` calls in Stage 1.5 of the skill, and
 all `curl /bridge/enhance` + `/bridge/ingest` calls.
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅`
+
+**Notes:**
+- 5 tools: `memory_health`, `memory_search`, `memory_save`, `memory_enhance`, `memory_ingest`
+- `memory_ingest` added beyond original plan — mirrors the bridge's `POST /bridge/ingest` call
+- SQLite serialises `MemoryType` REAL column as string `"2.0"` — fixed with `Math.round(Number(...))`
+- `memory_health` infers mode (vector+sqlite vs sqlite-only) by probing Qdrant port 6333 directly
+- All tools degrade gracefully if memory service is unreachable (return `isError` response)
 
 ---
 
@@ -218,7 +225,7 @@ and memory service.
 |---|---|---|
 | M1 | Scaffold & Transport | `DONE ✅` |
 | M2 | State Tools | `DONE ✅` |
-| M3 | Memory Tools | `NOT STARTED` |
+| M3 | Memory Tools | `DONE ✅` |
 | M4 | Service Health Tool | `NOT STARTED` |
 | M5 | Execution Tools | `NOT STARTED` |
 | M6 | Skill Rewrite | `NOT STARTED` |
@@ -268,3 +275,4 @@ mcp/
 | 2026-04-16 | — | Plan created |
 | 2026-04-16 | M1 | Scaffold complete — `bridge_ping` tool verified end-to-end; SDK framing issue (NDJSON not LSP) diagnosed and fixed |
 | 2026-04-16 | M2 | All 5 state tools verified against real `bridge_progress/` data — `bridge_get_status`, `bridge_get_checkpoint`, `bridge_get_metrics`, `bridge_get_project_knowledge`, `bridge_list_repos` |
+| 2026-04-16 | M3 | All 5 memory tools verified against live service — `memory_health`, `memory_search`, `memory_save`, `memory_enhance`, `memory_ingest`; fixed SQLite string-float type serialisation bug |
