@@ -235,3 +235,5 @@ logs.meta                                # Unity meta for bridge logs folder
 .aider.input.history                     # Aider interactive input history
 .aider.chat.history.md                   # Aider chat history
 bridge_progress.meta                     # Unity meta for bridge_progress folder
+mcp/node_modules/
+mcp/dist/
