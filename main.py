@@ -10,13 +10,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 from bridge_logging.logger import configure_logging
 from context.file_selector import FileSelector
 from context.idea_loader import IdeaLoader
+from context.project_context_service import ProjectContextService
 from context.project_understanding import ensure_project_understanding, understanding_file_path
-from context.repo_scanner import RepoScanner
 from executor.aider_runner import AiderRunner
 from executor.diff_collector import DiffCollector
 from models.task import AiderContext, BridgeConfig, ExecutionResult, SubTask, Task, TaskReport
@@ -30,11 +31,20 @@ from utils.run_diagnostics import RunDiagnostics
 from utils.project_knowledge import (
     load_knowledge,
     save_knowledge,
-    to_context_text,
     update_knowledge_from_run,
 )
 from utils.project_type_prompt import PROJECT_TYPES, describe, prompt_project_type
 from validator.validator import MechanicalValidator
+import memory.memory_client as memory_client
+
+
+def _is_allowed_empty_task_file(relative_path: str) -> bool:
+    rel = PurePosixPath(relative_path.replace("\\", "/"))
+    return (
+        rel.match("**/__init__.py")
+        or rel.match("**/.gitkeep")
+        or rel.match("**/.keep")
+    )
 
 
 def _write_json_file(path: Path, payload: dict) -> None:
@@ -604,6 +614,7 @@ def execute_task_with_review(
     """
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
+    current_instruction = memory_client.enhance_prompt(current_instruction)
 
     if manual_supervisor is not None:
         resumed_diff = manual_supervisor.try_resume_completed_task(
@@ -853,7 +864,7 @@ def execute_task_with_review(
                     stdout=combined_content[:2000], stderr="",
                     command=[], attempt_number=attempt + 1,
                 )
-                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:4000])
+                task_report = TaskReport(task=current_task, execution_result=fake_result, diff=combined_content[:10000])
                 request_path = manual_supervisor.submit_review_request(
                     task_report, validation_message="Read-only analysis task — review the file content.",
                     unexpected_files=[],
@@ -1064,6 +1075,7 @@ def execute_task_with_review(
                 fp for fp in current_task.files
                 if (config.repo_root / fp).exists()
                 and (config.repo_root / fp).stat().st_size == 0
+                and not _is_allowed_empty_task_file(fp)
             ]
             if empty_files:
                 logger.warning(
@@ -1848,7 +1860,6 @@ def main() -> int:
         supervisor=config.supervisor_command or "manual",
         task_timeout=config.task_timeout_seconds,
     )
-    repo_tree = RepoScanner(repo_root).scan()
     task_parser = TaskParser()
     selector = FileSelector(repo_root)
 
@@ -1922,7 +1933,7 @@ def main() -> int:
             _understanding_err,
         )
 
-    knowledge_context = to_context_text(knowledge)
+    project_context = ProjectContextService(repo_root).load_for_planner()
     if knowledge.get("files"):
         logger.info(
             "Project knowledge loaded: %d files registered, %d features done",
@@ -1931,6 +1942,12 @@ def main() -> int:
         )
     else:
         logger.info("No project knowledge yet — will create after this run.")
+
+    logger.info(
+        "Planner context source: %s%s",
+        project_context.source,
+        " (graphify available)" if project_context.graphify.available else "",
+    )
 
     # Only create supervisor agent when needed (not in auto-approve mode).
     supervisor: Optional[SupervisorAgent] = None
@@ -2037,8 +2054,8 @@ def main() -> int:
                 })
 
             tasks = obtain_plan(
-                config, supervisor, task_parser, repo_tree, logger,
-                knowledge_context, feature_specs=feature_specs,
+                config, supervisor, task_parser, project_context, logger,
+                feature_specs=feature_specs,
                 model_roster=_model_roster,
             )
 
@@ -2194,6 +2211,7 @@ def main() -> int:
                     model_override=_task_model_override,
                 )
                 _consecutive_failures = 0  # Reset circuit breaker on success
+                memory_client.ingest_result(task.instruction, (task_diff or "")[:1000], "aider-bridge")
             except RuntimeError as task_ex:
                 # Task-level rollback: revert to pre-task state
                 if _pre_task_sha:

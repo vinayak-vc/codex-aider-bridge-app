@@ -5,12 +5,12 @@ Extracted from ui/app.py for maintainability.
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, render_template, request
 
+from context.project_context_service import ProjectContextService
 from ui import state_store
 from ui.app_state import broadcast, get_run
 
@@ -294,7 +294,6 @@ def relay_page():
 def api_relay_generate_prompt():
     """Return the plan prompt the user pastes into their web AI."""
     from utils.relay_formatter import build_plan_prompt
-    from utils.project_knowledge import load_knowledge, to_context_text
 
     data      = request.get_json(force=True) or {}
     goal      = (data.get("goal") or "").strip()
@@ -306,23 +305,9 @@ def api_relay_generate_prompt():
     if repo_root:
         repo_path = Path(repo_root)
         try:
-            knowledge = load_knowledge(repo_path)   # must receive a Path, not str
-            knowledge_context = to_context_text(knowledge)
+            knowledge_context = ProjectContextService(repo_path).load_for_relay().relay_text.strip()
         except Exception:
             pass
-
-        # Fallback: if the knowledge file hasn't been built yet (first use),
-        # include a compact file-tree scan so the web AI knows the project layout.
-        if not knowledge_context.strip():
-            try:
-                _root = Path(__file__).parent.parent
-                if str(_root) not in sys.path:
-                    sys.path.insert(0, str(_root))
-                from context.repo_scanner import RepoScanner
-                tree = RepoScanner(repo_path).scan()
-                knowledge_context = f"FILE TREE:\n{tree}"
-            except Exception:
-                pass
 
     prompt = build_plan_prompt(goal, knowledge_context, repo_root)
     

@@ -7,7 +7,8 @@ import re
 import subprocess
 import sys
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 # On Windows, prevent spawned subprocesses from opening a visible CMD window.
@@ -65,6 +66,7 @@ class AiderRunner:
                 [p.name for p in self._standards_files],
             )
         self._repo_file_index: list[str] = self._build_repo_file_index()
+        self._edit_format_failures: dict[str, int] = {}
 
     # ── Pre/post hash helpers (YourStore suggestion 2) ───────────────────────
 
@@ -103,6 +105,16 @@ class AiderRunner:
 
         return _strip(before_content) == _strip(after_content)
 
+    @staticmethod
+    def _is_allowed_empty_file(path: Path) -> bool:
+        """Return True for intentionally empty marker/module files."""
+        rel = PurePosixPath(path.as_posix())
+        return (
+            rel.match("**/__init__.py")
+            or rel.match("**/.gitkeep")
+            or rel.match("**/.keep")
+        )
+
     def _check_for_silent_failure(
         self,
         task_id: int,
@@ -139,12 +151,22 @@ class AiderRunner:
 
         unchanged: list[str] = []
         trivial: list[str] = []
+        
+        
 
         for path in file_paths:
             key = str(path)
             after_hash = self._hash_file(path)
             pre_hash = before.get(key)
 
+            if (
+                path.exists()
+                and path.stat().st_size == 0
+                and not self._is_allowed_empty_file(path)
+            ):
+                unchanged.append(path.name)
+                continue
+            
             if pre_hash == after_hash:
                 # For CREATE tasks: file didn't exist before AND still doesn't →
                 # that means Aider never created it — this IS a failure, not a skip.
@@ -226,7 +248,7 @@ class AiderRunner:
 
     # ── Estimate how long the LLM generation will take ─────────────────────
 
-    def _estimate_generation_seconds(self, file_paths: list[Path]) -> int:
+    def _estimate_generation_seconds(self,edit_format: str, file_paths: list[Path]) -> int:
         """Rough estimate of how long the LLM will take to generate a response.
 
         With ``--edit-format diff`` the model outputs only the changed lines
@@ -243,7 +265,13 @@ class AiderRunner:
             except OSError:
                 pass
         # ~4 chars per token, diff outputs ~20% of file, ~6 tok/s for slow models
-        estimated_output_tokens = (total_chars / 4) * 0.20
+        
+        if edit_format == "whole":
+            estimated_output_tokens = (total_chars / 4)
+        else:
+            estimated_output_tokens = (total_chars / 4) * 0.20
+        
+        #estimated_output_tokens = (total_chars / 4) * 0.20
         return max(60, int(estimated_output_tokens / 6) + 30)  # min 60s, +30s overhead
 
     # ── Adaptive edit format selection ──────────────────────────────────────
@@ -251,48 +279,93 @@ class AiderRunner:
     _WHOLE_FORMAT_LINE_THRESHOLD = 2000
 
     # Track per-file edit mode success/failure for adaptive fallback
-    _edit_format_failures: dict[str, int] = {}  # file_path → consecutive diff failures
+
+    def _supports_reliable_diff(self) -> bool:
+        model = (self._model or "").lower()
+        return model.startswith(("openai/", "anthropic/"))
+
+    def _is_local_model(self) -> bool:
+        """
+        Return True if the current model is a local / self-hosted model.
+
+        We classify as local if:
+        - Explicit ollama prefix
+        - Known local model families WITHOUT a remote provider prefix
+        """
+
+        model = (self._model or "").lower()
+
+        # Explicit local provider
+        if model.startswith("ollama/"):
+            return True
+
+        # Known remote providers (extend as needed)
+        REMOTE_PREFIXES = (
+            "openai/",
+            "anthropic/",
+            "azure/",
+            "google/",
+        )
+
+        if any(model.startswith(p) for p in REMOTE_PREFIXES):
+            return False
+
+        # Known local model families
+        LOCAL_FAMILIES = (
+            "qwen",
+            "llama",
+            "gemma",
+            "mistral",
+            "deepseek",
+            "phi",
+        )
+
+        return any(name in model for name in LOCAL_FAMILIES)
 
     def _pick_edit_format(self, file_paths: list[Path], force_whole: bool = False) -> str:
-        """Choose edit format based on file size, history, and forced overrides.
-
-        Adaptive strategy:
-          1. Files under threshold → whole (default, safest for 7B models)
-          2. Files over threshold → diff (faster, but may fail)
-          3. If diff failed before for this file → switch to whole
-          4. force_whole → always whole (used by retry system after pattern_mismatch)
         """
+        Strategy:
+        1. force_whole → always whole
+        2. local models → always whole (diff unreliable)
+        3. previous diff failure → whole
+        4. small files → whole
+        5. large files → diff (only for strong remote models)
+        """
+
         if force_whole:
             self._logger.info("Edit format: whole (forced by retry feedback)")
+            return "whole"
+        
+        if not self._supports_reliable_diff():
             return "whole"
 
         total_lines = 0
         for p in file_paths:
             try:
                 if p.exists():
-                    total_lines += sum(1 for _ in p.open(encoding="utf-8", errors="replace"))
+                    with p.open(encoding="utf-8", errors="replace") as f:
+                        total_lines += sum(1 for _ in f)
             except OSError:
                 pass
 
-        # Check if diff has failed for any of these files before
+        # If diff failed before → fallback permanently
         for p in file_paths:
-            key = str(p)
-            if self._edit_format_failures.get(key, 0) >= 1:
+            if self._edit_format_failures.get(str(p), 0) >= 1:
                 self._logger.info(
-                    "Edit format: whole (diff failed previously for %s)", p.name,
+                    "Edit format: whole (diff failed previously for %s)", p.name
                 )
                 return "whole"
 
+        # Small files → whole (safer even for strong models)
         if total_lines <= self._WHOLE_FORMAT_LINE_THRESHOLD:
             self._logger.info(
-                "Edit format: whole (%d lines — under %d threshold)",
-                total_lines, self._WHOLE_FORMAT_LINE_THRESHOLD,
+                "Edit format: whole (%d lines — under threshold)", total_lines
             )
             return "whole"
 
+        # Only large + strong models → diff
         self._logger.info(
-            "Edit format: diff (%d lines — above %d threshold)",
-            total_lines, self._WHOLE_FORMAT_LINE_THRESHOLD,
+            "Edit format: diff (%d lines — above threshold)", total_lines
         )
         return "diff"
 
@@ -515,10 +588,12 @@ class AiderRunner:
         }
 
         # Log estimated generation time so timeouts are understandable
-        est = self._estimate_generation_seconds(file_paths)
+        edit_format = self._pick_edit_format(file_paths)
+        est = self._estimate_generation_seconds(edit_format , file_paths)
+ 
         self._logger.info(
-            "Task %s: estimated LLM generation ~%ds (timeout=%ds, diff format)",
-            task.id, est, self._timeout,
+            "Task %s: estimated LLM generation ~%ds (timeout=%ds, format=%s)",
+            task.id, est, self._timeout, edit_format
         )
 
         # ── Attempt 1: normal run ────────────────────────────────────────
@@ -773,7 +848,8 @@ class AiderRunner:
             if _model and "/" not in _model and not _model.startswith("gpt") and not _model.startswith("claude"):
                 _model = f"ollama/{_model}"
             arguments.extend(["--model", _model])
-
+  
+        edit_format = self._pick_edit_format(file_paths)
         arguments.extend([
             "--yes-always",
             "--no-pretty",
@@ -786,10 +862,10 @@ class AiderRunner:
             "--no-detect-urls",          # suppress URL detection warnings
             "--no-suggest-shell-commands",  # prevent shell command suggestions
             "--timeout", str(self._timeout + 60),  # LLM request timeout > bridge timeout
-            "--edit-format", self._pick_edit_format(file_paths),
+            "--edit-format", edit_format,
             "--map-refresh", "manual",   # Don't re-scan repo mid-task
             "--message",
-            self._build_message(task, aider_context, file_paths),
+            self._build_message(task,edit_format , aider_context, file_paths),
         ])
 
         # ── Repo-map size ────────────────────────────────────────────────
@@ -848,6 +924,7 @@ class AiderRunner:
     def _build_message(
         self,
         task: Task,
+        edit_format: str,
         ctx: Optional[AiderContext],
         file_paths: Optional[list[Path]] = None,
     ) -> str:
@@ -901,8 +978,14 @@ class AiderRunner:
             "  - Do not ask questions or request clarification — implement directly",
             "  - Do not write TODO/stub placeholders — write complete working code",
             "  - Do not remove existing unrelated code",
-            "  - Keep your response SHORT — output only the diff/edit blocks, no explanations",
+            #"  - Keep your response SHORT — output only the diff/edit blocks, no explanations",
         ]
+        
+        if edit_format == "diff":
+            rules.append("  - Output ONLY valid diff blocks")
+        else:
+            rules.append("  - Output the FULL updated file content")
+            
         if self._standards_files:
             names = ", ".join(p.name for p in self._standards_files)
             rules.append(f"  - Follow {names} (loaded as read-only context)")

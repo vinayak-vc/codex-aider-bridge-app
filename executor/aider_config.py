@@ -54,4 +54,5 @@ USELESS_RESPONSE_PATTERNS: tuple[str, ...] = (
     "if you have any questions",
     "i understand the task",
     "i'll help you with that",
+    "<<<<<<< SEARCH\n=======\n>>>>>>> REPLACE"
 )

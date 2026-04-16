@@ -1,4 +1,4 @@
-"""Project knowledge cache — stores what every file does so any AI can
+"""Project knowledge cache - stores what every file does so any AI can
 understand the project architecture by reading one JSON file.
 
 Stored at: <repo_root>/bridge_progress/project_knowledge.json
@@ -20,6 +20,8 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from context.prompt_context_formatter import render_knowledge_context
+
 _KNOWLEDGE_FILENAME = "project_knowledge.json"
 _logger = logging.getLogger(__name__)
 
@@ -32,11 +34,7 @@ def _today() -> str:
 
 
 def _role_from_instruction(instruction: str, file_path: str) -> str:
-    """Extract a concise role description from a task instruction.
-
-    Tries to find the first sentence. Falls back to first N chars.
-    """
-    # Strip leading boilerplate like "Create X.cs." or "Modify X.cs."
+    """Extract a concise role description from a task instruction."""
     cleaned = re.sub(
         r"^(Create|Modify|Update|Add|Implement|Write|Open)\s+\S+\.\w+[\.\s]*",
         "",
@@ -47,12 +45,10 @@ def _role_from_instruction(instruction: str, file_path: str) -> str:
     if not cleaned:
         cleaned = instruction.strip()
 
-    # Take up to first sentence boundary.
     sentence_end = re.search(r"[.!?]\s", cleaned)
     if sentence_end and sentence_end.start() < _ROLE_SUMMARY_CHARS:
         return cleaned[: sentence_end.start() + 1].strip()
 
-    # Fall back to first N chars, trimmed to last word boundary.
     if len(cleaned) <= _ROLE_SUMMARY_CHARS:
         return cleaned
 
@@ -98,19 +94,14 @@ def update_knowledge_from_run(
     run_status: str = "success",
     tasks_completed_override: Optional[int] = None,
 ) -> dict:
-    """Update knowledge after a successful bridge run.
-
-    - Registers every file touched in the run with its role.
-    - Adds the run to history.
-    - Appends completed feature names.
-    - Refreshes last_updated.
-    """
+    """Update knowledge after a successful bridge run."""
+    _ = all_diffs
+    _ = repo_root
     knowledge["project"]["last_updated"] = _today()
 
     if not knowledge["project"].get("summary") and goal:
         knowledge["project"]["summary"] = goal[:300]
 
-    # Build a map of file → task instruction for role extraction.
     for task in tasks:
         instruction = getattr(task, "instruction", "") or ""
         task_type = getattr(task, "type", "modify")
@@ -125,18 +116,15 @@ def update_knowledge_from_run(
                 "created": existing.get("created", _today()),
             }
 
-    # Mark feature as done (use task instruction summary as feature name).
     done_set = set(knowledge.get("features_done", []))
     for task in tasks:
-        instruction = getattr(task, "instruction", "") or ""
         files = getattr(task, "files", [])
         if files:
-            feature_label = Path(files[0]).stem  # e.g. "PlayerController"
+            feature_label = Path(files[0]).stem
             if feature_label not in done_set:
                 knowledge["features_done"].append(feature_label)
                 done_set.add(feature_label)
 
-    # Append run record when explicitly requested.
     if append_run_record:
         knowledge["runs"].append({
             "date": _today(),
@@ -153,90 +141,8 @@ def update_knowledge_from_run(
 
 
 def to_context_text(knowledge: dict) -> str:
-    """Produce a compact human-readable summary for injection into AI prompts.
-
-    This text is injected into the supervisor planning prompt so the AI
-    knows the full project architecture without reading any source files.
-    """
-    proj = knowledge.get("project", {})
-    files = knowledge.get("files", {})
-    patterns = knowledge.get("patterns", [])
-    done = knowledge.get("features_done", [])
-    suggested = knowledge.get("suggested_next", [])
-    docs = knowledge.get("docs", [])
-    clarifications = knowledge.get("clarifications", [])
-
-    lines: list[str] = []
-
-    # Project header
-    name = proj.get("name", "Unknown Project")
-    lang = proj.get("language", "")
-    ptype = proj.get("type", "")
-    type_str = f" ({ptype}/{lang})" if ptype and lang else f" ({lang or ptype})" if (lang or ptype) else ""
-    lines.append(f"PROJECT: {name}{type_str}")
-    if proj.get("scanned"):
-        lines.append("(roles inferred by static scan — not task-authored)")
-
-    summary = proj.get("summary", "")
-    if summary:
-        lines.append(f"SUMMARY: {summary}")
-
-    if docs:
-        lines.append("")
-        lines.append("DOCUMENTATION SIGNALS:")
-        for doc in docs[:5]:
-            doc_path = str(doc.get("path", "")).strip()
-            doc_summary = str(doc.get("summary", "")).strip()
-            if doc_path and doc_summary:
-                lines.append(f"  {doc_path}")
-                lines.append(f"    -> {doc_summary}")
-
-    # File registry — the core value
-    if files:
-        lines.append("")
-        lines.append("FILE REGISTRY (what each file does):")
-        for file_path, meta in sorted(files.items()):
-            role = meta.get("role", "no description")
-            lines.append(f"  {file_path}")
-            lines.append(f"    -> {role}")
-
-    # Code patterns
-    if patterns:
-        lines.append("")
-        lines.append("CODE PATTERNS:")
-        for p in patterns:
-            lines.append(f"  -{p}")
-
-    # What's done
-    if done:
-        lines.append("")
-        lines.append(f"ALREADY IMPLEMENTED: {', '.join(done)}")
-
-    # Suggested next steps
-    if suggested:
-        lines.append("")
-        lines.append("POSSIBLE NEXT STEPS:")
-        for s in suggested:
-            lines.append(f"  -{s}")
-
-    if clarifications:
-        lines.append("")
-        lines.append("USER CLARIFICATIONS:")
-        for item in clarifications:
-            lines.append(f"  -{item}")
-
-    # Run history
-    runs = knowledge.get("runs", [])
-    if runs:
-        last = runs[-1]
-        lines.append("")
-        lines.append(
-            f"LAST RUN: {last.get('date', '?')} | "
-            f"{last.get('tasks_completed', 0)} tasks | "
-            f"\"{last.get('goal', '')}\""
-        )
-
-    return "\n".join(lines)
+    """Produce a compact human-readable summary for injection into AI prompts."""
+    return render_knowledge_context(knowledge)
 
 
 def _empty_knowledge(repo_root: Path) -> dict:
@@ -262,75 +168,18 @@ def _empty_knowledge(repo_root: Path) -> dict:
     }
 
 
-def _normalize_knowledge_shape(data: object, repo_root: Path) -> dict:
-    """Accept both the bridge-native schema and summary-style external schemas."""
-    if not isinstance(data, dict):
-        return _empty_knowledge(repo_root)
-
-    if "project" in data and "files" in data:
-        return data
-
+def _normalize_knowledge_shape(data: dict, repo_root: Path) -> dict:
     normalized = _empty_knowledge(repo_root)
-    normalized["project"].update({
-        "name": str(data.get("project_name") or repo_root.name),
-        "type": str(data.get("project_type") or ""),
-        "language": ", ".join(
-            str(item).strip()
-            for item in data.get("primary_languages", [])
-            if str(item).strip()
-        ),
-        "summary": str(data.get("summary") or ""),
-        "scanned": True,
-        "understanding_confirmed": True,
-    })
+    if not isinstance(data, dict):
+        return normalized
 
-    file_registry = data.get("file_registry", [])
-    if isinstance(file_registry, list):
-        for item in file_registry:
-            if not isinstance(item, dict):
-                continue
-            file_path = str(item.get("path") or "").strip()
-            if not file_path:
-                continue
-            normalized["files"][file_path] = {
-                "role": str(item.get("role") or "No description").strip(),
-                "task_type": "scan",
-                "last_modified": _today(),
-                "created": _today(),
-            }
+    project = data.get("project", {})
+    if isinstance(project, dict):
+        normalized["project"].update(project)
 
-    architecture = data.get("architecture", {})
-    if isinstance(architecture, dict):
-        patterns = architecture.get("patterns", [])
-        if isinstance(patterns, list):
-            normalized["patterns"] = [
-                str(item).strip() for item in patterns if str(item).strip()
-            ]
-
-    generated_dirs = data.get("generated_directories", [])
-    if isinstance(generated_dirs, list):
-        normalized["features_done"] = [
-            str(item.get("role") or "").strip()
-            for item in generated_dirs
-            if isinstance(item, dict) and str(item.get("role") or "").strip()
-        ]
-
-    constraints = data.get("constraints", [])
-    if isinstance(constraints, list):
-        normalized["clarifications"] = [
-            str(item).strip() for item in constraints if str(item).strip()
-        ]
-
-    docs: list[dict] = []
-    for rel_path in ("README.md", "AGENT_CONTEXT.md", "AI_UNDERSTANDING.md"):
-        doc_path = repo_root / rel_path
-        if doc_path.exists():
-            docs.append({
-                "path": rel_path,
-                "title": doc_path.stem,
-                "summary": f"Detected in {repo_root.name}.",
-                "score": 0,
-            })
-    normalized["docs"] = docs
+    for key in ("files", "docs", "patterns", "features_done", "suggested_next", "clarifications", "runs"):
+        value = data.get(key)
+        if isinstance(value, type(normalized[key])):
+            normalized[key] = value
 
     return normalized

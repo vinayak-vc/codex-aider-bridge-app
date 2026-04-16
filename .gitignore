@@ -219,3 +219,19 @@ logs/
 # AI-generated task plan JSON files (stored per-project, not committed)
 taskJsons/
 firebase_config.json
+
+# ── Aider / Bridge artefacts ─────────────────────────────────────
+.aider.tags.cache.v4/                    # Aider repo-map tag cache
+bridge_progress/                         # Bridge run state, checkpoints and reports
+logs.meta                                # Unity meta for bridge logs folder
+.aider.input.history                     # Aider interactive input history
+.aider.chat.history.md                   # Aider chat history
+bridge_progress.meta                     # Unity meta for bridge_progress folder
+
+# ── Aider / Bridge artefacts ─────────────────────────────────────
+.aider.tags.cache.v4/                    # Aider repo-map tag cache
+bridge_progress/                         # Bridge run state, checkpoints and reports
+logs.meta                                # Unity meta for bridge logs folder
+.aider.input.history                     # Aider interactive input history
+.aider.chat.history.md                   # Aider chat history
+bridge_progress.meta                     # Unity meta for bridge_progress folder

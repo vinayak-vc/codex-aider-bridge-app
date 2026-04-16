@@ -16,7 +16,7 @@ class DiffCollector:
     decision (PASS or REWORK) without needing access to the full file contents.
     """
 
-    _MAX_CHARS: int = 4000
+    _MAX_CHARS: int = 10000
 
     def __init__(self, repo_root: Path) -> None:
         self._root = repo_root

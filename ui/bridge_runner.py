@@ -121,7 +121,7 @@ class BridgeRun:
             cmd.append("--dry-run")
         if settings.get("model_lock"):
             cmd.append("--model-lock")
-        if not settings.get("auto_commit", True):
+        if settings.get("auto_commit") is False:
             cmd.append("--no-auto-commit")
         if settings.get("task_timeout"):
             cmd.extend(["--task-timeout", str(int(settings["task_timeout"]))])

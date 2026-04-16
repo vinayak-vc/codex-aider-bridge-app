@@ -31,6 +31,8 @@ class ModelOption:
 
 
 MODELS = [
+    ModelOption("ollama/gemma4:latest", "9B", 10, 8, 10, 8, "medium",
+               "Google Gemma 4 multimodal. Good general coding, fast on GPU."),
     ModelOption("ollama/qwen2.5-coder:32b", "32B", 24, 20, 18, 10, "slow",
                "Best coding quality. Needs beefy GPU (24GB+ VRAM) or 32GB+ RAM for CPU."),
     ModelOption("ollama/deepseek-coder-v2", "16B", 16, 12, 9, 9, "medium",

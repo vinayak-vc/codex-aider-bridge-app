@@ -1,0 +1,1124 @@
+{
+  "nodes": [
+    {
+      "id": "codex_aider_bridge_app",
+      "label": "Codex Aider Bridge App",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "bridge_orchestrator",
+      "label": "Bridge Orchestrator",
+      "file_type": "document",
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "technical_supervisor",
+      "label": "Technical Supervisor",
+      "file_type": "document",
+      "source_file": "AGENTIC_AI_ONBOARDING.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "aider_developer",
+      "label": "Aider Developer",
+      "file_type": "document",
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "web_ui",
+      "label": "Web UI",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "manual_supervisor_workflow",
+      "label": "Manual Supervisor Workflow",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "supervisor_proxy_thread",
+      "label": "Supervisor Proxy Thread",
+      "file_type": "document",
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "universal_pipeline",
+      "label": "Universal Pipeline",
+      "file_type": "document",
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "planner_role",
+      "label": "Planner Role",
+      "file_type": "document",
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "reviewer_role",
+      "label": "Reviewer Role",
+      "file_type": "document",
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "atomic_json_task_plan",
+      "label": "Atomic JSON Task Plan",
+      "file_type": "document",
+      "source_file": "AGENTIC_AI_ONBOARDING.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "diff_driven_review",
+      "label": "Diff-Driven Review",
+      "file_type": "document",
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "mechanical_validation",
+      "label": "Mechanical Validation",
+      "file_type": "document",
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "rework_retry_loop",
+      "label": "Rework Retry Loop",
+      "file_type": "document",
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "project_memory_layer",
+      "label": "Project Memory Layer",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "bridge_progress_artifacts",
+      "label": "Bridge Progress Artifacts",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "project_knowledge_cache",
+      "label": "Project Knowledge Cache",
+      "file_type": "document",
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "task_metrics",
+      "label": "Task Metrics",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "token_log",
+      "label": "Token Log",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "latest_report",
+      "label": "Latest Report",
+      "file_type": "document",
+      "source_file": "bridge_progress/LATEST_REPORT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "run_report",
+      "label": "Run Report",
+      "file_type": "document",
+      "source_file": "bridge_progress/RUN_REPORT.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "firebase_cloud_sync",
+      "label": "Firebase Cloud Sync",
+      "file_type": "document",
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "firestore_user_partition",
+      "label": "Firestore User Partition",
+      "file_type": "document",
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "google_oauth_auth",
+      "label": "Google OAuth Authentication",
+      "file_type": "document",
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "cloud_functions_rollup",
+      "label": "Cloud Functions Rollup",
+      "file_type": "document",
+      "source_file": "FIREBASE_IMPLEMENTATION_PLAN.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "admin_aggregates",
+      "label": "Admin Aggregates",
+      "file_type": "document",
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "privacy_preserving_sync",
+      "label": "Privacy-Preserving Sync",
+      "file_type": "document",
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "per_user_firebase_architecture",
+      "label": "Per-User Firebase Architecture",
+      "file_type": "document",
+      "source_file": "PER_USER_FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "personal_dashboard",
+      "label": "Personal Dashboard",
+      "file_type": "document",
+      "source_file": "PER_USER_FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "task_ir",
+      "label": "Task IR",
+      "file_type": "document",
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "instruction_precision",
+      "label": "Instruction Precision",
+      "file_type": "document",
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "seven_b_model_strategy",
+      "label": "7B Model Strategy",
+      "file_type": "document",
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "case_study_findings",
+      "label": "Case Study Findings",
+      "file_type": "document",
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "features_catalog",
+      "label": "Features Catalog",
+      "file_type": "document",
+      "source_file": "features.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "how_to_guide",
+      "label": "How To Guide",
+      "file_type": "document",
+      "source_file": "HOW_TO.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "supervisor_communication_guide",
+      "label": "Supervisor Communication Guide",
+      "file_type": "document",
+      "source_file": "HOW_TO_TALK_TO_SUPERVISOR.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "work_log_audit",
+      "label": "Work Log Audit",
+      "file_type": "document",
+      "source_file": "WORK_LOG.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "run_diagnostics",
+      "label": "Run Diagnostics",
+      "file_type": "document",
+      "source_file": "features.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "requirements_ui_dependency",
+      "label": "UI Requirements",
+      "file_type": "document",
+      "source_file": "requirements_ui.txt",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "flask_dependency",
+      "label": "Flask Dependency",
+      "file_type": "document",
+      "source_file": "requirements_ui.txt",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "pywebview_dependency",
+      "label": "PyWebView Dependency",
+      "file_type": "document",
+      "source_file": "requirements_ui.txt",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "codex_aider_bridge_app",
+      "target": "bridge_orchestrator",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codex_aider_bridge_app",
+      "target": "technical_supervisor",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENTIC_AI_ONBOARDING.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codex_aider_bridge_app",
+      "target": "aider_developer",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codex_aider_bridge_app",
+      "target": "web_ui",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "technical_supervisor",
+      "target": "atomic_json_task_plan",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENTIC_AI_ONBOARDING.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "technical_supervisor",
+      "target": "diff_driven_review",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENTIC_AI_ONBOARDING.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_orchestrator",
+      "target": "manual_supervisor_workflow",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_orchestrator",
+      "target": "git_readiness_preflight",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_orchestrator",
+      "target": "auto_commit",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "manual_supervisor_workflow",
+      "target": "review_request_json",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "manual_supervisor_workflow",
+      "target": "decision_json",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "manual_supervisor_workflow",
+      "target": "supervisor_proxy_thread",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "supervisor_proxy_thread",
+      "target": "universal_pipeline",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "universal_pipeline",
+      "target": "planner_role",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "universal_pipeline",
+      "target": "reviewer_role",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "universal_pipeline",
+      "target": "manual_supervisor_workflow",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Universal Pipeline.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_memory_layer",
+      "target": "bridge_progress_artifacts",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_memory_layer",
+      "target": "project_knowledge_cache",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_memory_layer",
+      "target": "task_metrics",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_memory_layer",
+      "target": "token_log",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_memory_layer",
+      "target": "latest_report",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_memory_layer",
+      "target": "run_report",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_progress_artifacts",
+      "target": "project_knowledge_cache",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_progress_artifacts",
+      "target": "task_metrics",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_progress_artifacts",
+      "target": "token_log",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_progress_artifacts",
+      "target": "latest_report",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bridge_progress_artifacts",
+      "target": "run_report",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "diff_driven_review",
+      "target": "mechanical_validation",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "diff_driven_review",
+      "target": "rework_retry_loop",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "mechanical_validation",
+      "target": "git_readiness_preflight",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "rework_retry_loop",
+      "target": "subplan_generation",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WORK_LOG.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_knowledge_cache",
+      "target": "onboarding_scanner",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "AGENT_CONTEXT.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "project_knowledge_cache",
+      "target": "features_catalog",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.78,
+      "source_file": "features.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "task_ir",
+      "target": "atomic_json_task_plan",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "task_ir",
+      "target": "instruction_precision",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "case_study_findings",
+      "target": "seven_b_model_strategy",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "case_study_findings",
+      "target": "task_ir",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "case_study_findings",
+      "target": "instruction_precision",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "CASE_STUDY.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "features_catalog",
+      "target": "universal_pipeline",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "features.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "features_catalog",
+      "target": "firebase_cloud_sync",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "features.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "features_catalog",
+      "target": "run_diagnostics",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "features.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "how_to_guide",
+      "target": "manual_supervisor_workflow",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "HOW_TO.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "how_to_guide",
+      "target": "bridge_orchestrator",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "HOW_TO.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "supervisor_communication_guide",
+      "target": "atomic_json_task_plan",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "HOW_TO_TALK_TO_SUPERVISOR.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "supervisor_communication_guide",
+      "target": "bridge_orchestrator",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "HOW_TO_TALK_TO_SUPERVISOR.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "work_log_audit",
+      "target": "subplan_generation",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WORK_LOG.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "work_log_audit",
+      "target": "diff_driven_review",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WORK_LOG.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "firebase_cloud_sync",
+      "target": "firestore_user_partition",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "firebase_cloud_sync",
+      "target": "google_oauth_auth",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "firebase_cloud_sync",
+      "target": "cloud_functions_rollup",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_IMPLEMENTATION_PLAN.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "firebase_cloud_sync",
+      "target": "admin_aggregates",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "firebase_cloud_sync",
+      "target": "privacy_preserving_sync",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "firebase_cloud_sync",
+      "target": "firestore_security_rules",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "per_user_firebase_architecture",
+      "target": "privacy_preserving_sync",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "PER_USER_FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "per_user_firebase_architecture",
+      "target": "personal_dashboard",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "PER_USER_FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "per_user_firebase_architecture",
+      "target": "admin_aggregates",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "PER_USER_FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "privacy_preserving_sync",
+      "target": "firestore_security_rules",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "privacy_preserving_sync",
+      "target": "admin_aggregates",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "requirements_ui_dependency",
+      "target": "flask_dependency",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "requirements_ui.txt",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "requirements_ui_dependency",
+      "target": "pywebview_dependency",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "requirements_ui.txt",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "requirements_ui_dependency",
+      "target": "web_ui",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.84,
+      "source_file": "requirements_ui.txt",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "run_diagnostics",
+      "target": "rework_retry_loop",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.82,
+      "source_file": "features.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "bridge_team_roles",
+      "label": "Bridge Team Roles",
+      "nodes": [
+        "technical_supervisor",
+        "bridge_orchestrator",
+        "aider_developer"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md"
+    },
+    {
+      "id": "project_memory_bundle",
+      "label": "Project Memory Bundle",
+      "nodes": [
+        "bridge_progress_artifacts",
+        "project_knowledge_cache",
+        "task_metrics",
+        "token_log",
+        "latest_report",
+        "run_report"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "README.md"
+    },
+    {
+      "id": "firebase_privacy_stack",
+      "label": "Firebase Privacy Stack",
+      "nodes": [
+        "firebase_cloud_sync",
+        "per_user_firebase_architecture",
+        "privacy_preserving_sync",
+        "firestore_security_rules"
+      ],
+      "relation": "implement",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "FIREBASE_ARCHITECTURE.md"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

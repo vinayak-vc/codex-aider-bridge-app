@@ -177,6 +177,46 @@
   font-size: 11px;
 }
 
+.chat-drawer__footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.chat-drawer__actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-drawer__copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+
+.chat-drawer__copy-btn:hover {
+  background: var(--color-surface-3);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.chat-drawer__copy-btn--copied {
+  border-color: rgba(34, 197, 94, .5);
+  color: rgb(134, 239, 172);
+}
+
 .chat-drawer__bubble--streaming::after {
   content: '';
   display: inline-block;

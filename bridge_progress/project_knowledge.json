@@ -3,10 +3,10 @@
     "name": "codex-aider-bridge-app",
     "type": "python",
     "language": "Python",
-    "summary": "Python project (Python), 89 source files scanned. Patterns: Multiple classes inherit Exception (3 found), Framework: Flask, Framework: unittest.",
+    "summary": "# Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON fil",
     "repo_root": "D:\\Chitrang_ViitorCloud\\R&D\\codex-aider-bridge-app",
     "first_seen": "2026-04-03",
-    "last_updated": "2026-04-03",
+    "last_updated": "2026-04-12",
     "understanding_confirmed": false,
     "scanned": true,
     "last_refreshed": "2026-04-04T01:10:33"
@@ -98,8 +98,8 @@
     },
     "main.py": {
       "role": "exposes build_argument_parser, load_plan_from_file, auto_split_tasks, obtain_plan, show_plan_preview",
-      "task_type": "scan",
-      "last_modified": "2026-04-04",
+      "task_type": "modify",
+      "last_modified": "2026-04-10",
       "created": "2026-04-04"
     },
     "MISSING_FEATURES_AND_IMPROVEMENTS.md": {
@@ -545,6 +545,12 @@
       "task_type": "scan",
       "last_modified": "2026-04-04",
       "created": "2026-04-04"
+    },
+    "memory/memory_client.py": {
+      "role": "Import os, logging, urllib.request, urllib.error, json.",
+      "task_type": "create",
+      "last_modified": "2026-04-10",
+      "created": "2026-04-10"
     }
   },
   "docs": [
@@ -557,7 +563,7 @@
     {
       "path": "AGENTIC_AI_ONBOARDING.md",
       "title": "AGENTIC AI ONBOARDING DOCUMENT",
-      "summary": "# AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge \u2014 Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next \u2014 all in one prompt. --- ## \u26d4 HARD STOP \u2014 READ THIS FIRST **You are the Technical Supervisor.",
+      "summary": "# AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge \u2014 Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next \u2014 all in one prompt. The **Codex-Aider Bridge** is a local Flask web application that separates **AI planning/review** (expensive cloud AI like you) from **code execution** (cheap local Ollama LLM via Aider).",
       "score": 75
     },
     {
@@ -567,33 +573,33 @@
       "score": 75
     },
     {
-      "path": "AI Relay Supervisor.md",
-      "title": "AI Relay Supervisor \u2014 Implementation Spec",
-      "summary": "## AI Relay Supervisor \u2014 Implementation Spec --- ### Concept Summary A new supervisor mode called **\"AI Relay\"** where you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini, Grok \u2014 anything) as the brain via copy-paste, with no API key. The bridge formats everything as ready-to-paste prompts and parses the AI's responses. --- ### Architecture Overview --- ### Files to Create / Modify | File | Change | |---|---| | | NEW \u2014 generates all prompts and parses AI responses | | | NEW \u2014 dedicated relay page | | | NEW | | | NEW \u2014 relay coordinator | | | ADD 6 new routes | | | ADD Relay nav item | | | ADD supervisor support | --- ### Phase 1 \u2014 This is the core utility.",
-      "score": 75
-    },
-    {
-      "path": "AI_RELAY_PLAN.md",
-      "title": "AI Relay Supervisor \u2014 Implementation Plan",
-      "summary": "# AI Relay Supervisor \u2014 Implementation Plan **Status:** PENDING \u2014 ready to implement **Branch:** **Start from:** **Spec reference:** \u2014 read before starting **Resumption rule:** Read this file, check git log for latest milestone commit, continue from next milestone. --- ## What We Are Building A new supervisor mode called **AI Relay** that lets you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok \u2014 any subscription) as the planning and review brain with **no API key required**. The bridge formats everything as ready-to-paste prompts and parses the AI's responses when pasted back.",
-      "score": 75
-    },
-    {
-      "path": "AI_RELAY_SPEC.md",
-      "title": "AI Relay Supervisor \u2014 Implementation Spec",
-      "summary": "# AI Relay Supervisor \u2014 Implementation Spec **Status:** PLANNED \u2014 implement after Chat feature is complete **Branch:** **Resumption rule:** Read this file, then for design system reference. --- ## What It Is A new supervisor mode called **AI Relay** that lets you use any web-based AI (ChatGPT Plus, Claude.ai Pro, Gemini Advanced, Grok \u2014 any subscription) as the planning and review brain, with **no API key required**. You become the relay: the bridge formats everything as ready-to-paste prompts, and parses the AI's responses when you paste them back.",
-      "score": 75
-    },
-    {
       "path": "AI_SUPERVISOR_PROMPT.md",
       "title": "AI Supervisor Reference",
       "summary": "# AI Supervisor Reference This document explains how an agentic AI should behave when supervising Aider through this bridge. The recommended operating mode is no longer \u201cspawn another AI CLI and hope it plans well\u201d. The recommended mode is: the active AI session creates the task plan the bridge runs Aider the bridge validates and records results the active AI session reviews each task the bridge resumes from the AI\u2019s decision the bridge keeps a structured project memory under --- ## The Supervisor Role The supervisor is the **technical lead**.",
       "score": 75
     },
     {
-      "path": "HOW_TO.md",
-      "title": "How To Use the Codex Aider Bridge App",
-      "summary": "# How To Use the Codex Aider Bridge App ### Practical guide for manual-supervisor workflow --- ## What This Tool Is For This bridge is designed for a three-part workflow: **You / an agentic AI session** acts as the technical supervisor **Aider** acts as the developer **The bridge** only executes, validates, records, and waits for the next decision It keeps a persistent memory of the external project under so the supervising AI can resume from structured state instead of rebuilding context from scratch. --- ## Using the Web UI (Recommended for Most Users) The easiest way \u2014 no terminal required after initial setup. Or double-click ** ** on Windows.",
+      "path": "CASE_STUDY.md",
+      "title": "Case Study: Codex-Aider Bridge \u2014 Separating AI Thinking from AI Coding",
+      "summary": "# Case Study: Codex-Aider Bridge \u2014 Separating AI Thinking from AI Coding **Date:** April 2026 **Duration:** 2 months of active development **Team:** 1 human developer + Claude (Agentic AI supervisor) **Codebase:** ~16,000 lines Python + ~14,000 lines JS/CSS/HTML --- ## 1. The Problem Cloud AI models (Claude, GPT-4) are excellent at planning and reasoning but expensive at scale. A single day of active coding with Claude Opus costs $15-50 in API tokens.",
+      "score": 75
+    },
+    {
+      "path": "FIREBASE_ARCHITECTURE.md",
+      "title": "Firebase Cloud Sync \u2014 Architecture Design",
+      "summary": "# Firebase Cloud Sync \u2014 Architecture Design ## Overview Optional cloud sync that lets users access their bridge data from anywhere via a web dashboard. Each user's data is stored in their own Firestore partition \u2014 no data is shared between users. The super admin (you) can see aggregate metrics (user count, project count, token usage) but never project content.",
+      "score": 75
+    },
+    {
+      "path": "FIREBASE_IMPLEMENTATION_PLAN.md",
+      "title": "Firebase Cloud Sync \u2014 Complete Implementation Plan",
+      "summary": "# Firebase Cloud Sync \u2014 Complete Implementation Plan Version: 1.0 | Date: 2026-04-04 Status: DESIGN COMPLETE \u2014 Implementation pending --- ## Table of Contents --- ## 1. System Architecture ### High-Level Flow ### Component Responsibilities | Component | Responsibility | Technology | |---|---|---| | **Auth Module** | Google OAuth2 login, token refresh, session management | Firebase Auth REST API | | **Data Pusher** | Transform local data \u2192 Firestore documents, batch writes | Firestore REST API | | **Offline Queue** | Buffer sync operations when offline, retry on reconnect | Local JSON file | | **Cloud Functions** | Aggregate metrics, user init, scheduled cleanup | Node.js (Firebase Functions) | | **Admin Dashboard** | Super admin view of aggregate metrics | Firebase Hosting + Firestore | | **Security Rules** | Enforce user-level data isolation | Firestore Security Rules | --- ## 2. Firebase Project Setup ### Prerequisites ### Setup Steps ### Firebase Config File The bridge app needs in its root: --- ## 3.",
+      "score": 75
+    },
+    {
+      "path": "FIREBASE_TEST_CASES.md",
+      "title": "Firebase Cloud Sync \u2014 Test Cases",
+      "summary": "# Firebase Cloud Sync \u2014 Test Cases Covers all 6 milestones with unit, integration, edge case, and security tests Total: 78 test cases --- ## M1: Auth System (18 tests) ### M1.1 \u2014 Google OAuth Login Flow | # | Test Case | Type | Steps | Expected Result | |---|---|---|---|---| | 1.1 | Login opens browser | Unit | Call | Browser opens Google consent URL with correct , , | | 1.2 | Callback receives auth code | Unit | Simulate GET | captures code, responds 200 with \"Login successful\" HTML | | 1.3 | Auth code exchanged for tokens | Unit | Call | POST to returns , , (uid) | | 1.4 | User profile extracted | Unit | Parse ID token payload | , , correctly extracted from JWT claims | | 1.5 | Credentials saved to disk | Unit | After successful login, check file | exists at with , , , , | | 1.6 | Credentials loaded on restart | Unit | Create sync instance with existing credentials file | returns True, and populated | | 1.7 | Expired token auto-refreshes | Unit | Set to past, call | New obtained via refresh token API, updated | | 1.8 | Refresh token failure | Unit | Set invalid , call | Raises , returns False | | 1.9 | Logout clears credentials | Unit | Call | deleted, returns False, is None | | 1.10 | API route unauthenticated | Integration | GET before login | Returns | | 1.11 | API route authenticated | Integration | Login, then GET | Returns | | 1.12 | API route | Integration | POST | Returns , subsequent returns | | 1.13 | Login with no firebase_config.json | Edge | Remove config file, call login | Returns with 400 | | 1.14 | Login with invalid API key | Edge | Set wrong in config | Returns with 401 | | 1.15 | Concurrent login attempts | Edge | Call twice simultaneously | Second call returns | | 1.16 | Callback server timeout | Edge | Start login, don't complete OAuth within 60s | Callback server shuts down, returns | | 1.17 | Credential file corruption | Edge | Write invalid JSON to credentials file | handles gracefully, returns False | | 1.18 | Token refresh during sync | E",
       "score": 75
     }
   ],
@@ -602,8 +608,36 @@
     "Framework: unittest",
     "Multiple classes inherit Exception (3 found)"
   ],
-  "features_done": [],
+  "features_done": [
+    "memory_client",
+    "main"
+  ],
   "suggested_next": [],
   "clarifications": [],
-  "runs": []
+  "runs": [
+    {
+      "date": "2026-04-10",
+      "goal": "Build a logging system feature",
+      "tasks_completed": 0,
+      "status": "failure"
+    },
+    {
+      "date": "2026-04-10",
+      "goal": "Build a logging system feature",
+      "tasks_completed": 2,
+      "status": "success"
+    },
+    {
+      "date": "2026-04-12",
+      "goal": "Build a logging system feature",
+      "tasks_completed": 0,
+      "status": "failure"
+    },
+    {
+      "date": "2026-04-12",
+      "goal": "Build a logging system feature",
+      "tasks_completed": 0,
+      "status": "failure"
+    }
+  ]
 }

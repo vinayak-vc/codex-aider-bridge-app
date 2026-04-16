@@ -1,0 +1,43 @@
+{
+  "project": {
+    "name": "knowledge-only-repo",
+    "type": "web",
+    "language": "python",
+    "summary": "Knowledge-only fallback for prompt generation."
+  },
+  "files": {
+    "main.py": {
+      "role": "Main CLI entrypoint."
+    },
+    "ui/api/relay_routes.py": {
+      "role": "Relay endpoints for browser-assisted planning."
+    }
+  },
+  "docs": [
+    {
+      "path": "README.md",
+      "title": "README",
+      "summary": "Explains setup and user flows.",
+      "score": 100
+    }
+  ],
+  "patterns": [
+    "Task plan orchestration",
+    "Relay-assisted planning"
+  ],
+  "features_done": [
+    "Initial relay flow"
+  ],
+  "suggested_next": [],
+  "clarifications": [
+    "Optimize for low-context local models."
+  ],
+  "runs": [
+    {
+      "date": "2026-04-14",
+      "goal": "Bootstrap knowledge",
+      "tasks_completed": 1,
+      "status": "success"
+    }
+  ]
+}

@@ -252,6 +252,46 @@
   padding: 0 4px;
 }
 
+.chat-msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.chat-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+
+.chat-copy-btn:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.chat-copy-btn--copied {
+  border-color: rgba(34, 197, 94, .5);
+  color: rgb(134, 239, 172);
+}
+
 /* Typing / streaming indicator */
 .chat-bubble--streaming::after {
   content: '';
