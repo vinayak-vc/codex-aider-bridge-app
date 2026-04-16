@@ -207,11 +207,23 @@ bash commands were used. Skill becomes shorter and more reliable.
 git commands (those stay as bash — git is already good at structured output
 via `--porcelain`).
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅`
+
+**Notes:**
+- 759 → 535 lines (30% reduction)
+- Stage 1: `bridge_health` replaces 6 bash/curl checks
+- Stage 1.5: `memory_search` × 2 replaces `claude-mem:mem-search` skill calls
+- Stage 1.5 warm repo: `bridge_get_status` + `bridge_get_project_knowledge` replaces `cat` file reads
+- Stage 3-A: `bridge_dry_run` replaces `python main.py --dry-run` bash
+- Stage 3-B: `bridge_run_plan(manual_supervisor: true)` replaces background bash spawn
+- Stage 4: Unchanged — file-based review loop with bash ls/cat/write (correct tool for the job)
+- Stage 5-A: `bridge_get_status` + `bridge_get_metrics` replace `cat` reads; verbose files still read directly
+- Stage 5-F: `memory_save` replaces `claude-mem` skill call
+- 28 MCP tool call references; 10 bash blocks remain (all git or direct file reads)
 
 ---
 
-### M7 — ensure_services Integration  `[ ]`
+### M7 — ensure_services Integration  `[x]`
 
 **Goal:** MCP server starts automatically with the session, alongside Qdrant
 and memory service.
@@ -232,7 +244,12 @@ and memory service.
 }
 ```
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅` *(delivered as part of M1)*
+
+**What was built (M1):**
+- `ensure_mcp_server()` in `scripts/ensure_services.py` — auto-builds `mcp/dist/` on session open if missing
+- `mcpServers.bridge` entry in `.claude/settings.json` — absolute path to `mcp/dist/index.js`, Claude auto-connects on session open
+- MCP server launched by Claude Code via config; `ensure_mcp_server` only ensures the dist binary exists
 
 ---
 
@@ -245,8 +262,8 @@ and memory service.
 | M3 | Memory Tools | `DONE ✅` |
 | M4 | Service Health Tool | `DONE ✅` |
 | M5 | Execution Tools | `DONE ✅` |
-| M6 | Skill Rewrite | `NOT STARTED` |
-| M7 | ensure_services Integration | `NOT STARTED` |
+| M6 | Skill Rewrite | `DONE ✅` |
+| M7 | ensure_services Integration | `DONE ✅` |
 
 ---
 
@@ -295,3 +312,5 @@ mcp/
 | 2026-04-16 | M3 | All 5 memory tools verified against live service — `memory_health`, `memory_search`, `memory_save`, `memory_enhance`, `memory_ingest`; fixed SQLite string-float type serialisation bug |
 | 2026-04-16 | M4 | `bridge_health` verified — concurrent probe of Qdrant, Ollama, memory-service, Aider + bridge_root auto-detect in one tool call |
 | 2026-04-16 | M5 | Execution tools verified — dry-run parses plan errors + task previews; run_plan spawns background job; cancel kills PID; get_run_output tails log |
+| 2026-04-16 | M6 | Skill rewritten — 759→535 lines (30% reduction); Stage 1/1.5/3-A/3-B/5-A/5-F replaced with MCP tool calls; 28 MCP references; 10 bash blocks remain (git + direct file reads) |
+| 2026-04-16 | M7 | Already done in M1 — ensure_mcp_server() + mcpServers.bridge settings verified working |
