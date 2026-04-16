@@ -90,7 +90,13 @@ typed tool calls.
 **Why before execution tools:** State reads are read-only and safe to build
 first. Claude immediately benefits — no more `cat` file reads in the skill.
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅`
+
+**Notes:**
+- All five tools verified against real `bridge_progress/` data
+- `bridge_list_repos` scans a directory and returns all repos with `bridge_progress/` present
+- `zod` added as direct dependency (was transitive via SDK — now explicit)
+- Large-file tools (`bridge_get_project_knowledge`, `bridge_list_repos`) need ~10s timeout in combined tests — individual calls respond in <1s
 
 ---
 
@@ -211,7 +217,7 @@ and memory service.
 | # | Milestone | Status |
 |---|---|---|
 | M1 | Scaffold & Transport | `DONE ✅` |
-| M2 | State Tools | `NOT STARTED` |
+| M2 | State Tools | `DONE ✅` |
 | M3 | Memory Tools | `NOT STARTED` |
 | M4 | Service Health Tool | `NOT STARTED` |
 | M5 | Execution Tools | `NOT STARTED` |
@@ -261,3 +267,4 @@ mcp/
 |---|---|---|
 | 2026-04-16 | — | Plan created |
 | 2026-04-16 | M1 | Scaffold complete — `bridge_ping` tool verified end-to-end; SDK framing issue (NDJSON not LSP) diagnosed and fixed |
+| 2026-04-16 | M2 | All 5 state tools verified against real `bridge_progress/` data — `bridge_get_status`, `bridge_get_checkpoint`, `bridge_get_metrics`, `bridge_get_project_knowledge`, `bridge_list_repos` |
