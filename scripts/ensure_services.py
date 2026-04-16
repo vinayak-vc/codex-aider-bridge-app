@@ -197,6 +197,48 @@ def ensure_memory_service():
     else:
         log("WARNING: Memory service did not come up in 30s — bridge will run without memory context")
 
+# ── 4. bridge-mcp-server ─────────────────────────────────────────────────────
+
+MCP_DIR     = ROOT / "mcp"
+MCP_DIST    = MCP_DIR / "dist" / "index.js"
+MCP_LOG     = ROOT / "services" / "mcp-server.log"
+
+def ensure_mcp_server():
+    # MCP server is launched by Claude Code itself via mcpServers config —
+    # this function only ensures the dist is built so the binary exists.
+    if not MCP_DIR.exists():
+        log("MCP server directory not found — skipping")
+        return
+
+    npm = ["npm.cmd"] if IS_WIN else ["npm"]
+
+    # npm install if node_modules missing
+    nm = MCP_DIR / "node_modules"
+    if not nm.exists():
+        log("Running npm install in mcp/ …")
+        result = subprocess.run(
+            npm + ["install"], cwd=str(MCP_DIR),
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode != 0:
+            log(f"ERROR: npm install (mcp) failed:\n{result.stderr[-500:]}")
+            return
+        log("npm install (mcp) complete")
+
+    # Build if dist missing
+    if not MCP_DIST.exists():
+        log("Building bridge-mcp-server (npm run build) …")
+        result = subprocess.run(
+            npm + ["run", "build"], cwd=str(MCP_DIR),
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            log(f"ERROR: npm run build (mcp) failed:\n{result.stderr[-500:]}")
+            return
+        log("bridge-mcp-server built → dist/index.js ready")
+    else:
+        log("bridge-mcp-server dist already built")
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -204,6 +246,7 @@ def main():
     ensure_qdrant()
     ensure_embed_model()
     ensure_memory_service()
+    ensure_mcp_server()
     log("Done.")
 
 if __name__ == "__main__":

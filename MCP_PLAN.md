@@ -61,7 +61,14 @@ the memory service.
 **Acceptance:** Claude can call `bridge_ping` from a tool call and get a
 structured response — no bash required.
 
-**Status:** `NOT STARTED`
+**Status:** `DONE ✅`
+
+**Notes:**
+- MCP SDK 1.29.0 uses newline-delimited JSON (NDJSON), not Content-Length framing
+- `"type": "module"` + `"module": "NodeNext"` tsconfig required (SDK is ESM-only)
+- `mcp/dist/index.js` built and tested; `bridge_ping` returns `{ ok, version, server }`
+- `.claude/settings.json` updated with `mcpServers.bridge` entry (absolute path to dist)
+- `ensure_services.py` extended with `ensure_mcp_server()` — auto-builds dist on session open if missing
 
 ---
 
@@ -203,7 +210,7 @@ and memory service.
 
 | # | Milestone | Status |
 |---|---|---|
-| M1 | Scaffold & Transport | `NOT STARTED` |
+| M1 | Scaffold & Transport | `DONE ✅` |
 | M2 | State Tools | `NOT STARTED` |
 | M3 | Memory Tools | `NOT STARTED` |
 | M4 | Service Health Tool | `NOT STARTED` |
@@ -253,3 +260,4 @@ mcp/
 | Date | Milestone | What happened |
 |---|---|---|
 | 2026-04-16 | — | Plan created |
+| 2026-04-16 | M1 | Scaffold complete — `bridge_ping` tool verified end-to-end; SDK framing issue (NDJSON not LSP) diagnosed and fixed |
