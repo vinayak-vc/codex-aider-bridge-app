@@ -113,8 +113,23 @@ Tell the user:
 
 Call:
 ```
-mcp__code-review-graph__build_or_update_graph_tool(repo_path="<REPO_ROOT>")
+mcp__code-review-graph__build_or_update_graph_tool(repo_root="<REPO_ROOT>", full_rebuild=true)
 ```
+
+**After the build, check for silent post-processing failures:**
+```
+mcp__code-review-graph__list_graph_stats_tool(repo_root="<REPO_ROOT>")
+```
+
+If `communities: 0` after a full build → community detection failed silently. Fix it:
+```
+mcp__code-review-graph__run_postprocess_tool(repo_root="<REPO_ROOT>", communities=true, flows=true, fts=true)
+```
+
+**If communities is still 0 after run_postprocess_tool → do NOT fall back to file reading.** Instead:
+1. Call `mcp__code-review-graph__get_hub_nodes_tool(repo_root="<REPO_ROOT>")` for hotspots
+2. Call `mcp__code-review-graph__query_graph_tool(pattern="children_of", target="<key_file>")` for structure
+3. Communities=0 means Leiden clustering didn't fire, NOT that the graph is unusable — nodes and edges are fully traversable
 
 Use its output as primary repo context in Stage 2. This is not optional — a cold start without graph context produces low-quality plans.
 
@@ -242,15 +257,106 @@ Also call **`bridge_get_project_knowledge`** to load prior file summaries and ru
 
 Call:
 ```
-mcp__code-review-graph__build_or_update_graph_tool(repo_path="<REPO_ROOT>")
+mcp__code-review-graph__build_or_update_graph_tool(repo_root="<REPO_ROOT>")
 ```
 
 Tell the user:
 > *"Indexing `<REPO_ROOT>` with code-review-graph..."*
 
+After build, check stats. If `communities: 0`, run:
+```
+mcp__code-review-graph__run_postprocess_tool(repo_root="<REPO_ROOT>")
+```
+
 Use its output as primary repo context in Stage 2.
 
 **Note on freshness:** From Stage 4 onward, the graph is incrementally updated after every PASS decision (via `detect_changes_tool`). This means by the time you reach Stage 5, the graph already reflects every committed change from this run — no stale line numbers, no re-indexing penalty at the next session start.
+
+---
+
+## STRICT GRAPH-FIRST ENFORCEMENT PROTOCOL
+
+**This protocol applies from Stage 1.6 onward for every session. It is not optional.**
+
+### FILE READ PROHIBITION
+
+You are **BANNED** from calling `Read` on any source file (`.cs`, `.py`, `.ts`, `.js`, `.go`, `.rs`, `.java`) until the graph query sequence below is complete.
+
+Violation conditions (any of these = protocol breach):
+- Calling `Read` on a source file before calling `query_graph_tool` on that file
+- Using `Grep` to find symbols that `semantic_search_nodes_tool` could answer
+- Using `Glob` to list files that `list_graph_stats_tool` + `query_graph_tool(pattern="file_summary")` could enumerate
+- Calling `Bash` with `find`/`ls` to discover project structure before `get_architecture_overview_tool`
+
+### MANDATORY GRAPH QUERY SEQUENCE
+
+After the graph is built, execute this sequence **before producing any plan or reading any file**:
+
+**Step G-1 — Orientation (1 call):**
+```
+mcp__code-review-graph__get_minimal_context_tool(
+    task="<user goal>",
+    repo_root="<REPO_ROOT>"
+)
+```
+This returns: node count, top communities/flows, risk score, tool suggestions.
+
+**Step G-2 — Hub nodes (1 call):**
+```
+mcp__code-review-graph__get_hub_nodes_tool(repo_root="<REPO_ROOT>", top_n=10)
+```
+These are your architectural anchors. Every task plan must reference at least one hub node.
+
+**Step G-3 — Architecture (1 call, skip if communities=0):**
+```
+mcp__code-review-graph__get_architecture_overview_tool(repo_root="<REPO_ROOT>")
+```
+If communities=0, skip and use hub nodes from G-2 as proxies for module structure.
+
+**Step G-4 — Interface/inheritance map (for each interface/base class):**
+```
+mcp__code-review-graph__query_graph_tool(pattern="inheritors_of", target="<InterfaceName>", repo_root="<REPO_ROOT>")
+```
+
+**Step G-5 — Targeted call-graph traversal (for hub nodes only):**
+```
+mcp__code-review-graph__query_graph_tool(pattern="callees_of", target="<HubNode>", repo_root="<REPO_ROOT>")
+mcp__code-review-graph__query_graph_tool(pattern="callers_of", target="<HubNode>", repo_root="<REPO_ROOT>")
+```
+
+**Step G-6 — File structure for target files only:**
+```
+mcp__code-review-graph__query_graph_tool(pattern="children_of", target="<file_path>", repo_root="<REPO_ROOT>")
+```
+This gives you every class and function in the file — **no Read needed**.
+
+**Step G-7 — Targeted Read (permitted only after G-1 through G-6):**
+- Read ONLY the specific line range for the function/class identified by graph traversal
+- Read the FULL file ONLY if `children_of` returned fewer than 3 symbols (file is trivially small)
+- Maximum 3 full-file reads per planning session regardless of codebase size
+
+### UNITY-SPECIFIC ENTRY POINTS
+
+Unity projects have no HTTP handlers or CLI entry points. `list_flows_tool` will return 0 flows.
+Use these substitutes:
+
+| Goal | Graph Query |
+|---|---|
+| Find all MonoBehaviour entry points | `query_graph_tool(pattern="callers_of", target="Awake")` |
+| Find all tick-driven code | `query_graph_tool(pattern="callers_of", target="Update")` |
+| Find all event subscribers | `query_graph_tool(pattern="callers_of", target="OnEnable")` |
+| Find all interface implementations | `query_graph_tool(pattern="inheritors_of", target="<IInterface>")` |
+| Find hub component | `get_hub_nodes_tool()` — highest degree = central MonoBehaviour |
+| Find data flow | `query_graph_tool(pattern="callees_of", target="<CoreClass>")` |
+
+### TOOL FAILURE HANDLING
+
+| Failure | Correct Response | Forbidden Response |
+|---|---|---|
+| `get_hub_nodes_tool` errors | Try `find_large_functions_tool` as proxy for complexity hotspots | Do NOT fall back to `find *.cs` |
+| `list_communities_tool` returns 0 | Call `run_postprocess_tool`, then retry | Do NOT read files to infer structure |
+| `list_flows_tool` returns 0 | Use Unity entry point queries above | Do NOT treat as "graph unusable" |
+| Any tool crashes with str/path error | Report the crash, use `query_graph_tool` which is stable | Do NOT abandon the graph entirely |
 
 ---
 
@@ -260,11 +366,13 @@ Produce the task plan before invoking the executor. YOU are the supervisor — p
 
 ### How to produce the plan
 
-1. Gather repo context in priority order:
-   - **Highest:** code-review-graph output (Stage 1.6)
-   - **Then:** memory_search results (Stage 1.5)
-   - **Then:** `bridge_get_project_knowledge` output (Stage 1.5 warm repo check, or call directly)
-   - **Fallback:** `git -C "<REPO_ROOT>" ls-files` (cap at 300 lines)
+1. Gather repo context using the **STRICT GRAPH-FIRST ENFORCEMENT PROTOCOL** above (mandatory).
+   Execute Steps G-1 through G-6 in order. Do NOT skip to file reading.
+   - Use `get_hub_nodes_tool` output as the anchor for every instruction
+   - Use `query_graph_tool(pattern="children_of")` to get exact line numbers — never guess
+   - Use `query_graph_tool(pattern="inheritors_of")` to map all interface implementations
+   - Use `get_knowledge_gaps_tool` to identify untested areas relevant to the task
+   - **Permitted fallback only after all graph queries exhausted:** `git -C "<REPO_ROOT>" ls-files` (cap at 300 lines, file names only)
 
 2. Produce JSON following the schema in `references/pipeline.md` → **Task Schema**
 
@@ -432,7 +540,7 @@ The bridge picks up the decision file and continues.
 
 Immediately after writing a PASS decision, call:
 ```
-mcp__code-review-graph__detect_changes_tool(repo_path="<REPO_ROOT>")
+mcp__code-review-graph__detect_changes_tool(repo_root="<REPO_ROOT>")
 ```
 
 This is an **incremental** scan — it only re-indexes files that changed in the last commit (~2-3 seconds). It does not do a full rebuild.
@@ -493,7 +601,7 @@ cat "<REPO_ROOT>/bridge_progress/token_log.json"
 After reading all bridge_progress files, do a full graph rebuild:
 
 ```
-mcp__code-review-graph__build_or_update_graph_tool(repo_path="<REPO_ROOT>")
+mcp__code-review-graph__build_or_update_graph_tool(repo_root="<REPO_ROOT>")
 ```
 
 This is a **full rebuild**, not incremental. It picks up every structural change made during the run — new files, deleted files, renamed functions, shifted imports. It takes 10-30s depending on repo size.
@@ -582,6 +690,10 @@ This costs ~150 tokens and eliminates re-discovery across all future sessions. D
 - **Never skip Stage 1** — call `bridge_health` before every run.
 - **Never skip Stage 2** — user must see and approve the plan before any code is touched.
 - **If a task fails 3+ times** → pause and execute the failure escalation procedure below.
+- **Never call `Read` on a source file before `query_graph_tool(pattern="children_of")`** — the graph gives you line numbers, class names, and function signatures. `Read` is for content, not discovery.
+- **Never treat tool crashes as graph failure** — if `get_hub_nodes_tool` or `get_suggested_questions_tool` crash, isolate the failure and continue with `query_graph_tool` + `semantic_search_nodes_tool`. Do not fall back to file scanning.
+- **Never treat `communities: 0` as "graph unusable"** — call `run_postprocess_tool` first. Communities=0 means Leiden didn't cluster; nodes, edges, and traversal are fully functional regardless.
+- **`repo_root` not `repo_path`** — all graph tool calls use `repo_root` as the parameter name. `repo_path` is silently ignored and causes auto-detection fallback.
 
 ### Failure Escalation Procedure (3+ failures)
 

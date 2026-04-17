@@ -57,7 +57,10 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\(''ui/app.py'', doraise=True\\); py_compile.compile\\(''supervisor/agent.py'', doraise=True\\); print\\(''OK''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''utils/token_tracker.py'', doraise=True\\); print\\(''OK''\\)\")",
       "Bash(xargs grep:*)",
-      "Read(//h/Vinayak_Project/codex-aider-bridge-app/**)"
+      "Read(//h/Vinayak_Project/codex-aider-bridge-app/**)",
+      "Read(//h/Ai_Project/Beat-Synced-Valorant-Montage-Generator/analysis/**)",
+      "Read(//h/Ai_Project/Beat-Synced-Valorant-Montage-Generator/config/**)",
+      "mcp__code-review-graph__list_graph_stats_tool"
     ]
   }
 }
