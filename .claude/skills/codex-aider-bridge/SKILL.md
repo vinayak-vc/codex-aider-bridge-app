@@ -282,7 +282,8 @@ Produce the task plan before invoking the executor. YOU are the supervisor — p
 6. Show the plan as a numbered list (not raw JSON) and ask:
    > *"Does this plan look right before I hand it to the executor?"*
 
-7. Once confirmed, save to `TASK_PLAN_active.json` in `bridge_root` (cwd).
+7. Once confirmed, save to `<REPO_ROOT>/taskJsons/TASK_PLAN_active.json`.
+   Create the `taskJsons/` directory if it does not exist.
    **Always include `"goal"` at root:** `{ "goal": "...", "tasks": [...] }`.
 
 ---
@@ -316,7 +317,7 @@ Call **`bridge_dry_run`**:
 
 ```
 bridge_dry_run(
-  plan_file = "<bridge_root>/TASK_PLAN_active.json",
+  plan_file = "<REPO_ROOT>/taskJsons/TASK_PLAN_active.json",
   repo_root = "<REPO_ROOT>",
   goal      = "<short goal>",
   aider_model          = "<model if set>",
@@ -512,7 +513,7 @@ Confirm each completed task has a corresponding commit. Warn if commits are miss
 ### Step 5-C: Cleanup
 
 ```bash
-rm -f "<bridge_root>/TASK_PLAN_active.json"
+rm -f "<REPO_ROOT>/taskJsons/TASK_PLAN_active.json"
 ```
 
 Always clean up — leaving a stale plan causes the next session to load wrong tasks.
