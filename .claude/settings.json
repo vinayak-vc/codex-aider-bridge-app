@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"H:\\Vinayak_Project\\codex-aider-bridge-app\\.claude\\worktrees\\elastic-lamarr\\scripts\\ensure_services.py\"",
+            "command": "python \".claude/ensure_hook.py\"",
             "timeout": 120,
             "run_once_per_session": true
           }
@@ -17,9 +17,8 @@
   "mcpServers": {
     "bridge": {
       "command": "node",
-      "args": [
-        "H:\\Vinayak_Project\\codex-aider-bridge-app\\.claude\\worktrees\\elastic-lamarr\\mcp\\dist\\index.js"
-      ]
+      "args": ["mcp/dist/index.js"],
+      "cwd": "."
     }
   }
 }

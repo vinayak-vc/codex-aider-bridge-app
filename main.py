@@ -1596,7 +1596,7 @@ def estimate_session_tokens(
     """Estimate tokens the AI supervisor spent in its interactive session.
 
     Covers the work every AI does before and during a bridge run:
-      - Reading AGENTIC_AI_ONBOARDING.md (from the bridge directory)
+      - Reading docs/AGENTIC_AI_ONBOARDING.md (from the bridge directory)
       - Reading WORK_LOG.md (from the target repo, if present)
       - Reading bridge_progress/project_knowledge.json (if present)
       - Reading the idea / brief file (if provided)
@@ -1615,7 +1615,7 @@ def estimate_session_tokens(
 
     # Bridge onboarding doc — always read by any AI supervisor
     bridge_dir = Path(__file__).resolve().parent
-    onboarding = bridge_dir / "AGENTIC_AI_ONBOARDING.md"
+    onboarding = bridge_dir / "docs" / "AGENTIC_AI_ONBOARDING.md"
     total += _file_tokens(onboarding) if onboarding.exists() else 2_000
 
     # WORK_LOG.md in the target repo

@@ -12,7 +12,7 @@ REM   - Inno Setup 6  (optional, for installer) https://jrsoftware.org/isinfo.ph
 
 title Building Codex-Aider Bridge
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 REM ── 1. Check Python ──────────────────────────────────────────────────────────
 where python >nul 2>&1
@@ -47,7 +47,7 @@ if exist __pycache__    rmdir /s /q __pycache__
 REM ── 4. PyInstaller — single exe ─────────────────────────────────────────────
 echo  [3/3] Building bridge-app.exe (this may take 1-3 minutes)...
 echo.
-python -m PyInstaller bridge.spec --clean --noconfirm
+python -m PyInstaller scripts\bridge.spec --clean --noconfirm
 if errorlevel 1 (
     echo.
     echo  BUILD FAILED — see output above for details.
@@ -78,7 +78,7 @@ if "%ISCC%"=="" (
     echo  then re-run build.bat.
 ) else (
     echo  Building installer with Inno Setup...
-    "%ISCC%" installer.iss
+    "%ISCC%" scripts\installer.iss
     if errorlevel 1 (
         echo  WARNING: Inno Setup failed — exe build is still valid.
     ) else (
