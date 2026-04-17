@@ -6,10 +6,12 @@
     "summary": "# Codex Aider Bridge App is a local orchestrator that separates **planning and review** from **code execution**. It supports both: an external supervisor CLI flow ( , , etc.) a manual supervisor flow where the active agent session reviews each task directly and the bridge waits for decision JSON fil",
     "repo_root": "D:\\Chitrang_ViitorCloud\\R&D\\codex-aider-bridge-app",
     "first_seen": "2026-04-03",
-    "last_updated": "2026-04-12",
+    "last_updated": "2026-04-16",
     "understanding_confirmed": false,
     "scanned": true,
-    "last_refreshed": "2026-04-04T01:10:33"
+    "last_refreshed": "2026-04-04T01:10:33",
+    "external_scanner": "code-review-graph",
+    "external_scanner_last_refreshed": "2026-04-16T13:39:43"
   },
   "files": {
     "AGENT_CONTEXT.md": {
@@ -110,8 +112,8 @@
     },
     "README.md": {
       "role": "`codex-aider-bridge-app` is a local orchestrator that separates **planning and review** from **code execution**.",
-      "task_type": "scan",
-      "last_modified": "2026-04-04",
+      "task_type": "modify",
+      "last_modified": "2026-04-16",
       "created": "2026-04-04"
     },
     "requirements.txt": {
@@ -561,6 +563,12 @@
       "score": 195
     },
     {
+      "path": ".aider.chat.history.md",
+      "title": "aider chat started at 2026-03-25 14:07:14",
+      "summary": "# aider chat started at 2026-03-25 14:07:14 Can't initialize prompt toolkit: No Windows console found. You can skip this check with --no-gitignore Add .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]: y Added .aider* to .gitignore C:\\Python311\\Scripts\\aider.EXE --yes-always --no-pretty --no-stream --no-auto-commits --message Create a file named dummy_file.txt containing the word 'Hello' --file H:\\Vinayak_Project\\codex-aider-bridge-app\\dummy_file.txt Warning: ollama/qwen2.5-coder:7b expects these environment variables OLLAMA_API_BASE: Not set Note: You may need to restart your terminal or command prompt for to take effect.",
+      "score": 75
+    },
+    {
       "path": "AGENTIC_AI_ONBOARDING.md",
       "title": "AGENTIC AI ONBOARDING DOCUMENT",
       "summary": "# AGENTIC AI ONBOARDING DOCUMENT ## Codex-Aider Bridge \u2014 Project Brief Read this document fully before doing anything. After reading, you will know exactly what this project is, how it works, your role, and what to do next \u2014 all in one prompt. The **Codex-Aider Bridge** is a local Flask web application that separates **AI planning/review** (expensive cloud AI like you) from **code execution** (cheap local Ollama LLM via Aider).",
@@ -595,22 +603,24 @@
       "title": "Firebase Cloud Sync \u2014 Complete Implementation Plan",
       "summary": "# Firebase Cloud Sync \u2014 Complete Implementation Plan Version: 1.0 | Date: 2026-04-04 Status: DESIGN COMPLETE \u2014 Implementation pending --- ## Table of Contents --- ## 1. System Architecture ### High-Level Flow ### Component Responsibilities | Component | Responsibility | Technology | |---|---|---| | **Auth Module** | Google OAuth2 login, token refresh, session management | Firebase Auth REST API | | **Data Pusher** | Transform local data \u2192 Firestore documents, batch writes | Firestore REST API | | **Offline Queue** | Buffer sync operations when offline, retry on reconnect | Local JSON file | | **Cloud Functions** | Aggregate metrics, user init, scheduled cleanup | Node.js (Firebase Functions) | | **Admin Dashboard** | Super admin view of aggregate metrics | Firebase Hosting + Firestore | | **Security Rules** | Enforce user-level data isolation | Firestore Security Rules | --- ## 2. Firebase Project Setup ### Prerequisites ### Setup Steps ### Firebase Config File The bridge app needs in its root: --- ## 3.",
       "score": 75
-    },
-    {
-      "path": "FIREBASE_TEST_CASES.md",
-      "title": "Firebase Cloud Sync \u2014 Test Cases",
-      "summary": "# Firebase Cloud Sync \u2014 Test Cases Covers all 6 milestones with unit, integration, edge case, and security tests Total: 78 test cases --- ## M1: Auth System (18 tests) ### M1.1 \u2014 Google OAuth Login Flow | # | Test Case | Type | Steps | Expected Result | |---|---|---|---|---| | 1.1 | Login opens browser | Unit | Call | Browser opens Google consent URL with correct , , | | 1.2 | Callback receives auth code | Unit | Simulate GET | captures code, responds 200 with \"Login successful\" HTML | | 1.3 | Auth code exchanged for tokens | Unit | Call | POST to returns , , (uid) | | 1.4 | User profile extracted | Unit | Parse ID token payload | , , correctly extracted from JWT claims | | 1.5 | Credentials saved to disk | Unit | After successful login, check file | exists at with , , , , | | 1.6 | Credentials loaded on restart | Unit | Create sync instance with existing credentials file | returns True, and populated | | 1.7 | Expired token auto-refreshes | Unit | Set to past, call | New obtained via refresh token API, updated | | 1.8 | Refresh token failure | Unit | Set invalid , call | Raises , returns False | | 1.9 | Logout clears credentials | Unit | Call | deleted, returns False, is None | | 1.10 | API route unauthenticated | Integration | GET before login | Returns | | 1.11 | API route authenticated | Integration | Login, then GET | Returns | | 1.12 | API route | Integration | POST | Returns , subsequent returns | | 1.13 | Login with no firebase_config.json | Edge | Remove config file, call login | Returns with 400 | | 1.14 | Login with invalid API key | Edge | Set wrong in config | Returns with 401 | | 1.15 | Concurrent login attempts | Edge | Call twice simultaneously | Second call returns | | 1.16 | Callback server timeout | Edge | Start login, don't complete OAuth within 60s | Callback server shuts down, returns | | 1.17 | Credential file corruption | Edge | Write invalid JSON to credentials file | handles gracefully, returns False | | 1.18 | Token refresh during sync | E",
-      "score": 75
     }
   ],
   "patterns": [
     "Framework: Flask",
     "Framework: unittest",
-    "Multiple classes inherit Exception (3 found)"
+    "Multiple classes inherit Exception (3 found)",
+    "Code-review-graph nodes=1044, edges=9367, files=84",
+    "Code-review-graph flows=262, communities=71",
+    "CRG community: ui-api (size=103, cohesion=0.12)",
+    "CRG community: ui-load (size=47, cohesion=0.45)",
+    "CRG community: utils-firestore (size=42, cohesion=0.31)",
+    "CRG community: pages-render (size=41, cohesion=0.51)",
+    "CRG community: pages-handle (size=32, cohesion=0.29)"
   ],
   "features_done": [
     "memory_client",
-    "main"
+    "main",
+    "README"
   ],
   "suggested_next": [],
   "clarifications": [],
@@ -638,6 +648,24 @@
       "goal": "Build a logging system feature",
       "tasks_completed": 0,
       "status": "failure"
+    },
+    {
+      "date": "2026-04-16",
+      "goal": "dummy",
+      "tasks_completed": 0,
+      "status": "failure"
+    },
+    {
+      "date": "2026-04-16",
+      "goal": "test",
+      "tasks_completed": 1,
+      "status": "success"
+    },
+    {
+      "date": "2026-04-16",
+      "goal": "dry-run-check",
+      "tasks_completed": 1,
+      "status": "success"
     }
   ]
 }
