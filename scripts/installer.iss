@@ -31,7 +31,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 
 ; Output
-OutputDir=dist
+OutputDir=..\dist
 OutputBaseFilename=CodexAiderBridgeSetup
 
 ; Compression
@@ -57,7 +57,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 ; The single bundled exe — everything is inside it
-Source: "dist\bridge-app.exe"; \
+Source: "..\dist\bridge-app.exe"; \
   DestDir: "{app}"; \
   Flags: ignoreversion
 
