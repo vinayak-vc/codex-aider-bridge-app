@@ -855,7 +855,6 @@ class AiderRunner:
             "--no-pretty",
             "--no-stream",
             "--no-auto-lint",
-            "--no-auto-commits",
             "--no-gitignore",            # suppress "add .aiderignore?" interactive prompt
             "--no-show-model-warnings",  # suppress model-warning + "Open docs url?" prompt
             "--no-browser",              # prevent opening litellm docs or any browser page

@@ -388,11 +388,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--no-auto-commit",
-        action="store_true",
-        help="Disable automatic git commits after each approved task. Changes stay unstaged.",
-    )
-    parser.add_argument(
         "--session-tokens",
         type=int,
         default=0,
@@ -1846,7 +1841,7 @@ def main() -> int:
         workflow_profile=str(args.workflow_profile),
         skip_onboarding_scan=bool(args.skip_onboarding_scan),
         relay_session_id=str(args.relay_session_id).strip() if args.relay_session_id else None,
-        auto_commit=not bool(args.no_auto_commit),
+        auto_commit=True,
     )
 
     run_preflight_checks(config, logger)
