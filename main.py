@@ -609,6 +609,16 @@ def execute_task_with_review(
     """
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
+    # Guard: prevent the model from pulling in extra context files and
+    # concluding the task is already done because related files were recently
+    # modified by a previous task in the same session.
+    _guard = (
+        "\n\nIMPORTANT: Do NOT request or read any other files beyond the one(s) "
+        "already in the chat. Only edit the file(s) listed for this task. "
+        "Ignore what other files in the repo may already contain — your job is "
+        "solely to apply the changes described above to the specified file(s)."
+    )
+    current_instruction = current_instruction + _guard
     current_instruction = memory_client.enhance_prompt(current_instruction)
 
     if manual_supervisor is not None:
