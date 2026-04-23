@@ -631,7 +631,10 @@ class AiderRunner:
         # revert those changes AND hard-fail the task. This keeps the bridge safe
         # for asset-heavy repos and prevents "helpful" cross-file edits.
         out_of_scope = self._revert_out_of_scope_changes(task.id, file_paths)
-        if out_of_scope:
+        # Task 0 is the bridge connection test; some Aider versions may
+        # opportunistically update .gitignore (e.g. add .aider*). We always revert
+        # out-of-scope changes, but we do not fail the connection test on it.
+        if out_of_scope and int(task.id) != 0:
             return ExecutionResult(
                 task_id=task.id,
                 succeeded=False,
