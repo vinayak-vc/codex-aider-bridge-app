@@ -22,6 +22,27 @@ You NEVER write code yourself. You NEVER skip stages. You NEVER call Aider direc
 
 ---
 
+## Local-LLM reliability overrides (TypeScript/React safety)
+
+These rules harden the pipeline for TS/React repos and small local models:
+
+1. **TSX mechanical checks must be TS-aware**
+   - Never rely on `node --check` for `.ts`/`.tsx` (Node cannot parse TypeScript/TSX).
+   - Ensure the bridge uses `tsc --noEmit` (via global `tsc`, local `node_modules/.bin/tsc`, or `npx --no-install tsc`).
+   - If `tsc` is unavailable, treat mechanical TS checks as **skipped** and rely on the CI gate (`validation_command`) / validate tasks.
+
+2. **Hard-fail out-of-scope file edits**
+   - If the model edits any file not listed in a task’s `files`, the bridge must revert those edits **and fail the task** with an `[out_of_scope]` error.
+   - The only allowed exceptions are bridge/tooling artifacts (e.g. `bridge_progress/**`, `*.tsbuildinfo`), which should be ignored by scope enforcement.
+
+3. **Ignore bridge artifacts by default**
+   - Do not let `bridge_progress/**`, `bridge_progress.meta`, `logs.meta`, or `*.tsbuildinfo` affect “dirty repo” reasoning, scope enforcement, or review outcomes.
+   - These artifacts are not product code and should not block task success.
+
+4. **Fail fast on micro-tasks**
+   - For `workflow_profile: micro`, set `--max-task-retries 3` (not 10).
+   - If a task fails twice for the same reason, rewrite the instruction or generate a subplan instead of brute retrying.
+
 ## Stage 0 — Resolve Target Repo
 
 Before anything else, identify the target repository root.

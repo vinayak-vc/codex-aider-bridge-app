@@ -627,9 +627,23 @@ class AiderRunner:
 
         # ── Post-processing (scope check, silent failure, error classification) ─
 
-        # Scope enforcement: revert any files the model touched that were NOT
-        # in the task's file list.
-        self._revert_out_of_scope_changes(task.id, file_paths)
+        # Scope enforcement: if the model touched any file outside the task scope,
+        # revert those changes AND hard-fail the task. This keeps the bridge safe
+        # for asset-heavy repos and prevents "helpful" cross-file edits.
+        out_of_scope = self._revert_out_of_scope_changes(task.id, file_paths)
+        if out_of_scope:
+            return ExecutionResult(
+                task_id=task.id,
+                succeeded=False,
+                exit_code=0,
+                stdout=result_obj.stdout,
+                stderr=(
+                    "[out_of_scope] Model edited file(s) outside task scope: "
+                    + ", ".join(out_of_scope)
+                ),
+                command=result_obj.command,
+                duration_seconds=result_obj.duration_seconds,
+            )
 
         # Detect silent failure — Aider exits 0 but never actually writes the
         # target files, or only makes trivial whitespace/comment changes.
@@ -710,7 +724,7 @@ class AiderRunner:
         self,
         task_id: str,
         allowed_paths: list[Path],
-    ) -> None:
+    ) -> list[str]:
         """Revert any files modified by Aider that were NOT in the task's file list.
 
         Reasoning models (deepseek-r1, qwen-thinking, etc.) often "helpfully" edit
@@ -730,7 +744,7 @@ class AiderRunner:
                 creationflags=_WIN_NO_WINDOW,
             )
             if proc.returncode != 0:
-                return  # not a git repo or git unavailable — skip quietly
+                return []  # not a git repo or git unavailable — skip quietly
 
             # Resolve allowed paths to strings relative to repo root for comparison
             allowed_rel: set[str] = set()
@@ -803,17 +817,36 @@ class AiderRunner:
                 if mapped_rel not in out_of_scope:
                     out_of_scope.append(mapped_rel)
 
-            if not out_of_scope:
-                return
+            # Ignore bridge/tooling artifacts that can be written during runs.
+            # These are not user-code changes and should not block a task.
+            ignored_prefixes = (
+                "bridge_progress/",
+                "bridge_progress.meta",
+                "logs.meta",
+            )
+            ignored_suffixes = (
+                ".tsbuildinfo",
+            )
+            filtered: list[str] = []
+            for rel in out_of_scope:
+                rel_norm = rel.replace("\\", "/")
+                if rel_norm.startswith(ignored_prefixes):
+                    continue
+                if any(rel_norm.endswith(sfx) for sfx in ignored_suffixes):
+                    continue
+                filtered.append(rel)
+
+            if not filtered:
+                return []
 
             self._logger.warning(
                 "Task %s: model edited %d out-of-scope file(s) — reverting: %s",
                 task_id,
-                len(out_of_scope),
-                ", ".join(out_of_scope),
+                len(filtered),
+                ", ".join(filtered),
             )
             # Revert each file individually so a bad path doesn't abort the batch
-            for rel in out_of_scope:
+            for rel in filtered:
                 revert = subprocess.run(
                     ["git", "checkout", "--", rel],
                     cwd=self._repo_root,
@@ -825,8 +858,10 @@ class AiderRunner:
                     self._logger.debug(
                         "Task %s: could not revert %s (may be untracked — ignoring)", task_id, rel
                     )
+            return filtered
         except Exception as exc:  # noqa: BLE001
             self._logger.debug("Task %s: scope-enforcement check failed: %s", task_id, exc)
+            return []
 
     # ── Command builder ───────────────────────────────────────────────────────
 

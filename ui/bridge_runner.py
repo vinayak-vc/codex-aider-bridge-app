@@ -109,10 +109,22 @@ class BridgeRun:
             cmd.extend(["--manual-review-poll-seconds", str(int(settings["manual_review_poll_seconds"]))])
         if settings.get("validation_command", "").strip():
             cmd.extend(["--validation-command", settings["validation_command"].strip()])
+        else:
+            # If the caller didn't specify a validation command, pick a safe default
+            # for TypeScript repos so we don't rely on per-file mechanical checks.
+            repo_root = str(settings.get("repo_root", "")).strip()
+            if repo_root:
+                repo_path = Path(repo_root)
+                if (repo_path / "tsconfig.json").exists() and (repo_path / "package.json").exists():
+                    cmd.extend(["--validation-command", "npm run -s typecheck"])
         if settings.get("max_plan_attempts"):
             cmd.extend(["--max-plan-attempts", str(settings["max_plan_attempts"])])
-        if settings.get("max_task_retries"):
-            cmd.extend(["--max-task-retries", str(settings["max_task_retries"])])
+        # In micro workflow, prefer failing fast over looping 10 times.
+        max_task_retries = settings.get("max_task_retries")
+        if max_task_retries is None:
+            max_task_retries = 3 if settings.get("workflow_profile") == "micro" else None
+        if max_task_retries is not None:
+            cmd.extend(["--max-task-retries", str(int(max_task_retries))])
         if settings.get("plan_output_file", "").strip():
             cmd.extend(["--plan-output-file", settings["plan_output_file"].strip()])
         if settings.get("plan_file", "").strip():
