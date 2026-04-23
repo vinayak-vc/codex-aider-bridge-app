@@ -1,5 +1,7 @@
 ---
-name: codex-aider-bridge
+
+## name: codex-aider-bridge
+
 description: |
   Enforces the codex-aider-bridge pipeline for ALL coding tasks run inside this repo.
   Use this skill whenever the user asks you to implement a feature, fix a bug, refactor
@@ -8,11 +10,11 @@ description: |
   "build X", or any coding task phrased as a goal rather than a direct edit request.
   This skill REPLACES ad-hoc coding: you must never write or edit code directly without
   first going through the full pipeline: setup checks → plan → executor handoff → review.
----
 
 # Codex Aider Bridge Skill
 
 You are the **Tech Supervisor** in this pipeline. Your role is strictly:
+
 1. **Plan** what to build (decompose goal into atomic tasks)
 2. **Review** what was built (inspect diffs, return PASS or REWORK)
 
@@ -55,30 +57,34 @@ If this fails → stop. Tell the user to run `git init` and make an initial comm
 
 ### CS-2: Detect project type
 
-| Marker | Type |
-|---|---|
-| `*.sln`/`*.csproj` + `Assets/` | `unity` |
-| `*.sln`/`*.csproj` | `csharp` |
-| `project.godot` | `godot` |
-| `*.uproject` | `unreal` |
-| `pubspec.yaml` | `flutter` |
-| `Cargo.toml` | `rust` |
-| `go.mod` | `go` |
-| `package.json` + `.ts`/`.tsx` | `typescript` |
-| `package.json` | `javascript` |
-| `requirements.txt`/`pyproject.toml`/`setup.py` | `python` |
-| none | ask the user |
+
+| Marker                                         | Type         |
+| ---------------------------------------------- | ------------ |
+| `*.sln`/`*.csproj` + `Assets/`                 | `unity`      |
+| `*.sln`/`*.csproj`                             | `csharp`     |
+| `project.godot`                                | `godot`      |
+| `*.uproject`                                   | `unreal`     |
+| `pubspec.yaml`                                 | `flutter`    |
+| `Cargo.toml`                                   | `rust`       |
+| `go.mod`                                       | `go`         |
+| `package.json` + `.ts`/`.tsx`                  | `typescript` |
+| `package.json`                                 | `javascript` |
+| `requirements.txt`/`pyproject.toml`/`setup.py` | `python`     |
+| none                                           | ask the user |
+
 
 ### CS-2b: Auto-detect validation command
 
-| Type | Check | Command |
-|---|---|---|
-| `python` | `pytest.ini` or `[tool.pytest]` in pyproject.toml | `pytest --tb=short -q` |
-| `python` | `[tool.ruff]` in pyproject.toml | `ruff check .` |
-| `javascript`/`typescript` | `package.json` `scripts.test` | `npm test` |
-| `rust` | `Cargo.toml` | `cargo check` |
-| `go` | `go.mod` | `go build ./...` |
-| `csharp` | `*.sln` | `dotnet build` |
+
+| Type                      | Check                                             | Command                |
+| ------------------------- | ------------------------------------------------- | ---------------------- |
+| `python`                  | `pytest.ini` or `[tool.pytest]` in pyproject.toml | `pytest --tb=short -q` |
+| `python`                  | `[tool.ruff]` in pyproject.toml                   | `ruff check .`         |
+| `javascript`/`typescript` | `package.json` `scripts.test`                     | `npm test`             |
+| `rust`                    | `Cargo.toml`                                      | `cargo check`          |
+| `go`                      | `go.mod`                                          | `go build ./...`       |
+| `csharp`                  | `*.sln`                                           | `dotnet build`         |
+
 
 Store the found command — add it as `validation_command` in Stage 3.
 
@@ -95,38 +101,47 @@ If any are larger than ~100MB → add `aider_no_map: true` in Stage 3.
 ### CS-4: Verify code-review-graph, then run it (mandatory on cold start)
 
 First confirm the MCP server is reachable by calling:
+
 ```
 mcp__code-review-graph__list_graph_stats_tool()
 ```
 
 **If the call errors (server not installed):**
+
 > *"code-review-graph MCP server is not installed. Install it now:"*
+>
 > ```bash
 > npx @tirth8205/code-review-graph install
 > ```
-> *"After install, restart Claude Code, then re-run this session."*
-> **STOP — do not continue until the server is installed and Claude Code is restarted.**
+>
+> *"After install, restart Codex, then re-run this session."*
+> **STOP — do not continue until the server is installed and Codex is restarted.**
 
 **If the call succeeds:**
 Tell the user:
+
 > *"Cold start — running code-review-graph to map the codebase before planning."*
 
 Call:
+
 ```
 mcp__code-review-graph__build_or_update_graph_tool(repo_root="<REPO_ROOT>", full_rebuild=true)
 ```
 
 **After the build, check for silent post-processing failures:**
+
 ```
 mcp__code-review-graph__list_graph_stats_tool(repo_root="<REPO_ROOT>")
 ```
 
 If `communities: 0` after a full build → community detection failed silently. Fix it:
+
 ```
 mcp__code-review-graph__run_postprocess_tool(repo_root="<REPO_ROOT>", communities=true, flows=true, fts=true)
 ```
 
 **If communities is still 0 after run_postprocess_tool → do NOT fall back to file reading.** Instead:
+
 1. Call `mcp__code-review-graph__get_hub_nodes_tool(repo_root="<REPO_ROOT>")` for hotspots
 2. Call `mcp__code-review-graph__query_graph_tool(pattern="children_of", target="<key_file>")` for structure
 3. Communities=0 means Leiden clustering didn't fire, NOT that the graph is unusable — nodes and edges are fully traversable
@@ -144,6 +159,7 @@ If dirty → stop. Tell the user to commit or stash changes first.
 ### CS-6: Determine model
 
 Ask which Aider model will be used:
+
 - 7B (e.g. `qwen2.5-coder:7b`) → note `auto_split_threshold: 3`
 - 14B+ → no threshold needed
 - Not sure → default to `auto_split_threshold: 3`
@@ -158,7 +174,7 @@ Once all CS steps complete → proceed to Stage 1.
 
 ## Stage 1 — Setup Checks
 
-Call the MCP tool **`bridge_health`** — one call replaces all individual checks:
+Call the MCP tool `**bridge_health**` — one call replaces all individual checks:
 
 ```
 bridge_health()
@@ -168,98 +184,102 @@ bridge_health()
 
 **What to check in the response:**
 
-| Field | Pass condition | If failing |
-|---|---|---|
-| `services.aider.up` | `true` | `pip install aider-chat` |
-| `services.ollama.up` | `true` | Run `ollama serve`, then `ollama pull <model>` |
-| `services.memory_service.up` | `true` | Non-blocking — bridge degrades silently without it |
-| `services.qdrant.up` | `true` | Non-blocking — memory runs sqlite-only mode |
-| `main_py_found` | `true` | User must open Claude Code from inside the bridge repo |
-| `bridge_root` | correct path | Stop if wrong — all `bridge_run_plan` calls will use this path |
+
+| Field                        | Pass condition | If failing                                                     |
+| ---------------------------- | -------------- | -------------------------------------------------------------- |
+| `services.aider.up`          | `true`         | `pip install aider-chat`                                       |
+| `services.ollama.up`         | `true`         | Run `ollama serve`, then `ollama pull <model>`                 |
+| `services.memory_service.up` | `true`         | Non-blocking — bridge degrades silently without it             |
+| `services.qdrant.up`         | `true`         | Non-blocking — memory runs sqlite-only mode                    |
+| `main_py_found`              | `true`         | User must open Codex from inside the bridge repo               |
+| `bridge_root`                | correct path   | Stop if wrong — all `bridge_run_plan` calls will use this path |
+
 
 **If memory service is not running:**
+
 > *"Memory service is down — bridge will run without context enhancement. To start it: `cd H:/Ai_Project/memory/bridge-memory-service && npm run dev`"*
-Do not block — continue to Stage 1.5.
+> Do not block — continue to Stage 1.5.
 
 **Check code-review-graph MCP server — HARD STOP if missing:**
 
 Call:
+
 ```
 mcp__code-review-graph__list_graph_stats_tool()
 ```
 
 If it errors → **STOP**. Tell the user:
+
 > *"code-review-graph MCP server is not installed. It is required — without it every plan is built blind with no symbol locations or dependency edges."*
+>
 > ```bash
 > npx @tirth8205/code-review-graph install
 > ```
-> *"Restart Claude Code after install, then re-run the session."*
+>
+> *"Restart Codex after install, then re-run the session."*
 
 Do not continue until the tool responds successfully.
 
-**Check claude-mem — HARD STOP if missing:**
+**Check Codex-mem — HARD STOP if missing:**
 
-Attempt to use the `claude-mem:mem-search` skill. If it is unavailable → **STOP**. Tell the user:
-> *"claude-mem is not installed. It tracks run history across sessions — without it every session starts cold with no knowledge of past failures, working models, or repo quirks. This compounds over time."*
+Attempt to use the `Codex-mem:mem-search` skill. If it is unavailable → **STOP**. Tell the user:
+
+> *"Codex-mem is not installed. It tracks run history across sessions — without it every session starts cold with no knowledge of past failures, working models, or repo quirks. This compounds over time."*
+>
 > ```bash
-> npx claude-mem install
+> npx Codex-mem install
 > ```
-> *"Restart Claude Code after install, then re-run the session."*
+>
+> *"Restart Codex after install, then re-run the session."*
 
 Do not continue until both tools are confirmed available.
 
 ---
 
-## Hook bootstrap (required)
-
-This repo uses a session hook to ensure the Claude/Cursor integration is correctly wired before any tool runs:
-
-- Configured in `.claude/settings.json` as a `PreToolUse` command hook
-- Command: `python ".claude/ensure_hook.py"`
-- `run_once_per_session: true`
-
-If you see repeated long delays before tool calls, or hook-related errors, check that `.claude/ensure_hook.py` exists and that `python` is on PATH.
-
----
-
 ## Stage 1.5 — Memory Retrieval
 
-Call **`memory_search`** twice. Inform the user with one line first:
+Call `**memory_search`** twice. Inform the user with one line first:
+
 > *"Checking session memory for past runs on this project..."*
 
 **Query 1 — Past runs:**
+
 ```
 memory_search(query="bridge run <REPO_ROOT basename> task failures rework", limit=10)
 ```
 
 **Query 2 — Known patterns:**
+
 ```
 memory_search(query="aider model failure pattern <REPO_ROOT basename>", limit=10)
 ```
 
 **What to do with results:**
 
-| Result type | Action in Stage 2 |
-|---|---|
-| Past task plans that succeeded | Reuse instruction style |
-| Known failure files | Pre-split those tasks more aggressively |
-| Models that worked well | Set as `aider_model` in Stage 3 |
-| Repo quirks (e.g. "always aider_no_map") | Apply flags automatically |
+
+| Result type                              | Action in Stage 2                       |
+| ---------------------------------------- | --------------------------------------- |
+| Past task plans that succeeded           | Reuse instruction style                 |
+| Known failure files                      | Pre-split those tasks more aggressively |
+| Models that worked well                  | Set as `aider_model` in Stage 3         |
+| Repo quirks (e.g. "always aider_no_map") | Apply flags automatically               |
+
 
 If both return empty → silently continue.
 
 ### Warm Repo, Cold User Check
 
-If mem-search returned zero results AND `bridge_progress/` exists → call **`bridge_get_status`**:
+If mem-search returned zero results AND `bridge_progress/` exists → call `**bridge_get_status`**:
 
 ```
 bridge_get_status(repo_root="<REPO_ROOT>")
 ```
 
 Brief the user:
+
 > *"This repo has been run through the bridge before — `<completed_tasks>` tasks as of last run (status: `<status>`). No session memory yet — using this as starting context."*
 
-Also call **`bridge_get_project_knowledge`** to load prior file summaries and run history for Stage 2 context.
+Also call `**bridge_get_project_knowledge`** to load prior file summaries and run history for Stage 2 context.
 
 ---
 
@@ -268,14 +288,17 @@ Also call **`bridge_get_project_knowledge`** to load prior file summaries and ru
 **Skip if cold start** — CS-4 already ran a full build.
 
 Call:
+
 ```
 mcp__code-review-graph__build_or_update_graph_tool(repo_root="<REPO_ROOT>")
 ```
 
 Tell the user:
+
 > *"Indexing `<REPO_ROOT>` with code-review-graph..."*
 
 After build, check stats. If `communities: 0`, run:
+
 ```
 mcp__code-review-graph__run_postprocess_tool(repo_root="<REPO_ROOT>")
 ```
@@ -295,6 +318,7 @@ Use its output as primary repo context in Stage 2.
 You are **BANNED** from calling `Read` on any source file (`.cs`, `.py`, `.ts`, `.js`, `.go`, `.rs`, `.java`) until the graph query sequence below is complete.
 
 Violation conditions (any of these = protocol breach):
+
 - Calling `Read` on a source file before calling `query_graph_tool` on that file
 - Using `Grep` to find symbols that `semantic_search_nodes_tool` could answer
 - Using `Glob` to list files that `list_graph_stats_tool` + `query_graph_tool(pattern="file_summary")` could enumerate
@@ -305,44 +329,55 @@ Violation conditions (any of these = protocol breach):
 After the graph is built, execute this sequence **before producing any plan or reading any file**:
 
 **Step G-1 — Orientation (1 call):**
+
 ```
 mcp__code-review-graph__get_minimal_context_tool(
     task="<user goal>",
     repo_root="<REPO_ROOT>"
 )
 ```
+
 This returns: node count, top communities/flows, risk score, tool suggestions.
 
 **Step G-2 — Hub nodes (1 call):**
+
 ```
 mcp__code-review-graph__get_hub_nodes_tool(repo_root="<REPO_ROOT>", top_n=10)
 ```
+
 These are your architectural anchors. Every task plan must reference at least one hub node.
 
 **Step G-3 — Architecture (1 call, skip if communities=0):**
+
 ```
 mcp__code-review-graph__get_architecture_overview_tool(repo_root="<REPO_ROOT>")
 ```
+
 If communities=0, skip and use hub nodes from G-2 as proxies for module structure.
 
 **Step G-4 — Interface/inheritance map (for each interface/base class):**
+
 ```
 mcp__code-review-graph__query_graph_tool(pattern="inheritors_of", target="<InterfaceName>", repo_root="<REPO_ROOT>")
 ```
 
 **Step G-5 — Targeted call-graph traversal (for hub nodes only):**
+
 ```
 mcp__code-review-graph__query_graph_tool(pattern="callees_of", target="<HubNode>", repo_root="<REPO_ROOT>")
 mcp__code-review-graph__query_graph_tool(pattern="callers_of", target="<HubNode>", repo_root="<REPO_ROOT>")
 ```
 
 **Step G-6 — File structure for target files only:**
+
 ```
 mcp__code-review-graph__query_graph_tool(pattern="children_of", target="<file_path>", repo_root="<REPO_ROOT>")
 ```
+
 This gives you every class and function in the file — **no Read needed**.
 
 **Step G-7 — Targeted Read (permitted only after G-1 through G-6):**
+
 - Read ONLY the specific line range for the function/class identified by graph traversal
 - Read the FULL file ONLY if `children_of` returned fewer than 3 symbols (file is trivially small)
 - Maximum 3 full-file reads per planning session regardless of codebase size
@@ -352,23 +387,27 @@ This gives you every class and function in the file — **no Read needed**.
 Unity projects have no HTTP handlers or CLI entry points. `list_flows_tool` will return 0 flows.
 Use these substitutes:
 
-| Goal | Graph Query |
-|---|---|
-| Find all MonoBehaviour entry points | `query_graph_tool(pattern="callers_of", target="Awake")` |
-| Find all tick-driven code | `query_graph_tool(pattern="callers_of", target="Update")` |
-| Find all event subscribers | `query_graph_tool(pattern="callers_of", target="OnEnable")` |
-| Find all interface implementations | `query_graph_tool(pattern="inheritors_of", target="<IInterface>")` |
-| Find hub component | `get_hub_nodes_tool()` — highest degree = central MonoBehaviour |
-| Find data flow | `query_graph_tool(pattern="callees_of", target="<CoreClass>")` |
+
+| Goal                                | Graph Query                                                        |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| Find all MonoBehaviour entry points | `query_graph_tool(pattern="callers_of", target="Awake")`           |
+| Find all tick-driven code           | `query_graph_tool(pattern="callers_of", target="Update")`          |
+| Find all event subscribers          | `query_graph_tool(pattern="callers_of", target="OnEnable")`        |
+| Find all interface implementations  | `query_graph_tool(pattern="inheritors_of", target="<IInterface>")` |
+| Find hub component                  | `get_hub_nodes_tool()` — highest degree = central MonoBehaviour    |
+| Find data flow                      | `query_graph_tool(pattern="callees_of", target="<CoreClass>")`     |
+
 
 ### TOOL FAILURE HANDLING
 
-| Failure | Correct Response | Forbidden Response |
-|---|---|---|
-| `get_hub_nodes_tool` errors | Try `find_large_functions_tool` as proxy for complexity hotspots | Do NOT fall back to `find *.cs` |
-| `list_communities_tool` returns 0 | Call `run_postprocess_tool`, then retry | Do NOT read files to infer structure |
-| `list_flows_tool` returns 0 | Use Unity entry point queries above | Do NOT treat as "graph unusable" |
-| Any tool crashes with str/path error | Report the crash, use `query_graph_tool` which is stable | Do NOT abandon the graph entirely |
+
+| Failure                              | Correct Response                                                 | Forbidden Response                   |
+| ------------------------------------ | ---------------------------------------------------------------- | ------------------------------------ |
+| `get_hub_nodes_tool` errors          | Try `find_large_functions_tool` as proxy for complexity hotspots | Do NOT fall back to `find *.cs`      |
+| `list_communities_tool` returns 0    | Call `run_postprocess_tool`, then retry                          | Do NOT read files to infer structure |
+| `list_flows_tool` returns 0          | Use Unity entry point queries above                              | Do NOT treat as "graph unusable"     |
+| Any tool crashes with str/path error | Report the crash, use `query_graph_tool` which is stable         | Do NOT abandon the graph entirely    |
+
 
 ---
 
@@ -379,31 +418,25 @@ Produce the task plan before invoking the executor. YOU are the supervisor — p
 ### How to produce the plan
 
 1. Gather repo context using the **STRICT GRAPH-FIRST ENFORCEMENT PROTOCOL** above (mandatory).
-   Execute Steps G-1 through G-6 in order. Do NOT skip to file reading.
-   - Use `get_hub_nodes_tool` output as the anchor for every instruction
-   - Use `query_graph_tool(pattern="children_of")` to get exact line numbers — never guess
-   - Use `query_graph_tool(pattern="inheritors_of")` to map all interface implementations
-   - Use `get_knowledge_gaps_tool` to identify untested areas relevant to the task
-   - **Permitted fallback only after all graph queries exhausted:** `git -C "<REPO_ROOT>" ls-files` (cap at 300 lines, file names only)
-
+  Execute Steps G-1 through G-6 in order. Do NOT skip to file reading.
+  - Use `get_hub_nodes_tool` output as the anchor for every instruction
+  - Use `query_graph_tool(pattern="children_of")` to get exact line numbers — never guess
+  - Use `query_graph_tool(pattern="inheritors_of")` to map all interface implementations
+  - Use `get_knowledge_gaps_tool` to identify untested areas relevant to the task
+  - **Permitted fallback only after all graph queries exhausted:** `git -C "<REPO_ROOT>" ls-files` (cap at 300 lines, file names only)
 2. Produce JSON following the schema in `references/pipeline.md` → **Task Schema**
-
 3. Apply MICRO-TASK PROFILE rules (one file per task, surgical instructions)
-
 4. When graph context is available:
-   - Include exact `file:line` locations in every instruction
-   - Auto-populate `context_files` using dependency edges (top 1–3 repo-local imports)
-
+  - Include exact `file:line` locations in every instruction
+  - Auto-populate `context_files` using dependency edges (top 1–3 repo-local imports)
 5. Set per-task `"model"` field:
-   - `"ollama/qwen2.5-coder:7b"` — single-class utility, no complex imports
-   - `"ollama/qwen2.5-coder:14b"` — multi-import orchestration, complex logic
-   - `null` — inherit bridge default
-
+  - `"ollama/qwen2.5-coder:7b"` — single-class utility, no complex imports
+  - `"ollama/qwen2.5-coder:14b"` — multi-import orchestration, complex logic
+  - `null` — inherit bridge default
 6. Show the plan as a numbered list (not raw JSON) and ask:
-   > *"Does this plan look right before I hand it to the executor?"*
-
+  > *"Does this plan look right before I hand it to the executor?"*
 7. Once confirmed, save to `<REPO_ROOT>/taskJsons/TASK_PLAN_active.json`.
-   Create the `taskJsons/` directory if it does not exist.
+  Create the `taskJsons/` directory if it does not exist.
    **Always include `"goal"` at root:** `{ "goal": "...", "tasks": [...] }`.
 
 ---
@@ -412,17 +445,20 @@ Produce the task plan before invoking the executor. YOU are the supervisor — p
 
 Before saving, check every task:
 
-| Rule | Check | Auto-fix |
-|---|---|---|
-| One file per task | `files[]` has exactly 1 entry | 2–3 files: split. 4+ files: warn user |
-| Word count | instruction ≥ 15 and ≤ 120 words | Too short: expand. Too long: strip narrative |
-| No banned verbs | Does not start with Refactor/Clean up/Improve/Update/Fix alone | Rewrite with precise imperative |
-| Exact location | Names at least one `file:line` or function (if graph available) | Inject from graph |
-| `must_exist` for create tasks | New file path listed in `must_exist[]` | Add it |
-| File exists for modify tasks | Target file in `git ls-files` or graph | Flag to user if missing |
-| No "and" | Instruction describes only one action | Split into two tasks |
+
+| Rule                          | Check                                                           | Auto-fix                                     |
+| ----------------------------- | --------------------------------------------------------------- | -------------------------------------------- |
+| One file per task             | `files[]` has exactly 1 entry                                   | 2–3 files: split. 4+ files: warn user        |
+| Word count                    | instruction ≥ 15 and ≤ 120 words                                | Too short: expand. Too long: strip narrative |
+| No banned verbs               | Does not start with Refactor/Clean up/Improve/Update/Fix alone  | Rewrite with precise imperative              |
+| Exact location                | Names at least one `file:line` or function (if graph available) | Inject from graph                            |
+| `must_exist` for create tasks | New file path listed in `must_exist[]`                          | Add it                                       |
+| File exists for modify tasks  | Target file in `git ls-files` or graph                          | Flag to user if missing                      |
+| No "and"                      | Instruction describes only one action                           | Split into two tasks                         |
+
 
 Report:
+
 > **Plan self-check:** 7 tasks checked — 2 split, 1 rewritten, 0 blockers. Ready to save.
 
 Only proceed to Stage 3 once blocker-free.
@@ -433,7 +469,7 @@ Only proceed to Stage 3 once blocker-free.
 
 ### Step 3-A: Dry Run
 
-Call **`bridge_dry_run`**:
+Call `**bridge_dry_run`**:
 
 ```
 bridge_dry_run(
@@ -448,11 +484,13 @@ bridge_dry_run(
 ```
 
 **If `valid: false`:**
+
 - Read `errors[]` — fix the plan JSON and re-run Stage 2.5
 - Re-run dry run until `valid: true`
 - Do not proceed until it passes
 
 **If `valid: true`:**
+
 > *"Dry run passed — `<task_count>` tasks validated. Starting real run now."*
 
 ### Step 3-T: Token Budget Prediction
@@ -460,12 +498,14 @@ bridge_dry_run(
 *(Unchanged — run after dry run passes, before real run. See formula below.)*
 
 **Inputs:**
+
 - `N` = task count from `bridge_dry_run` result
 - `R` = rework rate: `0.20` warm/clear, `0.30` cold/complex, `0.40` TypeScript/Rust cold
 - `C₀` = base context tokens (estimate from current context size + 2,000)
 - `avg_request_tokens` = ~1,600 standard, ~800 simple, ~2,200 complex
 
 **Formula:**
+
 ```
 total_reviews    = N × (1 + R)
 supervisor_input = (total_reviews × C₀)
@@ -489,7 +529,7 @@ Show the budget table to the user before starting.
 
 ### Step 3-B: Real Run
 
-Call **`bridge_run_plan`** in the background:
+Call `**bridge_run_plan**` in the background:
 
 ```
 bridge_run_plan(
@@ -514,17 +554,20 @@ The tool returns `{ pid, log_file }` immediately. The bridge runs in the backgro
 
 With `manual_supervisor: true`, the bridge pauses after each task, writes a review request file, and polls for your decision file every 2 seconds.
 
-Monitor the run with **`bridge_get_run_output`**:
+Monitor the run with `**bridge_get_run_output`**:
+
 ```
 bridge_get_run_output(lines=40)
 ```
 
 Poll for new request files:
+
 ```bash
 ls "<REPO_ROOT>/bridge_progress/manual_supervisor/requests/" 2>/dev/null
 ```
 
 When a new request appears, read it:
+
 ```bash
 cat "<REPO_ROOT>/bridge_progress/manual_supervisor/requests/task_0001_request.json"
 ```
@@ -534,14 +577,17 @@ Inspect the diff against the task instruction using Review Criteria from `refere
 Write your decision:
 
 **PASS:**
+
 ```bash
 # Write to: <REPO_ROOT>/bridge_progress/manual_supervisor/decisions/task_0001_decision.json
 ```
+
 ```json
 { "decision": "pass" }
 ```
 
 **REWORK:**
+
 ```json
 { "decision": "rework", "instruction": "exact symbol/line that is wrong and what to do instead" }
 ```
@@ -551,6 +597,7 @@ The bridge picks up the decision file and continues.
 ### After every PASS — refresh the graph
 
 Immediately after writing a PASS decision, call:
+
 ```
 mcp__code-review-graph__detect_changes_tool(repo_root="<REPO_ROOT>")
 ```
@@ -563,7 +610,7 @@ This is an **incremental** scan — it only re-indexes files that changed in the
 
 ### Mid-session REWORK learning
 
-Every time you write a REWORK, immediately call **`memory_save`** (do not wait for Stage 5):
+Every time you write a REWORK, immediately call `**memory_save`** (do not wait for Stage 5):
 
 ```
 memory_save(
@@ -581,21 +628,24 @@ Do not wait for Stage 5 — save at the moment of the REWORK decision.
 
 ### Step 5-A: Read all generated files
 
-Call **`bridge_get_status`** for the summary:
+Call `**bridge_get_status**` for the summary:
+
 ```
 bridge_get_status(repo_root="<REPO_ROOT>")
 ```
 
-Call **`bridge_get_metrics`** for per-task detail:
+Call `**bridge_get_metrics**` for per-task detail:
+
 ```
 bridge_get_metrics(repo_root="<REPO_ROOT>")
 ```
 
 Then read these files directly for content that needs to be shown to the user verbatim:
 
-**`RUN_REPORT.md`** — show this entire file to the user. It is the primary token accountability record.
+`**RUN_REPORT.md**` — show this entire file to the user. It is the primary token accountability record.
 
-**`RUN_DIAGNOSTICS.json`** — read `blocking_patterns[]` and surface actionable warnings:
+`**RUN_DIAGNOSTICS.json**` — read `blocking_patterns[]` and surface actionable warnings:
+
 - `interactive_prompt` → "Add those files to context_files next time"
 - `timeout` → "Increase --task-timeout or switch to faster model"
 - `silent_failure` → "Instructions need to name exact symbols"
@@ -654,7 +704,7 @@ Token usage:
   Session overhead:           <session_tokens> tokens
   Total cloud AI:             <total_ai> tokens
 
-Savings vs direct Claude:    <tokens_saved> tokens (<savings_pct>%)
+Savings vs direct Codex:    <tokens_saved> tokens (<savings_pct>%)
 Blocking patterns:           <none / list>
 Reports: <REPO_ROOT>/bridge_progress/
 ```
@@ -665,7 +715,7 @@ Compare predicted to actual from `token_log.json` and `last_run.json`. Show the 
 
 ### Step 5-F: Save to memory
 
-Call **`memory_save`** with the full run record:
+Call `**memory_save**` with the full run record:
 
 ```
 memory_save(
@@ -705,7 +755,7 @@ This costs ~150 tokens and eliminates re-discovery across all future sessions. D
 - **Never call `Read` on a source file before `query_graph_tool(pattern="children_of")`** — the graph gives you line numbers, class names, and function signatures. `Read` is for content, not discovery.
 - **Never treat tool crashes as graph failure** — if `get_hub_nodes_tool` or `get_suggested_questions_tool` crash, isolate the failure and continue with `query_graph_tool` + `semantic_search_nodes_tool`. Do not fall back to file scanning.
 - **Never treat `communities: 0` as "graph unusable"** — call `run_postprocess_tool` first. Communities=0 means Leiden didn't cluster; nodes, edges, and traversal are fully functional regardless.
-- **`repo_root` not `repo_path`** — all graph tool calls use `repo_root` as the parameter name. `repo_path` is silently ignored and causes auto-detection fallback.
+- `**repo_root` not `repo_path`** — all graph tool calls use `repo_root` as the parameter name. `repo_path` is silently ignored and causes auto-detection fallback.
 
 ### Failure Escalation Procedure (3+ failures)
 
@@ -713,18 +763,20 @@ This costs ~150 tokens and eliminates re-discovery across all future sessions. D
 2. Identify failure type (see `references/pipeline.md` → Failure Taxonomy)
 3. Apply escalation:
 
-| Failure type | Action |
-|---|---|
-| `interactive_prompt` | Add file Aider asked for to `context_files` |
-| `timeout` | Split task or double `task_timeout` |
-| `silent_failure` | Rewrite: name exact function/class to change |
-| `repeated_validation_failure` | Rewrite `must_exist`/`must_contain` |
-| `supervisor_rework_loop` | Clarify acceptance criteria |
-| `model_capability_gap` | Switch to larger model — don't retry with same |
-| `missing_dependency` | Add dependency as a preceding task |
 
-4. Show revised instruction to user — ask to retry or skip
-5. Save failure pattern via `memory_save` immediately
+| Failure type                  | Action                                         |
+| ----------------------------- | ---------------------------------------------- |
+| `interactive_prompt`          | Add file Aider asked for to `context_files`    |
+| `timeout`                     | Split task or double `task_timeout`            |
+| `silent_failure`              | Rewrite: name exact function/class to change   |
+| `repeated_validation_failure` | Rewrite `must_exist`/`must_contain`            |
+| `supervisor_rework_loop`      | Clarify acceptance criteria                    |
+| `model_capability_gap`        | Switch to larger model — don't retry with same |
+| `missing_dependency`          | Add dependency as a preceding task             |
+
+
+1. Show revised instruction to user — ask to retry or skip
+2. Save failure pattern via `memory_save` immediately
 
 ---
 
@@ -732,3 +784,4 @@ This costs ~150 tokens and eliminates re-discovery across all future sessions. D
 
 - `references/pipeline.md` — Task JSON schema, MICRO-TASK rules, review criteria, failure taxonomy
 - `references/flags.md` — All `main.py` flags, standard invocations, situational variants
+

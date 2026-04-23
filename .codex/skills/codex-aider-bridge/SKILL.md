@@ -210,6 +210,18 @@ Do not continue until both tools are confirmed available.
 
 ---
 
+## Hook bootstrap (required)
+
+This repo uses a session hook to ensure the Claude/Cursor integration is correctly wired before any tool runs:
+
+- Configured in `.claude/settings.json` as a `PreToolUse` command hook
+- Command: `python ".claude/ensure_hook.py"`
+- `run_once_per_session: true`
+
+If you see repeated long delays before tool calls, or hook-related errors, check that `.claude/ensure_hook.py` exists and that `python` is on PATH.
+
+---
+
 ## Stage 1.5 — Memory Retrieval
 
 Call **`memory_search`** twice. Inform the user with one line first:
