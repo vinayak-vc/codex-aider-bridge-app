@@ -793,7 +793,21 @@ def execute_task_with_review(
                 continue
 
         if config.dry_run:
-            logger.info("[dry-run] Task %s: %s", current_task.id, current_instruction)
+            logger.info(
+                "[DRY-RUN — NO CHANGES WILL BE MADE] Task %s (%s) files=%s",
+                current_task.id,
+                current_task.type,
+                ", ".join(current_task.files),
+            )
+            logger.info(
+                "[DRY-RUN — NO CHANGES WILL BE MADE] Task %s instruction:\n%s",
+                current_task.id,
+                current_instruction,
+            )
+            logger.info(
+                "[DRY-RUN — NO CHANGES WILL BE MADE] Task %s: skipping Aider execution, git staging, and auto-commit.",
+                current_task.id,
+            )
             return
 
         # ── Read/Investigate task: skip Aider, send file content to supervisor ─
