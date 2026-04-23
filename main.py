@@ -1279,29 +1279,57 @@ def execute_task_with_review(
             time.sleep(wait_seconds)
             continue
 
-        # ── Skip review when nothing changed ─────────────────────────────────
-        # If Aider succeeded (exit 0) but produced an empty diff, there's
-        # nothing for the supervisor to review.  Skip straight to retry with a
-        # more explicit instruction — saves supervisor tokens.
+        # ── Empty diff handling ──────────────────────────────────────────────
+        # If Aider succeeded (exit 0) but produced an empty diff, this can mean:
+        # - The task is already satisfied (idempotent no-op)
+        # - Aider failed to apply changes (silent failure)
+        #
+        # In MANUAL-SUPERVISOR mode we must never loop/abort without giving the
+        # supervisor a chance to PASS/REWORK, so we do NOT auto-retry here.
         if execution_result.succeeded and not diff.strip():
-            logger.info(
-                "Task %s: Aider exited 0 but produced no diff — skipping review, retrying",
-                current_task.id,
-            )
-            _failure_reasons.append("Aider exited 0 but no files changed (empty diff)")
-            _escalation_log.append({
-                "attempt": attempt + 1,
-                "stage": "empty_diff",
-                "reason": "Aider reported success but diff is empty",
-            })
-            if attempt >= config.max_task_retries:
-                raise RuntimeError(
-                    f"Task {current_task.id}: Aider reported success but never "
-                    f"modified any files after {attempt + 1} attempts"
+            if manual_supervisor is not None:
+                logger.info(
+                    "Task %s: Aider exited 0 but produced no diff — sending to manual review",
+                    current_task.id,
                 )
-            wait_seconds = min(2 ** attempt, 30)
-            time.sleep(wait_seconds)
-            continue
+            else:
+                # For CREATE tasks, allow idempotent no-op when the target file
+                # already exists and is non-empty. This prevents placeholder-backed
+                # creates from killing the run.
+                if current_task.type == "create":
+                    _all_present_and_non_empty = True
+                    for p in selected_files.all_paths:
+                        try:
+                            if not p.exists() or p.stat().st_size == 0:
+                                _all_present_and_non_empty = False
+                                break
+                        except OSError:
+                            _all_present_and_non_empty = False
+                            break
+                    if _all_present_and_non_empty:
+                        logger.info(
+                            "Task %s: create task produced no diff, but file(s) already exist and are non-empty — treating as satisfied",
+                            current_task.id,
+                        )
+                    else:
+                        logger.info(
+                            "Task %s: Aider exited 0 but produced no diff — retrying",
+                            current_task.id,
+                        )
+                        _failure_reasons.append("Aider exited 0 but no files changed (empty diff)")
+                        _escalation_log.append({
+                            "attempt": attempt + 1,
+                            "stage": "empty_diff",
+                            "reason": "Aider reported success but diff is empty",
+                        })
+                        if attempt >= config.max_task_retries:
+                            raise RuntimeError(
+                                f"Task {current_task.id}: Aider reported success but never "
+                                f"modified any files after {attempt + 1} attempts"
+                            )
+                        wait_seconds = min(2 ** attempt, 30)
+                        time.sleep(wait_seconds)
+                        continue
 
         # ── Step 4: Review ────────────────────────────────────────────────────
         if manual_supervisor is not None:
