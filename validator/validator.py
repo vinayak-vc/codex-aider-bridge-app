@@ -604,10 +604,30 @@ class MechanicalValidator:
                 stderr="",
             )
 
-        # Prefer tsc for full type-aware check; fall back to node --check for syntax only.
-        if shutil.which("tsc"):
+        # Prefer tsc for full type-aware check.
+        # Note: `tsc` is often installed locally in node_modules/.bin, so we try:
+        # - global `tsc`
+        # - local `node_modules/.bin/tsc(.cmd)` (Windows)
+        # - `npx --no-install tsc`
+        tsc_cmd: Optional[list[str]] = None
+
+        global_tsc = shutil.which("tsc")
+        if global_tsc:
+            tsc_cmd = [global_tsc]
+        else:
+            local_bin = self._repo_root / "node_modules" / ".bin"
+            local_tsc = local_bin / ("tsc.cmd" if sys.platform == "win32" else "tsc")
+            if local_tsc.exists():
+                tsc_cmd = [str(local_tsc)]
+            else:
+                npx = shutil.which("npx")
+                if npx:
+                    # --no-install prevents npx from downloading packages.
+                    tsc_cmd = [npx, "--no-install", "tsc"]
+
+        if tsc_cmd:
             result = subprocess.run(
-                ["tsc", "--noEmit", "--skipLibCheck"],
+                [*tsc_cmd, "--noEmit", "--skipLibCheck"],
                 cwd=self._repo_root,
                 capture_output=True,
                 text=True,
@@ -629,37 +649,13 @@ class MechanicalValidator:
                 stderr=result.stderr[:2000],
             )
 
-        # tsc not available — use node --check as a syntax-only fallback.
-        self._logger.debug("Task %s: tsc not found — falling back to node --check", task_id)
-        if shutil.which("node"):
-            errors: list[str] = []
-            for ts_file in ts_files:
-                result = subprocess.run(
-                    ["node", "--check", str(ts_file)],
-                    cwd=self._repo_root,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    check=False,
-                    timeout=_SYNTAX_TIMEOUT_SECONDS,
-                    creationflags=_WIN_NO_WINDOW,
-                )
-                if result.returncode != 0:
-                    errors.append(f"{ts_file.name}: {result.stderr.strip()[:500]}")
-            if errors:
-                return ValidationResult(
-                    task_id=task_id,
-                    succeeded=False,
-                    message="TypeScript syntax error(s) detected (node --check).",
-                    stdout="",
-                    stderr="\n".join(errors),
-                )
-
+        # `node --check` cannot parse .ts/.tsx. If we can't find tsc, we skip here
+        # and rely on the configured CI gate (validation_command) / validate tasks.
+        self._logger.debug("Task %s: tsc not found — skipping TypeScript syntax check", task_id)
         return ValidationResult(
             task_id=task_id,
             succeeded=True,
-            message="TypeScript syntax OK.",
+            message="Skipped TypeScript syntax check (tsc not found).",
             stdout="",
             stderr="",
         )

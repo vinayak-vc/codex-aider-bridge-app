@@ -207,31 +207,31 @@ marimo/_lsp/
 __marimo__/
 .aider*
 
-# Per-project bridge runtime state
-# Keep knowledge + understanding files so context persists across sessions
+# ── Bridge / Aider runtime artefacts ─────────────────────────────
+# Keep the two knowledge files so context persists across sessions
 bridge_progress/**
 !bridge_progress/project_knowledge.json
 !bridge_progress/AI_UNDERSTANDING.md
 
-# Local logs
-logs/
+.aider.tags.cache.v4/       # Aider repo-map tag cache
+.aider.input.history        # Aider interactive input history
+.aider.chat.history.md      # Aider chat history
 
-# AI-generated task plan JSON files (stored per-project, not committed)
+# ── MCP server build output ───────────────────────────────────────
+mcp/node_modules/
+mcp/dist/
+
+# ── Services (downloaded binaries / data volumes) ─────────────────
+services/
+
+# ── Transient task-plan JSON files ───────────────────────────────
+TASK_PLAN_active.json
+_bad_plan.json
+_test_plan.json
 taskJsons/
+
+# ── Local logs & misc ────────────────────────────────────────────
+logs/
+logs.meta
+bridge_progress.meta
 firebase_config.json
-
-# ── Aider / Bridge artefacts ─────────────────────────────────────
-.aider.tags.cache.v4/                    # Aider repo-map tag cache
-bridge_progress/                         # Bridge run state, checkpoints and reports
-logs.meta                                # Unity meta for bridge logs folder
-.aider.input.history                     # Aider interactive input history
-.aider.chat.history.md                   # Aider chat history
-bridge_progress.meta                     # Unity meta for bridge_progress folder
-
-# ── Aider / Bridge artefacts ─────────────────────────────────────
-.aider.tags.cache.v4/                    # Aider repo-map tag cache
-bridge_progress/                         # Bridge run state, checkpoints and reports
-logs.meta                                # Unity meta for bridge logs folder
-.aider.input.history                     # Aider interactive input history
-.aider.chat.history.md                   # Aider chat history
-bridge_progress.meta                     # Unity meta for bridge_progress folder

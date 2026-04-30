@@ -7,6 +7,13 @@
         "serve"
       ],
       "type": "stdio"
+    },
+    "bridge-mcp-server": {
+      "command": "node",
+      "args": [
+        "H:/Vinayak_Project/codex-aider-bridge-app/.claude/worktrees/elastic-lamarr/mcp/dist/index.js"
+      ],
+      "type": "stdio"
     }
   }
 }

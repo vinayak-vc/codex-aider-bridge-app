@@ -1,5 +1,24 @@
 {
   "hooks": {
-    "PreToolUse": []
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \".claude/ensure_hook.py\"",
+            "timeout": 120,
+            "run_once_per_session": true
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "bridge": {
+      "command": "node",
+      "args": ["mcp/dist/index.js"],
+      "cwd": "."
+    }
   }
 }

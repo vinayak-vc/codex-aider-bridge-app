@@ -388,11 +388,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--no-auto-commit",
-        action="store_true",
-        help="Disable automatic git commits after each approved task. Changes stay unstaged.",
-    )
-    parser.add_argument(
         "--session-tokens",
         type=int,
         default=0,
@@ -614,6 +609,16 @@ def execute_task_with_review(
     """
     selected_files = selector.select(task.files)
     current_instruction = task.instruction
+    # Guard: prevent the model from pulling in extra context files and
+    # concluding the task is already done because related files were recently
+    # modified by a previous task in the same session.
+    _guard = (
+        "\n\nIMPORTANT: Do NOT request or read any other files beyond the one(s) "
+        "already in the chat. Only edit the file(s) listed for this task. "
+        "Ignore what other files in the repo may already contain — your job is "
+        "solely to apply the changes described above to the specified file(s)."
+    )
+    current_instruction = current_instruction + _guard
     current_instruction = memory_client.enhance_prompt(current_instruction)
 
     if manual_supervisor is not None:
@@ -788,7 +793,21 @@ def execute_task_with_review(
                 continue
 
         if config.dry_run:
-            logger.info("[dry-run] Task %s: %s", current_task.id, current_instruction)
+            logger.info(
+                "[DRY-RUN — NO CHANGES WILL BE MADE] Task %s (%s) files=%s",
+                current_task.id,
+                current_task.type,
+                ", ".join(current_task.files),
+            )
+            logger.info(
+                "[DRY-RUN — NO CHANGES WILL BE MADE] Task %s instruction:\n%s",
+                current_task.id,
+                current_instruction,
+            )
+            logger.info(
+                "[DRY-RUN — NO CHANGES WILL BE MADE] Task %s: skipping Aider execution, git staging, and auto-commit.",
+                current_task.id,
+            )
             return
 
         # ── Read/Investigate task: skip Aider, send file content to supervisor ─
@@ -1274,29 +1293,57 @@ def execute_task_with_review(
             time.sleep(wait_seconds)
             continue
 
-        # ── Skip review when nothing changed ─────────────────────────────────
-        # If Aider succeeded (exit 0) but produced an empty diff, there's
-        # nothing for the supervisor to review.  Skip straight to retry with a
-        # more explicit instruction — saves supervisor tokens.
+        # ── Empty diff handling ──────────────────────────────────────────────
+        # If Aider succeeded (exit 0) but produced an empty diff, this can mean:
+        # - The task is already satisfied (idempotent no-op)
+        # - Aider failed to apply changes (silent failure)
+        #
+        # In MANUAL-SUPERVISOR mode we must never loop/abort without giving the
+        # supervisor a chance to PASS/REWORK, so we do NOT auto-retry here.
         if execution_result.succeeded and not diff.strip():
-            logger.info(
-                "Task %s: Aider exited 0 but produced no diff — skipping review, retrying",
-                current_task.id,
-            )
-            _failure_reasons.append("Aider exited 0 but no files changed (empty diff)")
-            _escalation_log.append({
-                "attempt": attempt + 1,
-                "stage": "empty_diff",
-                "reason": "Aider reported success but diff is empty",
-            })
-            if attempt >= config.max_task_retries:
-                raise RuntimeError(
-                    f"Task {current_task.id}: Aider reported success but never "
-                    f"modified any files after {attempt + 1} attempts"
+            if manual_supervisor is not None:
+                logger.info(
+                    "Task %s: Aider exited 0 but produced no diff — sending to manual review",
+                    current_task.id,
                 )
-            wait_seconds = min(2 ** attempt, 30)
-            time.sleep(wait_seconds)
-            continue
+            else:
+                # For CREATE tasks, allow idempotent no-op when the target file
+                # already exists and is non-empty. This prevents placeholder-backed
+                # creates from killing the run.
+                if current_task.type == "create":
+                    _all_present_and_non_empty = True
+                    for p in selected_files.all_paths:
+                        try:
+                            if not p.exists() or p.stat().st_size == 0:
+                                _all_present_and_non_empty = False
+                                break
+                        except OSError:
+                            _all_present_and_non_empty = False
+                            break
+                    if _all_present_and_non_empty:
+                        logger.info(
+                            "Task %s: create task produced no diff, but file(s) already exist and are non-empty — treating as satisfied",
+                            current_task.id,
+                        )
+                    else:
+                        logger.info(
+                            "Task %s: Aider exited 0 but produced no diff — retrying",
+                            current_task.id,
+                        )
+                        _failure_reasons.append("Aider exited 0 but no files changed (empty diff)")
+                        _escalation_log.append({
+                            "attempt": attempt + 1,
+                            "stage": "empty_diff",
+                            "reason": "Aider reported success but diff is empty",
+                        })
+                        if attempt >= config.max_task_retries:
+                            raise RuntimeError(
+                                f"Task {current_task.id}: Aider reported success but never "
+                                f"modified any files after {attempt + 1} attempts"
+                            )
+                        wait_seconds = min(2 ** attempt, 30)
+                        time.sleep(wait_seconds)
+                        continue
 
         # ── Step 4: Review ────────────────────────────────────────────────────
         if manual_supervisor is not None:
@@ -1596,7 +1643,7 @@ def estimate_session_tokens(
     """Estimate tokens the AI supervisor spent in its interactive session.
 
     Covers the work every AI does before and during a bridge run:
-      - Reading AGENTIC_AI_ONBOARDING.md (from the bridge directory)
+      - Reading docs/AGENTIC_AI_ONBOARDING.md (from the bridge directory)
       - Reading WORK_LOG.md (from the target repo, if present)
       - Reading bridge_progress/project_knowledge.json (if present)
       - Reading the idea / brief file (if provided)
@@ -1615,7 +1662,7 @@ def estimate_session_tokens(
 
     # Bridge onboarding doc — always read by any AI supervisor
     bridge_dir = Path(__file__).resolve().parent
-    onboarding = bridge_dir / "AGENTIC_AI_ONBOARDING.md"
+    onboarding = bridge_dir / "docs" / "AGENTIC_AI_ONBOARDING.md"
     total += _file_tokens(onboarding) if onboarding.exists() else 2_000
 
     # WORK_LOG.md in the target repo
@@ -1846,7 +1893,7 @@ def main() -> int:
         workflow_profile=str(args.workflow_profile),
         skip_onboarding_scan=bool(args.skip_onboarding_scan),
         relay_session_id=str(args.relay_session_id).strip() if args.relay_session_id else None,
-        auto_commit=not bool(args.no_auto_commit),
+        auto_commit=True,
     )
 
     run_preflight_checks(config, logger)
