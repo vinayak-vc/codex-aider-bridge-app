@@ -23,7 +23,7 @@ export interface JobInfo {
     exit_code: number | null;
 }
 export declare function currentJob(): JobInfo | null;
-/** Detect bridge root by scanning up from this file for main.py */
+/** Detect bridge root — checks BRIDGE_ROOT env, ~/.bridge/, then walks up from this file */
 export declare function detectBridgeRoot(): string;
 export interface DryRunResult {
     valid: boolean;
