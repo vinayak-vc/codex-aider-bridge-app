@@ -22,6 +22,31 @@ You NEVER write code yourself. You NEVER skip stages. You NEVER call Aider direc
 
 ---
 
+## Pre-flight — Bridge Installation Check
+
+Before anything else, call `bridge_health()`.
+
+**If the MCP tool call itself errors** (tool not found — not just a field failure inside the response), nothing is installed. Tell the user:
+
+> *"Bridge is not installed. Run this one command — it sets everything up automatically:"*
+> ```bash
+> npm install -g bridge-mcp-server
+> ```
+> *"This clones the runtime, installs the skill, and registers the MCP server. Then restart your editor and re-run."*
+> **STOP — do not continue.**
+
+**If `bridge_health()` responds but `main_py_found: false`**, the runtime clone is missing from `~/.bridge/`. Tell the user:
+
+> *"Bridge runtime not found. Re-run the install to restore it:"*
+> ```bash
+> npm install -g bridge-mcp-server
+> ```
+> **STOP.**
+
+Once `bridge_health()` responds with `main_py_found: true` → continue to Stage 0.
+
+---
+
 ## Local-LLM reliability overrides (TypeScript/React safety)
 
 These rules harden the pipeline for TS/React repos and small local models:
@@ -212,7 +237,7 @@ bridge_health()
 | `services.ollama.up`         | `true`         | Run `ollama serve`, then `ollama pull <model>`                 |
 | `services.memory_service.up` | `true`         | Non-blocking — bridge degrades silently without it             |
 | `services.qdrant.up`         | `true`         | Non-blocking — memory runs sqlite-only mode                    |
-| `main_py_found`              | `true`         | User must open Codex from inside the bridge repo               |
+| `main_py_found`              | `true`         | Run: `npm install -g bridge-mcp-server` to restore `~/.bridge/` |
 | `bridge_root`                | correct path   | Stop if wrong — all `bridge_run_plan` calls will use this path |
 
 
