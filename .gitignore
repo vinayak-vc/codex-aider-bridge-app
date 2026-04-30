@@ -219,7 +219,7 @@ bridge_progress/**
 
 # ── MCP server build output ───────────────────────────────────────
 mcp/node_modules/
-mcp/dist/
+!mcp/dist/
 
 # ── Services (downloaded binaries / data volumes) ─────────────────
 services/

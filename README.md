@@ -19,6 +19,27 @@ The bridge is also a **project-memory and analytics layer**. Every run writes st
 
 ---
 
+## Installation — one command
+
+```bash
+npm install -g bridge-mcp-server
+```
+
+That single command automatically:
+- Clones the bridge Python runtime to `~/.bridge/`
+- Installs the Claude Code skill to `~/.claude/skills/codex-aider-bridge/`
+- Registers the MCP server in `~/.claude/settings.json` with the correct `BRIDGE_ROOT` path
+
+Then **restart Claude Code**, open any project, and type:
+
+```
+/codex-aider-bridge
+```
+
+No cloning this repo manually. No path config. No `python main.py`.
+
+---
+
 ## Architecture
 
 ```
