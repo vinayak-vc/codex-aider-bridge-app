@@ -587,6 +587,10 @@ class AiderRunner:
             str(p): (p.read_bytes() if p.exists() else None) for p in file_paths
         }
 
+        # Snapshot ALL dirty files before Aider runs so we can exclude
+        # pre-existing manual edits from scope enforcement later.
+        pre_dirty = self._get_dirty_files()
+
         # Log estimated generation time so timeouts are understandable
         edit_format = self._pick_edit_format(file_paths)
         est = self._estimate_generation_seconds(edit_format , file_paths)
@@ -618,6 +622,7 @@ class AiderRunner:
             pre_contents = {
                 str(p): (p.read_bytes() if p.exists() else None) for p in file_paths
             }
+            pre_dirty = self._get_dirty_files()
             result_obj = self._execute_aider(
                 task, file_paths, aider_context, lightweight=True,
             )
@@ -630,7 +635,7 @@ class AiderRunner:
         # Scope enforcement: if the model touched any file outside the task scope,
         # revert those changes AND hard-fail the task. This keeps the bridge safe
         # for asset-heavy repos and prevents "helpful" cross-file edits.
-        out_of_scope = self._revert_out_of_scope_changes(task.id, file_paths)
+        out_of_scope = self._revert_out_of_scope_changes(task.id, file_paths, pre_dirty)
         # Task 0 is the bridge connection test; some Aider versions may
         # opportunistically update .gitignore (e.g. add .aider*). We always revert
         # out-of-scope changes, but we do not fail the connection test on it.
@@ -723,18 +728,8 @@ class AiderRunner:
 
     # ── Scope enforcement ─────────────────────────────────────────────────────
 
-    def _revert_out_of_scope_changes(
-        self,
-        task_id: str,
-        allowed_paths: list[Path],
-    ) -> list[str]:
-        """Revert any files modified by Aider that were NOT in the task's file list.
-
-        Reasoning models (deepseek-r1, qwen-thinking, etc.) often "helpfully" edit
-        nearby files — this can corrupt binary assets, Unity .asset files, or cause
-        unintended side-effects.  We detect all dirty working-tree files via
-        ``git diff --name-only`` and restore anything outside *allowed_paths*.
-        """
+    def _get_dirty_files(self) -> set[str]:
+        """Return set of repo-relative paths currently dirty in the working tree."""
         try:
             proc = subprocess.run(
                 ["git", "diff", "--name-only"],
@@ -747,7 +742,42 @@ class AiderRunner:
                 creationflags=_WIN_NO_WINDOW,
             )
             if proc.returncode != 0:
-                return []  # not a git repo or git unavailable — skip quietly
+                return set()
+            return {
+                line.strip().replace("\\", "/")
+                for line in proc.stdout.splitlines()
+                if line.strip()
+            }
+        except Exception:  # noqa: BLE001
+            return set()
+
+    def _revert_out_of_scope_changes(
+        self,
+        task_id: str,
+        allowed_paths: list[Path],
+        pre_dirty: set[str] | None = None,
+    ) -> list[str]:
+        """Revert files modified by Aider that were NOT in the task's file list.
+
+        Reasoning models (deepseek-r1, qwen-thinking, etc.) often "helpfully" edit
+        nearby files — this can corrupt binary assets, Unity .asset files, or cause
+        unintended side-effects.  We detect all dirty working-tree files via
+        ``git diff --name-only`` and restore anything outside *allowed_paths*.
+
+        ``pre_dirty`` is the set of files that were already dirty BEFORE Aider ran.
+        Those files are excluded from scope enforcement — we never revert manual edits
+        the user made before the bridge run started.
+        """
+        pre_dirty = pre_dirty or set()
+        try:
+            dirty_paths = list(self._get_dirty_files())
+            if not dirty_paths:
+                return []
+
+            # Exclude files already dirty before Aider ran — never revert manual edits.
+            dirty_paths = [p for p in dirty_paths if p not in pre_dirty]
+            if not dirty_paths:
+                return []
 
             # Resolve allowed paths to strings relative to repo root for comparison
             allowed_rel: set[str] = set()
@@ -765,12 +795,6 @@ class AiderRunner:
                 if basename not in allowed_by_basename:
                     allowed_by_basename[basename] = []
                 allowed_by_basename[basename].append(allowed)
-
-            dirty_paths: list[str] = []
-            for rel_path in proc.stdout.splitlines():
-                rel_norm = rel_path.strip().replace("\\", "/")
-                if rel_norm:
-                    dirty_paths.append(rel_norm)
 
             mapped_reverts: list[str] = []
             mapped_notes: list[str] = []
