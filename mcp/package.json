@@ -1,13 +1,14 @@
 {
   "name": "bridge-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "MCP server exposing codex-aider-bridge core services to Claude",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "postinstall": "node postinstall.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

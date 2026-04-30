@@ -6,6 +6,7 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export interface RunFlags {
@@ -38,14 +39,28 @@ export function currentJob(): JobInfo | null { return _job; }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Detect bridge root by scanning up from this file for main.py */
+/** Detect bridge root — checks BRIDGE_ROOT env, ~/.bridge/, then walks up from this file */
 export function detectBridgeRoot(): string {
+  // 1. Explicit env variable (set by postinstall into ~/.claude/settings.json)
+  const envRoot = process.env.BRIDGE_ROOT;
+  if (envRoot && fs.existsSync(path.join(envRoot, 'main.py'))) return envRoot;
+
+  // 2. Default auto-install location
+  const homeClone = path.join(os.homedir(), '.bridge');
+  if (fs.existsSync(path.join(homeClone, 'main.py'))) return homeClone;
+
+  // 3. Walk up from this file (local dev / cloned repo)
   let dir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'));
   for (let i = 0; i < 8; i++) {
     if (fs.existsSync(path.join(dir, 'main.py'))) return dir;
     dir = path.dirname(dir);
   }
-  throw new Error('Could not locate bridge main.py — is the MCP server running from inside the bridge repo?');
+
+  throw new Error(
+    'Could not locate bridge main.py.\n' +
+    'Run: npm install -g bridge-mcp-server  (auto-installs everything)\n' +
+    'Or set the BRIDGE_ROOT environment variable to the bridge repo path.'
+  );
 }
 
 function buildArgs(goal: string, repoRoot: string, planFile: string, flags: RunFlags, extra: string[]): string[] {
