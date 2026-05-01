@@ -1742,32 +1742,45 @@ def run_preflight_checks(config: BridgeConfig, logger: logging.Logger) -> None:
     # We append only the entries that are not already present, so repeated runs
     # are idempotent and existing .gitignore content is never disturbed.
     _BRIDGE_GITIGNORE_ENTRIES: list[tuple[str, str]] = [
-        ("taskJsons/",                  "AI-generated task plan JSON files"),
-        (".aider.tags.cache.v4/",       "Aider repo-map tag cache"),
-        ("bridge_progress/",            "Bridge run state, checkpoints and reports"),
-        ("logs.meta",                   "Unity meta for bridge logs folder"),
-        (".aider.input.history",        "Aider interactive input history"),
-        (".aider.chat.history.md",      "Aider chat history"),
-        ("bridge_progress.meta",        "Unity meta for bridge_progress folder"),
+        ("taskJsons/", "AI-generated task plan JSON files"),
+        (".aider.tags.cache.v4/", "Aider repo-map tag cache"),
+        ("bridge_progress/", "Bridge run state, checkpoints and reports"),
+        ("logs.meta", "Unity meta for bridge logs folder"),
+        (".aider.input.history", "Aider interactive input history"),
+        (".aider.chat.history.md", "Aider chat history"),
+        ("bridge_progress.meta", "Unity meta for bridge_progress folder"),
     ]
+
     _gitignore_path = config.repo_root / ".gitignore"
+
     try:
-        existing_text = _gitignore_path.read_text(encoding="utf-8") if _gitignore_path.exists() else ""
-        existing_lines = set(existing_text.splitlines())
+        if _gitignore_path.exists():
+            existing_text = _gitignore_path.read_text(encoding="utf-8")
+            existing_lines = set(line.strip() for line in existing_text.splitlines())
+        else:
+            existing_lines = set()
+
         missing = [
-            (entry, comment)
-            for entry, comment in _BRIDGE_GITIGNORE_ENTRIES
-            if entry not in existing_lines
+            entry for entry, _ in _BRIDGE_GITIGNORE_ENTRIES
+            if entry.strip() not in existing_lines
         ]
+
         if missing:
             with _gitignore_path.open("a", encoding="utf-8") as _gf:
-                _gf.write("\n# ── Aider / Bridge artefacts ─────────────────────────────────────\n")
-                for entry, comment in missing:
-                    _gf.write(f"{entry:<40} # {comment}\n")
-            added = [e for e, _ in missing]
-            logger.info("Added %d bridge entries to %s: %s", len(added), _gitignore_path, added)
+                if existing_lines:
+                    _gf.write("\n")  # ensure separation
+                for entry in missing:
+                    _gf.write(f"{entry}\n")
+
+            logger.info(
+                "Added %d bridge entries to %s: %s",
+                len(missing),
+                _gitignore_path,
+                missing
+            )
         else:
             logger.debug(".gitignore already contains all bridge entries — nothing to add.")
+
     except OSError as _ge:
         logger.warning("Could not update .gitignore: %s (non-fatal)", _ge)
 
@@ -2149,33 +2162,42 @@ def main() -> int:
         # pipeline (Ollama running, model loaded, LiteLLM configured).
         # Catches config errors before any real task runs.
         if not args.dry_run:
-            logger.info("Running Aider connection test…")
-            _emit_structured({"type": "bridge_status", "message": "Testing Aider + LLM connection…"})
-            _test_task = Task(
-                id=0,
-                files=[],
-                instruction="Reply with OK. Do not modify any files.",
-                type="validate",
-            )
-            _test_result = runner.run(_test_task, [], None)
-            _test_stdout = (_test_result.stdout or "").lower()
-            _test_stderr = (_test_result.stderr or "").lower()
-            if not _test_result.succeeded or any(
-                err in _test_stdout or err in _test_stderr
-                for err in ["error", "exception", "traceback", "litellm"]
-            ):
-                _diag = _test_result.stderr or _test_result.stdout[:300]
-                logger.error("Aider connection test FAILED: %s", _diag)
-                _emit_structured({
-                    "type": "bridge_status",
-                    "status": "error",
-                    "message": f"Aider connection test failed: {_diag[:200]}",
-                })
-                raise RuntimeError(
-                    f"Aider connection test failed — fix the config before running tasks.\n{_diag}"
+            # Windows + headless runners (no TTY) can cause Aider to crash or behave
+            # unexpectedly during the connection test (prompt_toolkit + stdin quirks).
+            # In these environments we skip the pre-flight test and rely on the
+            # first real task's execution + mechanical validation.
+            if sys.platform == "win32" and not sys.stdin.isatty():
+                logger.warning(
+                    "Skipping Aider connection test on Windows (no TTY detected)."
                 )
-            logger.info("Aider connection test passed ✓")
-            _emit_structured({"type": "bridge_status", "message": "Aider connection test passed ✓"})
+            else:
+                logger.info("Running Aider connection test…")
+                _emit_structured({"type": "bridge_status", "message": "Testing Aider + LLM connection…"})
+                _test_task = Task(
+                    id=0,
+                    files=[],
+                    instruction="Reply with OK. Do not modify any files.",
+                    type="validate",
+                )
+                _test_result = runner.run(_test_task, [], None)
+                _test_stdout = (_test_result.stdout or "").lower()
+                _test_stderr = (_test_result.stderr or "").lower()
+                if not _test_result.succeeded or any(
+                    err in _test_stdout or err in _test_stderr
+                    for err in ["error", "exception", "traceback", "litellm"]
+                ):
+                    _diag = _test_result.stderr or _test_result.stdout[:300]
+                    logger.error("Aider connection test FAILED: %s", _diag)
+                    _emit_structured({
+                        "type": "bridge_status",
+                        "status": "error",
+                        "message": f"Aider connection test failed: {_diag[:200]}",
+                    })
+                    raise RuntimeError(
+                        f"Aider connection test failed — fix the config before running tasks.\n{_diag}"
+                    )
+                logger.info("Aider connection test passed ✓")
+                _emit_structured({"type": "bridge_status", "message": "Aider connection test passed ✓"})
 
         for task_index, task in enumerate(tasks):
             wait_if_paused(repo_root, logger)

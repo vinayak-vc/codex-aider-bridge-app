@@ -420,6 +420,8 @@ class AiderRunner:
         # and we get a clean error instead of a litellm.Timeout crash.
         _ollama_timeout = str(self._timeout + 120)
 
+        # Keep env overrides conservative for stability across models/VRAM.
+        # Very large OLLAMA_NUM_CTX values can crash the llama runner on some setups.
         _subprocess_env = {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
@@ -429,10 +431,9 @@ class AiderRunner:
             "OLLAMA_KEEP_ALIVE": "10m",                # Keep model in VRAM
             "OLLAMA_REQUEST_TIMEOUT": _ollama_timeout,  # Ollama HTTP timeout
             "LITELLM_REQUEST_TIMEOUT": _ollama_timeout, # LiteLLM HTTP timeout
-            # Expand Ollama context window — models like qwen2.5-coder support
-            # 128K natively but Ollama defaults to 2-4K.  Without this, any
-            # prompt >32K tokens gets a useless "I'll keep that in mind" response.
-            "OLLAMA_NUM_CTX": "65536",                 # 64K context window
+            # A moderate context window keeps qwen2.5-coder stable on Windows.
+            # If you want larger contexts, set OLLAMA_NUM_CTX explicitly in your shell.
+            "OLLAMA_NUM_CTX": os.environ.get("OLLAMA_NUM_CTX", "8192"),
             "OLLAMA_NUM_PARALLEL": "1",                # No parallel requests
         }
 
@@ -441,6 +442,52 @@ class AiderRunner:
         _stderr_lines: list[str] = []
 
         try:
+            # Windows: prompt_toolkit requires a real console screen buffer and will
+            # crash when stdout/stderr are pipes (NoConsoleScreenBufferError).
+            # To keep the bridge non-interactive while still letting Aider run,
+            # we spawn Aider in its own console and *do not* pipe its streams.
+            # The bridge relies on git diffs + validation, so stdout is not required.
+            if sys.platform == "win32":
+                proc = subprocess.Popen(
+                    arguments,
+                    cwd=self._repo_root,
+                    stdout=None,
+                    stderr=None,
+                    env=_subprocess_env,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    stdin=subprocess.DEVNULL,
+                )
+                try:
+                    proc.wait(timeout=self._timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    elapsed = time.monotonic() - _start
+                    self._logger.warning(
+                        "Task %s: Aider timed out after %ds", task.id, self._timeout
+                    )
+                    return ExecutionResult(
+                        task_id=task.id,
+                        succeeded=False,
+                        exit_code=-1,
+                        stdout="",
+                        stderr=f"Aider timed out after {self._timeout}s",
+                        command=arguments,
+                        duration_seconds=round(elapsed, 2),
+                    )
+
+                elapsed = time.monotonic() - _start
+                exit_code = proc.returncode if proc.returncode is not None else -1
+                return ExecutionResult(
+                    task_id=task.id,
+                    succeeded=(exit_code == 0),
+                    exit_code=exit_code,
+                    stdout="",
+                    stderr="",
+                    command=arguments,
+                    duration_seconds=round(elapsed, 2),
+                )
+
+            # Non-Windows: pipe output for logging, stall detection, and error parsing.
             proc = subprocess.Popen(
                 arguments,
                 cwd=self._repo_root,
@@ -635,7 +682,7 @@ class AiderRunner:
         # Scope enforcement: if the model touched any file outside the task scope,
         # revert those changes AND hard-fail the task. This keeps the bridge safe
         # for asset-heavy repos and prevents "helpful" cross-file edits.
-        out_of_scope = self._revert_out_of_scope_changes(task.id, file_paths, pre_dirty)
+        out_of_scope = self._revert_out_of_scope_changes(f"{task.id}", file_paths, pre_dirty)
         # Task 0 is the bridge connection test; some Aider versions may
         # opportunistically update .gitignore (e.g. add .aider*). We always revert
         # out-of-scope changes, but we do not fail the connection test on it.
